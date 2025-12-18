@@ -1,42 +1,50 @@
 
-# SQLPOC — FNZ SQL VM PoC (Network + DC + SQL Server)
+# SQLPOC
 
-This repository contains the Infrastructure-as-Code (Terraform) and bootstrap scripts used to stand up a **SQL VM Proof of Concept** in Azure with:
-- A **network baseline** (VNet, 3× /26 subnets, NSGs, Bastion)
-- A **Domain Controller** layer (planned in `dc/`)
-- A **SQL Server VM** layer (planned in `sqlserver/`)
+Terraform + bootstrap scripts for FNZ SQL VM PoC.
 
-The repo is split into **separate Terraform root modules** to keep blast-radius small and enable parallel work across collaborators (e.g., Syphax for networking + Suresh for compute).
+## Folders
+- `bootstrap/` : bootstrap scripts (creates prereqs like state storage/identity depending on your setup)
+- `network/` : VNet + subnets + NSGs + Bastion (state key: `sqlpoc.network.tfstate`)
+- `dc/` : Domain Controller layer (state key: `sqlpoc.dc.tfstate`)
+- `sqlserver/` : SQL VM layer (state key: `sqlpoc.sqlserver.tfstate`)
 
----
+## Prereqs
+- PowerShell 7
+- Terraform
+- Azure CLI logged in (`az login`) + correct subscription selected
 
-## Repository layout
+## Git hygiene (important)
+Do NOT commit:
+- `.terraform/`
+- `*.tfstate*`
+- `*tfplan*`
+- `output.local.env.ps1`, `.env*`, backups
 
-```text
-SQLPOC/
-├─ bootstrap/                 # one-time bootstrap scripts (state storage, identities, env outputs)
-│  ├─ bootstrap.ps1
-│  ├─ bootstrap.azcli.sh
-│  ├─ output.local.env.ps1.example   # template only (DO NOT commit real output.local.env.ps1)
-│  └─ README.md (optional)
-│
-├─ network/                   # Terraform root module #1 (remote state: sqlpoc.network.tfstate)
-│  ├─ backend.tf              # backend "azurerm" (key pinned here)
-│  ├─ providers.tf / versions.tf
-│  ├─ variables.tf
-│  ├─ network.tf
-│  └─ terraform.lock.hcl
-│
-├─ dc/                        # Terraform root module #2 (remote state: sqlpoc.dc.tfstate) – skeleton
-│  ├─ backend.tf
-│  ├─ providers.tf / versions.tf
-│  └─ (future) main.tf / variables.tf / outputs.tf
-│
-├─ sqlserver/                 # Terraform root module #3 (remote state: sqlpoc.sqlserver.tfstate) – skeleton
-│  ├─ backend.tf
-│  ├─ providers.tf / versions.tf
-│  └─ (future) main.tf / variables.tf / outputs.tf
-│
-├─ .github/workflows/         # CI (Terraform fmt + validate) – no backend access
-├─ .gitignore                 # must ignore tfstate, .terraform/, tfplan, local env outputs
-└─ README.md
+`.gitignore` should cover these.
+
+## Backend env vars (expected)
+Set these in your shell before running `terraform init`:
+- `TFSTATE_RESOURCE_GROUP`
+- `TFSTATE_STORAGE_ACCOUNT`
+- `TFSTATE_CONTAINER`
+
+(Each folder pins its own backend `key` in `backend.tf`.)
+
+## Quick start (per module)
+Example for `network/` (same pattern for `dc/` and `sqlserver/`):
+
+```powershell
+cd .\network
+
+$backend = @(
+  "resource_group_name=$env:TFSTATE_RESOURCE_GROUP",
+  "storage_account_name=$env:TFSTATE_STORAGE_ACCOUNT",
+  "container_name=$env:TFSTATE_CONTAINER"
+)
+
+terraform init -reconfigure @($backend | ForEach-Object { "-backend-config=$_" })
+terraform fmt -recursive
+terraform validate
+terraform plan -out tfplan
+terraform apply tfplan
