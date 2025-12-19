@@ -1,6 +1,6 @@
 
-data "azurerm_resource_group" "workload" {
-  name = var.workload_resource_group_name
+data "azurerm_resource_group" "sql" {
+  name = var.sql_resource_group_name
 }
 
 locals {
@@ -14,8 +14,8 @@ locals {
 
 resource "azurerm_virtual_network" "this" {
   name                = "${var.name_prefix}-vnet-01"
-  location            = data.azurerm_resource_group.workload.location
-  resource_group_name = data.azurerm_resource_group.workload.name
+  location            = data.azurerm_resource_group.sql.location
+  resource_group_name = data.azurerm_resource_group.sql.name
   address_space       = var.vnet_address_space
   tags                = local.tags
 }
@@ -23,14 +23,14 @@ resource "azurerm_virtual_network" "this" {
 # --- Subnets ---
 resource "azurerm_subnet" "dc" {
   name                 = "${var.name_prefix}-snet-dc"
-  resource_group_name  = data.azurerm_resource_group.workload.name
+  resource_group_name  = data.azurerm_resource_group.sql.name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [var.subnet_dc_prefix]
 }
 
 resource "azurerm_subnet" "sql" {
   name                 = "${var.name_prefix}-snet-sql"
-  resource_group_name  = data.azurerm_resource_group.workload.name
+  resource_group_name  = data.azurerm_resource_group.sql.name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [var.subnet_sql_prefix]
 }
@@ -38,7 +38,7 @@ resource "azurerm_subnet" "sql" {
 # Bastion subnet MUST be named exactly AzureBastionSubnet
 resource "azurerm_subnet" "bastion" {
   name                 = "AzureBastionSubnet"
-  resource_group_name  = data.azurerm_resource_group.workload.name
+  resource_group_name  = data.azurerm_resource_group.sql.name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [var.subnet_bastion_prefix]
 }
@@ -46,15 +46,15 @@ resource "azurerm_subnet" "bastion" {
 # --- NSGs ---
 resource "azurerm_network_security_group" "dc" {
   name                = "${var.name_prefix}-nsg-dc"
-  location            = data.azurerm_resource_group.workload.location
-  resource_group_name = data.azurerm_resource_group.workload.name
+  location            = data.azurerm_resource_group.sql.location
+  resource_group_name = data.azurerm_resource_group.sql.name
   tags                = local.tags
 }
 
 resource "azurerm_network_security_group" "sql" {
   name                = "${var.name_prefix}-nsg-sql"
-  location            = data.azurerm_resource_group.workload.location
-  resource_group_name = data.azurerm_resource_group.workload.name
+  location            = data.azurerm_resource_group.sql.location
+  resource_group_name = data.azurerm_resource_group.sql.name
   tags                = local.tags
 }
 
@@ -69,7 +69,7 @@ resource "azurerm_network_security_rule" "rdp_to_dc_from_bastion" {
   destination_port_range      = "3389"
   source_address_prefix       = var.subnet_bastion_prefix
   destination_address_prefix  = var.subnet_dc_prefix
-  resource_group_name         = data.azurerm_resource_group.workload.name
+  resource_group_name         = data.azurerm_resource_group.sql.name
   network_security_group_name = azurerm_network_security_group.dc.name
 }
 
@@ -83,7 +83,7 @@ resource "azurerm_network_security_rule" "rdp_to_sql_from_bastion" {
   destination_port_range      = "3389"
   source_address_prefix       = var.subnet_bastion_prefix
   destination_address_prefix  = var.subnet_sql_prefix
-  resource_group_name         = data.azurerm_resource_group.workload.name
+  resource_group_name         = data.azurerm_resource_group.sql.name
   network_security_group_name = azurerm_network_security_group.sql.name
 }
 
@@ -99,7 +99,7 @@ resource "azurerm_network_security_rule" "allow_dc_to_sql" {
   destination_port_range      = "*"
   source_address_prefix       = var.subnet_dc_prefix
   destination_address_prefix  = var.subnet_sql_prefix
-  resource_group_name         = data.azurerm_resource_group.workload.name
+  resource_group_name         = data.azurerm_resource_group.sql.name
   network_security_group_name = azurerm_network_security_group.sql.name
 }
 
@@ -113,7 +113,7 @@ resource "azurerm_network_security_rule" "allow_sql_to_dc" {
   destination_port_range      = "*"
   source_address_prefix       = var.subnet_sql_prefix
   destination_address_prefix  = var.subnet_dc_prefix
-  resource_group_name         = data.azurerm_resource_group.workload.name
+  resource_group_name         = data.azurerm_resource_group.sql.name
   network_security_group_name = azurerm_network_security_group.dc.name
 }
 
@@ -131,8 +131,8 @@ resource "azurerm_subnet_network_security_group_association" "sql" {
 # --- Bastion Standard ---
 resource "azurerm_public_ip" "bastion" {
   name                = "${var.name_prefix}-pip-bastion"
-  location            = data.azurerm_resource_group.workload.location
-  resource_group_name = data.azurerm_resource_group.workload.name
+  location            = data.azurerm_resource_group.sql.location
+  resource_group_name = data.azurerm_resource_group.sql.name
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
@@ -140,8 +140,8 @@ resource "azurerm_public_ip" "bastion" {
 
 resource "azurerm_bastion_host" "this" {
   name                = "${var.name_prefix}-bastion"
-  location            = data.azurerm_resource_group.workload.location
-  resource_group_name = data.azurerm_resource_group.workload.name
+  location            = data.azurerm_resource_group.sql.location
+  resource_group_name = data.azurerm_resource_group.sql.name
   sku                 = "Standard"
   tags                = local.tags
 

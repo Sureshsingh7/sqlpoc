@@ -2,7 +2,7 @@
 # bootstrap.ps1 (PowerShell 7+)
 # Creates:
 # - Backend RG + Storage Account + tfstate container (for Terraform state)
-# - Workload RG
+# - SQL RG
 # - User Assigned Managed Identity (UAMI) + RBAC
 # - Generates output.local.env.ps1 (dot-source to load variables)
 
@@ -11,7 +11,8 @@ param (
   [string]$BootstrapRg = 'rg-fnz-poc-tfstate',
   [string]$TfstateContainer = 'tfstate',
   [string]$TfstateKey = 'fnz-poc.tfstate',
-  [string]$WorkloadRg = 'rg-fnz-poc-workload',
+  [string]$SQLRg = 'rg-fnz-poc-sql',
+  [string]$OpsRg = 'rg-fnz-poc-ops',
   [string]$UamiName = 'uami-fnz-poc-tf',
 
   # Optional: force a specific storage account name (must be globally unique, 3-24 chars, lowercase+digits)
@@ -184,13 +185,13 @@ if (-not $containerCreated) {
 Write-Host "Container ensured: $TfstateContainer"
 
 # -------------------------
-# 3) Workload RG + UAMI
+# 3) SQL RG + UAMI
 # -------------------------
-Write-Host "`n== Workload RG / UAMI =="
+Write-Host "`n== SQL RG / UAMI =="
 
-Invoke-Az @('group','create','-n',$WorkloadRg,'-l',$Location) | Out-Null
+Invoke-Az @('group','create','-n',$SQLRg, $OpsRg, '-l',$Location) | Out-Null
 
-$uami = Invoke-AzJson @('identity','create','-g',$WorkloadRg,'-n',$UamiName,'-l',$Location)
+$uami = Invoke-AzJson @('identity','create','-g',$SQLRg,'-n',$UamiName,'-l',$Location)
 $UamiClientId    = $uami.clientId
 $UamiPrincipalId = $uami.principalId
 $UamiResourceId  = $uami.id
@@ -204,12 +205,17 @@ Write-Host "UAMI principal: $UamiPrincipalId"
 # -------------------------
 Write-Host "`n== RBAC Assignments =="
 
-$WorkloadRgId = ((Invoke-Az @('group','show','-n',$WorkloadRg,'--query','id','-o','tsv')).Output | Out-String).Trim()
-if ([string]::IsNullOrWhiteSpace($WorkloadRgId)) { throw "Could not resolve workload RG ID." }
+$SQLRgId = ((Invoke-Az @('group','show','-n',$SQLRg,'--query','id','-o','tsv')).Output | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($SQLRgId)) { throw "Could not resolve SQL RG ID." }
+$OpsRgId = ((Invoke-Az @('group','show','-n',$OpsRg,'--query','id','-o','tsv')).Output | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($OpsRgId)) { throw "Could not resolve OPS RG ID." }
 
-# Contributor on workload RG
-Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $WorkloadRgId
-Write-Host "RBAC OK: Contributor on $WorkloadRg"
+# Contributor on SQL RG
+Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $SQLRgId
+Write-Host "RBAC OK: Contributor on $SQLRg"
+# Contributor on OPS RG
+Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $OpsRgId
+Write-Host "RBAC OK: Contributor on $OpsRg"
 
 # Storage Blob Data Contributor on container scope
 $TfstateContainerScope = "/subscriptions/$SubscriptionId/resourceGroups/$BootstrapRg/providers/Microsoft.Storage/storageAccounts/$TfstateSa/blobServices/default/containers/$TfstateContainer"
@@ -237,7 +243,8 @@ Write-Host "`n== Writing $OutEnvPs1 =="
 
 # Defaults
 `$env:TF_LOCATION             = "$Location"
-`$env:TF_WORKLOAD_RG          = "$WorkloadRg"
+`$env:TF_SQL_RG               = "$SQLRg"
+`$env:TF_OPS_RG               = "$OpsRg"
 
 # UAMI for later pipelines / automation
 `$env:TF_UAMI_NAME            = "$UamiName"

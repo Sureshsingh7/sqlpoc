@@ -5,7 +5,7 @@ variable "location" {
   default     = "centralus"
 }
 
-variable "workload_resource_group_name" {
+variable "sql_resource_group_name" {
   type        = string
   description = "Existing RG created by bootstrap where PoC resources are deployed"
 }
