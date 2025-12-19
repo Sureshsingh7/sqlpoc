@@ -4,7 +4,6 @@
 
 # Local .terraform directories (providers, modules, cache)
 **/.terraform/*
-**/.terraform/
 
 # Terraform state (NEVER commit)
 *.tfstate
@@ -58,8 +57,8 @@ override.tf.json
 **/.env
 **/.env.*
 
-# If you want to commit templates only, allow:
-!**/output!**/output.local.env.ps1.example
+# Allow templates only (commit these)
+!**/output.local.env.ps1.example
 !**/*.env.example
 
 ################################################################################
