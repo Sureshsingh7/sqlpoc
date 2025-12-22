@@ -14,12 +14,12 @@ variable "ops_subnet_runner_id" {
 }
 
 variable "github_repo_url" {
-  type        = string
+  type = string
 }
 
 variable "github_runner_token" {
-  type        = string
-  sensitive   = true
+  type      = string
+  sensitive = true
 }
 
 variable "vm_admin_username" {

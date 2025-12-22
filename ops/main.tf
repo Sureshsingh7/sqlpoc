@@ -1,4 +1,12 @@
 
+module "network" {
+  source                  = "./network"
+  location                = var.location
+  ops_resource_group_name = var.ops_resource_group_name
+  sql_resource_group_name = var.sql_resource_group_name
+  # other inputs...
+}
+
 resource "azurerm_resource_group" "runner" {
   name     = var.ops_resource_group_name
   location = var.location
@@ -47,9 +55,9 @@ resource "azurerm_linux_virtual_machine" "runner" {
 
   custom_data = base64encode(
     templatefile("${path.module}/runner-cloudinit.yaml", {
-      github_repo_url        = var.github_repo_url
-      github_runner_token    = var.github_runner_token
-      vm_admin_username      = var.vm_admin_username
+      github_repo_url     = var.github_repo_url
+      github_runner_token = var.github_runner_token
+      vm_admin_username   = var.vm_admin_username
     })
   )
 }
