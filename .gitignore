@@ -1,9 +1,9 @@
+
 ################################################################################
 # Terraform (core)
 ################################################################################
 
 # Local .terraform directories (providers, modules, cache)
-**/.terraform/*
 **/.terraform/
 
 # Terraform state (NEVER commit)
@@ -47,7 +47,7 @@ override.tf.json
 !*.auto.tfvars.json.example
 
 ################################################################################
-# Your repo-specific local env outputs (generated)
+# Repo-specific local env outputs (generated)
 ################################################################################
 
 # Local environment files you generate (do not commit)
@@ -58,8 +58,8 @@ override.tf.json
 **/.env
 **/.env.*
 
-# If you want to commit templates only, allow:
-!**/output!**/output.local.env.ps1.example
+# Allow templates only (commit these)
+!**/output.local.env.ps1.example
 !**/*.env.example
 
 ################################################################################
@@ -71,7 +71,7 @@ override.tf.json
 *.code-workspace
 
 ################################################################################
-# OS junk (Windows/macOS)
+# OS junk (Windows/Mac)
 ################################################################################
 
 Thumbs.db

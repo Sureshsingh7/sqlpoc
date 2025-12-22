@@ -5,7 +5,8 @@ Terraform + bootstrap scripts for FNZ SQL VM PoC.
 
 ## Folders
 - `bootstrap/` : bootstrap scripts (creates prereqs like state storage/identity depending on your setup)
-- `network/` : VNet + subnets + NSGs + Bastion (state key: `sqlpoc.network.tfstate`)
+- `network/` : VNets (SQL&Ops) + subnets + NSGs + Bastion (state key: `sqlpoc.network.tfstate`)
+- `ops/` : GitHub Runner layer (state key: `sqlpoc.ops.tfstate`)
 - `dc/` : Domain Controller layer (state key: `sqlpoc.dc.tfstate`)
 - `sqlserver/` : SQL VM layer (state key: `sqlpoc.sqlserver.tfstate`)
 

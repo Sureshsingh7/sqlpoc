@@ -2,17 +2,18 @@
 # bootstrap.ps1 (PowerShell 7+)
 # Creates:
 # - Backend RG + Storage Account + tfstate container (for Terraform state)
-# - Workload RG
+# - SQL RG
 # - User Assigned Managed Identity (UAMI) + RBAC
 # - Generates output.local.env.ps1 (dot-source to load variables)
 
 param (
-  [string]$Location = 'centralus',
-  [string]$BootstrapRg = 'rg-fnz-poc-tfstate',
+  [string]$Location = 'swedencentral',
+  [string]$BootstrapRg = 'rg-fnz-poc-tfstate-se',
   [string]$TfstateContainer = 'tfstate',
-  [string]$TfstateKey = 'fnz-poc.tfstate',
-  [string]$WorkloadRg = 'rg-fnz-poc-workload',
-  [string]$UamiName = 'uami-fnz-poc-tf',
+  [string]$TfstateKey = 'fnz-poc-se.tfstate',
+  [string]$SQLRg = 'rg-fnz-poc-sql-se',
+  [string]$OpsRg = 'rg-fnz-poc-ops-se',
+  [string]$UamiName = 'uami-fnz-poc-tf-se',
 
   # Optional: force a specific storage account name (must be globally unique, 3-24 chars, lowercase+digits)
   [string]$TfstateSaName = ''
@@ -150,47 +151,49 @@ if (-not $saExists) {
 # -------------------------
 # 2) Container (try data plane, then fallback to ARM)
 # -------------------------
-Write-Host "`n== TFSTATE Container =="
+
+Write-Host "== TFSTATE Container =="
 
 $containerCreated = $false
+
 try {
+  # Data-plane (may fail due to DNS/proxy)
   Invoke-Az @(
     'storage','container','create',
-    '--name',$TfstateContainer,
-    '--account-name',$TfstateSa,
+    '--name', $TfstateContainer,
+    '--account-name', $TfstateSa,
     '--auth-mode','login'
   ) | Out-Null
+
   $containerCreated = $true
-} catch {
+}
+catch {
   Write-Host "Data-plane container create failed (often DNS/proxy). Trying ARM fallback..."
 }
 
 if (-not $containerCreated) {
-  # ARM fallback: PUT container resource
-  $saId = ((Invoke-Az @('storage','account','show','-g',$BootstrapRg,'-n',$TfstateSa,'--query','id','-o','tsv')).Output | Out-String).Trim()
-  if ([string]::IsNullOrWhiteSpace($saId)) {
-    throw "Could not resolve storage account resource ID via ARM."
-  }
-
-  $url = "https://management.azure.com$saId/blobServices/default/containers/$TfstateContainer?api-version=2023-01-01"
+  # Management-plane (ARM) fallback: no blob endpoint DNS required
   Invoke-Az @(
-    'rest','--method','put',
-    '--url',$url,
-    '--body','{"properties":{"publicAccess":"None"}}'
+    'storage','container-rm','create',
+    '--resource-group', $BootstrapRg,
+    '--storage-account', $TfstateSa,
+    '--name', $TfstateContainer
   ) | Out-Null
+
   $containerCreated = $true
 }
 
 Write-Host "Container ensured: $TfstateContainer"
 
 # -------------------------
-# 3) Workload RG + UAMI
+# 3) SQL RG + UAMI
 # -------------------------
-Write-Host "`n== Workload RG / UAMI =="
+Write-Host "`n== SQL RG / UAMI =="
 
-Invoke-Az @('group','create','-n',$WorkloadRg,'-l',$Location) | Out-Null
+Invoke-Az @('group','create','-n',$SQLRg,  '-l',$Location) | Out-Null
+Invoke-Az @('group','create','-n',$OpsRg,  '-l',$Location) | Out-Null
 
-$uami = Invoke-AzJson @('identity','create','-g',$WorkloadRg,'-n',$UamiName,'-l',$Location)
+$uami = Invoke-AzJson @('identity','create','-g',$SQLRg,'-n',$UamiName,'-l',$Location)
 $UamiClientId    = $uami.clientId
 $UamiPrincipalId = $uami.principalId
 $UamiResourceId  = $uami.id
@@ -204,12 +207,17 @@ Write-Host "UAMI principal: $UamiPrincipalId"
 # -------------------------
 Write-Host "`n== RBAC Assignments =="
 
-$WorkloadRgId = ((Invoke-Az @('group','show','-n',$WorkloadRg,'--query','id','-o','tsv')).Output | Out-String).Trim()
-if ([string]::IsNullOrWhiteSpace($WorkloadRgId)) { throw "Could not resolve workload RG ID." }
+$SQLRgId = ((Invoke-Az @('group','show','-n',$SQLRg,'--query','id','-o','tsv')).Output | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($SQLRgId)) { throw "Could not resolve SQL RG ID." }
+$OpsRgId = ((Invoke-Az @('group','show','-n',$OpsRg,'--query','id','-o','tsv')).Output | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($OpsRgId)) { throw "Could not resolve OPS RG ID." }
 
-# Contributor on workload RG
-Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $WorkloadRgId
-Write-Host "RBAC OK: Contributor on $WorkloadRg"
+# Contributor on SQL RG
+Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $SQLRgId
+Write-Host "RBAC OK: Contributor on $SQLRg"
+# Contributor on OPS RG
+Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $OpsRgId
+Write-Host "RBAC OK: Contributor on $OpsRg"
 
 # Storage Blob Data Contributor on container scope
 $TfstateContainerScope = "/subscriptions/$SubscriptionId/resourceGroups/$BootstrapRg/providers/Microsoft.Storage/storageAccounts/$TfstateSa/blobServices/default/containers/$TfstateContainer"
@@ -237,7 +245,8 @@ Write-Host "`n== Writing $OutEnvPs1 =="
 
 # Defaults
 `$env:TF_LOCATION             = "$Location"
-`$env:TF_WORKLOAD_RG          = "$WorkloadRg"
+`$env:TF_SQL_RG               = "$SQLRg"
+`$env:TF_OPS_RG               = "$OpsRg"
 
 # UAMI for later pipelines / automation
 `$env:TF_UAMI_NAME            = "$UamiName"
