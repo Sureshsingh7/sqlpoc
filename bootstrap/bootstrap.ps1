@@ -7,13 +7,13 @@
 # - Generates output.local.env.ps1 (dot-source to load variables)
 
 param (
-  [string]$Location = 'centralus',
-  [string]$BootstrapRg = 'rg-fnz-poc-tfstate',
+  [string]$Location = 'swedencentral',
+  [string]$BootstrapRg = 'rg-fnz-poc-tfstate-se',
   [string]$TfstateContainer = 'tfstate',
-  [string]$TfstateKey = 'fnz-poc.tfstate',
-  [string]$SQLRg = 'rg-fnz-poc-sql',
-  [string]$OpsRg = 'rg-fnz-poc-ops',
-  [string]$UamiName = 'uami-fnz-poc-tf',
+  [string]$TfstateKey = 'fnz-poc-se.tfstate',
+  [string]$SQLRg = 'rg-fnz-poc-sql-se',
+  [string]$OpsRg = 'rg-fnz-poc-ops-se',
+  [string]$UamiName = 'uami-fnz-poc-tf-se',
 
   # Optional: force a specific storage account name (must be globally unique, 3-24 chars, lowercase+digits)
   [string]$TfstateSaName = ''

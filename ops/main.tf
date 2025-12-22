@@ -1,34 +1,24 @@
 
-module "network" {
-  source                  = "./network"
-  location                = var.location
-  ops_resource_group_name = var.ops_resource_group_name
-  sql_resource_group_name = var.sql_resource_group_name
-  # other inputs...
-}
-
-resource "azurerm_resource_group" "runner" {
-  name     = var.ops_resource_group_name
-  location = var.location
+data "azurerm_resource_group" "ops" {
+  name = var.ops_resource_group_name
 }
 
 resource "azurerm_network_interface" "runner" {
   name                = "nic-gh-runner"
-  location            = azurerm_resource_group.runner.location
-  resource_group_name = azurerm_resource_group.runner.name
+  location            = data.azurerm_resource_group.ops.location
+  resource_group_name = data.azurerm_resource_group.ops.name
 
   ip_configuration {
     name                          = "internal"
-    subnet_id                     = var.ops_subnet_runner_id
+    subnet_id                     = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.runner.id
   }
 }
 
 resource "azurerm_linux_virtual_machine" "runner" {
   name                = "vm-gh-runner"
-  resource_group_name = azurerm_resource_group.runner.name
-  location            = azurerm_resource_group.runner.location
+  resource_group_name = data.azurerm_resource_group.ops.name
+  location            = data.azurerm_resource_group.ops.location
   size                = "Standard_B2ms"
 
   admin_username = var.vm_admin_username

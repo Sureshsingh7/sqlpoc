@@ -2,7 +2,7 @@
 variable "location" {
   type        = string
   description = "Azure region"
-  default     = "centralus"
+  default     = "swedencentral"
 }
 
 variable "sql_resource_group_name" {
