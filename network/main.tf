@@ -14,12 +14,14 @@ locals {
   sql_snet_sql1_name = "${var.sql_name_prefix}-snet-sql1"
   sql_snet_sql2_name = "${var.sql_name_prefix}-snet-sql2"
 
-  ops_snet_runner_name = "${var.ops_name_prefix}-snet-runner"
-  # Bastion subnet name must be exactly this:
+  ops_snet_runner_name  = "${var.ops_name_prefix}-snet-runner"
   ops_snet_bastion_name = "AzureBastionSubnet"
 
   bastion_pip_name = "${var.ops_name_prefix}-pip-bastion"
   bastion_name     = "${var.ops_name_prefix}-bastion"
+
+  nat_gateway_pip_name = "${var.ops_name_prefix}-pip-natgw"
+  nat_gateway_name     = "${var.ops_name_prefix}-natgw"
 
   nsg_dc_name     = "${var.sql_name_prefix}-nsg-dc"
   nsg_sql1_name   = "${var.sql_name_prefix}-nsg-sql1"
@@ -39,24 +41,27 @@ resource "azurerm_virtual_network" "sql" {
 }
 
 resource "azurerm_subnet" "sql_dc" {
-  name                 = local.sql_snet_dc_name
-  resource_group_name  = var.sql_resource_group_name
-  virtual_network_name = azurerm_virtual_network.sql.name
-  address_prefixes     = [var.sql_subnet_dc_prefix]
+  name                            = local.sql_snet_dc_name
+  resource_group_name             = var.sql_resource_group_name
+  virtual_network_name            = azurerm_virtual_network.sql.name
+  address_prefixes                = [var.sql_subnet_dc_prefix]
+  default_outbound_access_enabled = false
 }
 
 resource "azurerm_subnet" "sql_sql1" {
-  name                 = local.sql_snet_sql1_name
-  resource_group_name  = var.sql_resource_group_name
-  virtual_network_name = azurerm_virtual_network.sql.name
-  address_prefixes     = [var.sql_subnet_sql1_prefix]
+  name                            = local.sql_snet_sql1_name
+  resource_group_name             = var.sql_resource_group_name
+  virtual_network_name            = azurerm_virtual_network.sql.name
+  address_prefixes                = [var.sql_subnet_sql1_prefix]
+  default_outbound_access_enabled = false
 }
 
 resource "azurerm_subnet" "sql_sql2" {
-  name                 = local.sql_snet_sql2_name
-  resource_group_name  = var.sql_resource_group_name
-  virtual_network_name = azurerm_virtual_network.sql.name
-  address_prefixes     = [var.sql_subnet_sql2_prefix]
+  name                            = local.sql_snet_sql2_name
+  resource_group_name             = var.sql_resource_group_name
+  virtual_network_name            = azurerm_virtual_network.sql.name
+  address_prefixes                = [var.sql_subnet_sql2_prefix]
+  default_outbound_access_enabled = false
 }
 
 # -----------------------------------------------------------------------------
@@ -78,10 +83,11 @@ resource "azurerm_subnet" "ops_runner" {
 }
 
 resource "azurerm_subnet" "ops_bastion" {
-  name                 = local.ops_snet_bastion_name
-  resource_group_name  = var.ops_resource_group_name
-  virtual_network_name = azurerm_virtual_network.ops.name
-  address_prefixes     = [var.subnet_bastion_prefix]
+  name                            = local.ops_snet_bastion_name
+  resource_group_name             = var.ops_resource_group_name
+  virtual_network_name            = azurerm_virtual_network.ops.name
+  address_prefixes                = [var.subnet_bastion_prefix]
+  default_outbound_access_enabled = true
 }
 
 # -----------------------------------------------------------------------------
@@ -141,6 +147,35 @@ resource "azurerm_bastion_host" "this" {
   }
 
   tags = local.tags
+}
+
+# -----------------------------------------------------------------------------
+# NAT Gateway for outbound connectivity from subnets
+# -----------------------------------------------------------------------------
+
+resource "azurerm_public_ip" "nat" {
+  name                = local.nat_gateway_pip_name
+  location            = var.location
+  resource_group_name = var.ops_resource_group_name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_nat_gateway" "ops" {
+  name                = local.nat_gateway_name
+  location            = var.location
+  resource_group_name = var.ops_resource_group_name
+  sku_name            = "Standard"
+}
+
+resource "azurerm_nat_gateway_public_ip_association" "ops" {
+  nat_gateway_id       = azurerm_nat_gateway.ops.id
+  public_ip_address_id = azurerm_public_ip.nat.id
+}
+
+resource "azurerm_subnet_nat_gateway_association" "runner" {
+  subnet_id      = azurerm_subnet.ops_runner.id
+  nat_gateway_id = azurerm_nat_gateway.ops.id
 }
 
 # -----------------------------------------------------------------------------

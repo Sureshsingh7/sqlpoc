@@ -29,6 +29,12 @@ jobs:
         working-directory: ${{ matrix.dir }}
 
     steps:
+
+      - name: Install unzip
+        run: |
+          sudo apt update
+          sudo apt install -y unzip
+
       - name: Checkout
         uses: actions/checkout@v4
 

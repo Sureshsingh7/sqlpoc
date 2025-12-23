@@ -1,3 +1,7 @@
+variable "subscription_id" {
+  type        = string
+  description = "Azure Subscription ID for OPS resources"
+}
 
 variable "location" {
   type        = string

@@ -1,8 +1,8 @@
-
 variable "subscription_id" {
   type        = string
   description = "Azure Subscription ID for OPS resources"
 }
+
 variable "ops_resource_group_name" {
   type        = string
   description = "Resource group where OPS workloads (runner) are deployed"
@@ -10,15 +10,6 @@ variable "ops_resource_group_name" {
 
 variable "location" {
   type = string
-}
-
-variable "github_repo_url" {
-  type = string
-}
-
-variable "github_runner_token" {
-  type      = string
-  sensitive = true
 }
 
 variable "vm_admin_username" {
