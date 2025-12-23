@@ -1,0 +1,46 @@
+
+name: Terraform DC
+
+on:
+  workflow_dispatch:         # manual trigger (recommended for DCs)
+  pull_request:
+    paths:
+      - "dc/**"
+
+jobs:
+  terraform-dc:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository (clean)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure clean workspace
+        run: |
+          git reset --hard
+          git clean -xfd
+
+      - name: Terraform Init (DC)
+        working-directory: dc
+        run: terraform init -input=false
+
+      - name: Terraform Validate
+        working-directory: dc
+        run: terraform validate
+
+      - name: Terraform Plan (DC)
+        working-directory: dc
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply (DC)
+        working-directory: dc
+        run: terraform apply -auto-approve tfplan
