@@ -21,19 +21,27 @@ Identities:
 How to use?
 
 git clone https://github.com/syguemgh/sqltfpoc
-cd sqltfpoc/bootstrap
+cd sqltfpoc
 
-terraform init
-terraform apply
-.\output.local.env.ps1
+# Load environment context
+.\bootstrap\bootstrap-context.ps1
 
-Then in each folder
+# Network
+cd network
+terraform init -reconfigure
+terraform plan
 
-# Always first
-.\..\bootstrap\output.local.env.ps1
+# Ops
+cd ..\ops
+terraform init -reconfigure
+terraform plan
 
-terraform init -reconfigure `
-  -backend-config="resource_group_name=$env:TFSTATE_RESOURCE_GROUP" `
-  -backend-config="storage_account_name=$env:TFSTATE_STORAGE_ACCOUNT" `
-  -backend-config="container_name=$env:TFSTATE_CONTAINER" `
-  -backend-config="key=$env:TFSTATE_KEY"
+# DC
+cd ..\dc
+terraform init -reconfigure
+terraform plan
+
+# SQL
+cd ..\sql
+terraform init -reconfigure
+terraform plan
