@@ -18,6 +18,20 @@ jobs:
         shell: bash
 
     steps:
+      - name: Terraform Init (DC)
+        working-directory: dc
+        env:
+          TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
+          TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
+          TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
+          TFSTATE_KEY: ${{ secrets.TFSTATE_KEY_DC }}
+        run: |
+          terraform init -reconfigure \
+            -backend-config="resource_group_name=${TFSTATE_RG}" \
+            -backend-config="storage_account_name=${TFSTATE_SA}" \
+            -backend-config="container_name=${TFSTATE_CONTAINER}" \
+            -backend-config="key=${TFSTATE_KEY}"
+
       - name: Checkout repository (clean)
         uses: actions/checkout@v4
         with:
