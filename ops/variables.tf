@@ -19,3 +19,24 @@ variable "vm_admin_username" {
 variable "ssh_public_key" {
   type = string
 }
+
+variable "tags" {
+  type        = map(string)
+  description = "Extra tags"
+  default     = {}
+}
+
+variable "tenant_id" {
+  type        = string
+  description = "Azure Tenant ID"
+}
+
+variable "terraform_uami_principal_id" {
+  description = "Principal ID of the Managed Identity used by Terraform"
+  type        = string
+}
+
+variable "suresh_principal_id" {
+  description = "AAD Object ID of Suresh"
+  type        = string
+}

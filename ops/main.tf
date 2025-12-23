@@ -1,3 +1,11 @@
+locals {
+  tags = merge(
+    {
+      "project" = "SQLPOC"
+    },
+    var.tags
+  )
+}
 
 data "azurerm_resource_group" "ops" {
   name = var.ops_resource_group_name
@@ -42,4 +50,28 @@ resource "azurerm_linux_virtual_machine" "runner" {
     sku       = "22_04-lts"
     version   = "latest"
   }
+}
+
+resource "azurerm_key_vault" "ops" {
+  name                       = "kv-fnz-poc-se"
+  location                   = var.location
+  resource_group_name        = var.ops_resource_group_name
+  tenant_id                  = var.tenant_id
+  sku_name                   = "standard"
+  purge_protection_enabled   = true
+  soft_delete_retention_days = 30
+
+}
+
+resource "azurerm_role_assignment" "kv_tf_secrets_officer" {
+  scope                = azurerm_key_vault.ops.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = var.terraform_uami_principal_id
+}
+
+
+resource "azurerm_role_assignment" "kv_suresh_reader" {
+  scope                = azurerm_key_vault.ops.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = var.suresh_principal_id
 }
