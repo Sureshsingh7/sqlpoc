@@ -187,6 +187,9 @@ resource "azurerm_network_security_group" "dc" {
   location            = var.location
   resource_group_name = var.sql_resource_group_name
   tags                = local.tags
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_network_security_group" "sql1" {
