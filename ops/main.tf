@@ -42,12 +42,4 @@ resource "azurerm_linux_virtual_machine" "runner" {
     sku       = "22_04-lts"
     version   = "latest"
   }
-
-  custom_data = base64encode(
-    templatefile("${path.module}/runner-cloudinit.yaml", {
-      github_repo_url     = var.github_repo_url
-      github_runner_token = var.github_runner_token
-      vm_admin_username   = var.vm_admin_username
-    })
-  )
 }
