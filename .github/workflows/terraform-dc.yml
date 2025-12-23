@@ -1,5 +1,4 @@
-
-name: Terraform DC
+name: terraform-dc
 
 on:
   workflow_dispatch:         # manual trigger (recommended for DCs)
