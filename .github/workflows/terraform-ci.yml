@@ -30,13 +30,21 @@ jobs:
 
     steps:
 
-      - name: Install unzip
+      - name: Install unzip and jq
         run: |
           sudo apt update
-          sudo apt install -y unzip
+          sudo apt install -y unzip jq
 
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+         fetch-depth: 0
+
+      - name: Force clean workspace
+        run: |
+          git reset --hard
+          git clean -xfd
+          git status
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

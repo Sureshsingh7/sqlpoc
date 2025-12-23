@@ -283,6 +283,47 @@ resource "azurerm_network_security_rule" "runner_outbound_https" {
   network_security_group_name = azurerm_network_security_group.runner.name
 }
 
+# DC NSG rules for AD traffic
+resource "azurerm_network_security_rule" "dc_inbound_ad" {
+  name              = "Allow-AD-Inbound"
+  priority          = 110
+  direction         = "Inbound"
+  access            = "Allow"
+  protocol          = "*"
+  source_port_range = "*"
+  destination_port_ranges = [
+    "53",         # DNS
+    "88",         # Kerberos
+    "135",        # RPC
+    "389",        # LDAP
+    "445",        # SMB
+    "464",        # Kerberos pw change
+    "636",        # LDAPS
+    "3268",       # Global Catalog
+    "3269",       # GC SSL
+    "9389",       # ADWS
+    "49152-65535" # RPC dynamic
+  ]
+  source_address_prefix       = "VirtualNetwork"
+  destination_address_prefix  = "*"
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.dc.name
+}
+
+resource "azurerm_network_security_rule" "dc_outbound_internal" {
+  name                        = "Allow-Internal-Outbound"
+  priority                    = 100
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = "*"
+  destination_address_prefix  = "VirtualNetwork"
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.dc.name
+}
+
 # Associate NSGs to subnets
 resource "azurerm_subnet_network_security_group_association" "dc" {
   subnet_id                 = azurerm_subnet.sql_dc.id
