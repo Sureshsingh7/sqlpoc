@@ -87,7 +87,7 @@ resource "azurerm_subnet" "ops_bastion" {
   resource_group_name  = var.ops_resource_group_name
   virtual_network_name = azurerm_virtual_network.ops.name
   address_prefixes     = [var.subnet_bastion_prefix]
-  default_outbound_access_enabled = false
+  default_outbound_access_enabled = true
 }
 
 # -----------------------------------------------------------------------------
