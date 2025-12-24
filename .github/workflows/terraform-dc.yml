@@ -18,7 +18,13 @@ jobs:
         shell: bash
 
     steps:
-      - name: Terraform Init (DC)
+      - name: Clean Terraform cache
+        working-directory: dc
+        run: |
+          rm -rf .terraform
+          rm -f .terraform.lock.hcl
+
+      - name: Terraform Init with Backend Config (DC)
         working-directory: dc
         env:
           TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
@@ -27,9 +33,8 @@ jobs:
           TFSTATE_KEY: ${{ secrets.TFSTATE_KEY_DC }}
           ARM_USE_MSI: true
           ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
-
         run: |
-          terraform init -reconfigure \
+          terraform init -reconfigure -upgrade \
             -backend-config="resource_group_name=${TFSTATE_RG}" \
             -backend-config="storage_account_name=${TFSTATE_SA}" \
             -backend-config="container_name=${TFSTATE_CONTAINER}" \
