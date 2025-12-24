@@ -43,7 +43,7 @@ jobs:
           TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
-          TFSTATE_KEY: ${{ secrets.TFSTATE_KEY_SQLSERVER }}
+          TFSTATE_KEY: "sqlpoc.sqlserver.tfstate"
           ARM_USE_MSI: true
           ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
         run: |
