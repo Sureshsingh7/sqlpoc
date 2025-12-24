@@ -61,6 +61,18 @@ resource "azurerm_key_vault" "ops" {
   purge_protection_enabled   = true
   soft_delete_retention_days = 30
 
+  access_policy {
+    tenant_id = var.tenant_id
+    object_id = var.terraform_uami_principal_id
+
+    secret_permissions = [
+      "Get",
+      "List",
+      "Set",
+      "Delete",
+    ]
+  }
+
 }
 
 resource "azurerm_role_assignment" "kv_tf_secrets_officer" {
