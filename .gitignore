@@ -11,6 +11,7 @@
 *.tfstate.*
 terraform.tfstate.d/
 .terraform.tfstate.lock.info
+*.lock.hcl
 
 # Terraform plan files (often contain sensitive diffs/values)
 *.tfplan
