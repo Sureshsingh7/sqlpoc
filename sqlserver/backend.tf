@@ -1,10 +1,7 @@
 terraform {
   backend "azurerm" {
-    resource_group_name  = "rg-fnz-poc-tfstate-se"
-    storage_account_name = "stfnzpocdj522c"
-    container_name       = "tfstate"
-    key                  = "sqlpoc.sqlserver.tfstate"
-    use_msi              = true
-    use_azuread_auth     = true
+    key              = "sqlpoc.sqlserver.tfstate"
+    use_azuread_auth = true
+    use_msi          = true
   }
 }
