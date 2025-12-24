@@ -25,6 +25,9 @@ jobs:
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
           TFSTATE_KEY: ${{ secrets.TFSTATE_KEY_DC }}
+          ARM_USE_MSI: true
+          ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
+
         run: |
           terraform init -reconfigure \
             -backend-config="resource_group_name=${TFSTATE_RG}" \
@@ -41,10 +44,6 @@ jobs:
         run: |
           git reset --hard
           git clean -xfd
-
-      - name: Terraform Init (DC)
-        working-directory: dc
-        run: terraform init -input=false
 
       - name: Terraform Validate
         working-directory: dc
