@@ -1,7 +1,8 @@
+
 name: terraform-dc
 
 on:
-  workflow_dispatch:         # manual trigger (recommended for DCs)
+  workflow_dispatch:
   pull_request:
     paths:
       - "dc/**"
@@ -16,16 +17,29 @@ jobs:
     defaults:
       run:
         shell: bash
+        working-directory: dc
 
     steps:
+      # 1️⃣ Checkout FIRST
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2️⃣ Force clean workspace
+      - name: Ensure clean workspace
+        run: |
+          git reset --hard
+          git clean -xfd
+
+      # 3️⃣ Remove Terraform cache AFTER checkout
       - name: Clean Terraform cache
-        working-directory: dc
         run: |
           rm -rf .terraform
           rm -f .terraform.lock.hcl
 
-      - name: Terraform Init with Backend Config (DC)
-        working-directory: dc
+      # 4️⃣ Init (upgrade providers)
+      - name: Terraform Init (DC)
         env:
           TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
@@ -40,24 +54,11 @@ jobs:
             -backend-config="container_name=${TFSTATE_CONTAINER}" \
             -backend-config="key=${TFSTATE_KEY}"
 
-      - name: Checkout repository (clean)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Ensure clean workspace
-        run: |
-          git reset --hard
-          git clean -xfd
-
       - name: Terraform Validate
-        working-directory: dc
         run: terraform validate
 
-      - name: Terraform Plan (DC)
-        working-directory: dc
+      - name: Terraform Plan
         run: terraform plan -out=tfplan
 
-      - name: Terraform Apply (DC)
-        working-directory: dc
+      - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
