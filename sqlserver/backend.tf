@@ -5,6 +5,5 @@ terraform {
     container_name       = "tfstate"
     key                  = "sqlpoc.sqlserver.tfstate"
     use_msi              = true
-    use_azuread_auth     = true
   }
 }
