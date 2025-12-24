@@ -22,7 +22,7 @@ locals {
   tags = merge(
     {
       "project"   = "SQLPOC"
-      "component" = "SQLServer"
+      "component" = "SQLServerVM"
       "tier"      = "Database"
     },
     var.tags

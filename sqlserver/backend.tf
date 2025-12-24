@@ -4,7 +4,7 @@ terraform {
     storage_account_name = "stfnzpocdj522c"
     container_name       = "tfstate"
     key                  = "sqlpoc.sqlserver.tfstate"
-    # use_msi              = true
-    use_azuread_auth = true
+    use_msi              = true
+    use_azuread_auth     = true
   }
 }
