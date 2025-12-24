@@ -20,6 +20,13 @@ jobs:
         working-directory: dc
 
     steps:
+      - name: Set Az CLI Version
+        uses: azure/cli@v1
+        with:
+          inlineScript: |
+            az --version
+            az login --identity
+
       # 1️⃣ Checkout FIRST
       - name: Checkout repository
         uses: actions/checkout@v4
