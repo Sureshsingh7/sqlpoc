@@ -20,11 +20,8 @@ jobs:
         working-directory: dc
 
     steps:
-      - name: Set Az CLI Version
-        uses: azure/cli@v1
-        with:
-          inlineScript: |
-            az --version
+      - name: Set Az Login with UAMI
+        run: |
             az login --identity
 
       # 1️⃣ Checkout FIRST
