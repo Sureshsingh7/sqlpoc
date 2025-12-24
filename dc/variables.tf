@@ -1,7 +1,7 @@
 variable "tenant_id" {
-    type        = string
-    description = "Azure Tenant ID"
-    default     = "0ebb4727-213e-46b9-8c4a-6611a5f157b0"
+  type        = string
+  description = "Azure Tenant ID"
+  default     = "0ebb4727-213e-46b9-8c4a-6611a5f157b0"
 }
 
 variable "subscription_id" {

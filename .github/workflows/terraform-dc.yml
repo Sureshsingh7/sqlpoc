@@ -47,6 +47,8 @@ jobs:
           TFSTATE_KEY: ${{ secrets.TFSTATE_KEY_DC }}
           ARM_USE_MSI: true
           ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
         run: |
           terraform init -reconfigure -upgrade \
             -backend-config="resource_group_name=${TFSTATE_RG}" \
