@@ -1,0 +1,45 @@
+name: terraform-sqlserver
+
+on:
+  workflow_dispatch:         # manual trigger (recommended for SQL Server VMs)
+  pull_request:
+    paths:
+      - "sqlserver/**"
+
+jobs:
+  terraform-sqlserver:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository (clean)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure clean workspace
+        run: |
+          git reset --hard
+          git clean -xfd
+
+      - name: Terraform Init (SQL Server)
+        working-directory: sqlserver
+        run: terraform init -input=false
+
+      - name: Terraform Validate
+        working-directory: sqlserver
+        run: terraform validate
+
+      - name: Terraform Plan (SQL Server)
+        working-directory: sqlserver
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply (SQL Server)
+        working-directory: sqlserver
+        run: terraform apply -auto-approve tfplan
