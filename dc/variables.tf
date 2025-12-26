@@ -1,18 +1,28 @@
+variable "tenant_id" {
+  type        = string
+  description = "Azure Tenant ID"
+  default     = "0ebb4727-213e-46b9-8c4a-6611a5f157b0"
+}
+
 variable "subscription_id" {
   type        = string
   description = "Azure Subscription ID for OPS resources"
+  default     = "51595cc9-4191-4785-a757-15e45165d2a4"
 }
 variable "location" {
-  type = string
+  type    = string
+  default = "swedencentral"
 }
 
 variable "sql_resource_group_name" {
   type        = string
   description = "Existing RG created by bootstrap where PoC resources are deployed"
+  default     = "rg-fnz-poc-sql-se"
 }
 
 variable "domain_admin_username" {
-  type = string
+  type    = string
+  default = "azureuser"
 }
 
 variable "vm_size" {
@@ -33,5 +43,5 @@ variable "zones" {
 variable "tags" {
   type        = map(string)
   description = "Extra tags"
-  default     = {}
+  default     = { project = "SQLPOC" }
 }
