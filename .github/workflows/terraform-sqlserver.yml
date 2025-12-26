@@ -19,6 +19,10 @@ jobs:
         working-directory: sqlserver
 
     steps:
+      - name: Set Az Login with UAMI
+        run: |
+            az login --identity
+
       # 1️⃣ Checkout FIRST
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,9 +47,12 @@ jobs:
           TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
-          TFSTATE_KEY: "sqlpoc.sqlserver.tfstate"
+          TFSTATE_KEY: ${{ secrets.TFSTATE_KEY_SQLSERVER }}
           ARM_USE_MSI: true
           ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_SKIP_AZURECLI_AUTH: "true"
         run: |
           terraform init -reconfigure -upgrade \
             -backend-config="resource_group_name=${TFSTATE_RG}" \
@@ -57,7 +64,7 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan
+        run: terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
