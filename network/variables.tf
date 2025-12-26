@@ -45,6 +45,12 @@ variable "sql_subnet_sql2_prefix" {
   default     = "10.10.0.128/26"
 }
 
+variable "sql_subnet_pep_prefix" {
+  type        = string
+  description = "Subnet prefix for Private Endpoints"
+  default     = "10.10.0.192/27"
+}
+
 variable "ops_resource_group_name" {
   type        = string
   description = "Existing RG created by bootstrap where PoC resources are deployed"

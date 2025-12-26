@@ -36,7 +36,6 @@ override.tf.json
 ################################################################################
 
 # Ignore all tfvars by default
-*.tfvars
 *.tfvars.json
 *.auto.tfvars
 *.auto.tfvars.json

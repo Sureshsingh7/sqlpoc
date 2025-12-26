@@ -1,13 +1,13 @@
-name: terraform-sqlserver
+name: terraform-network
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
-      - "sqlserver/**"
+      - "network/**"
 
 jobs:
-  terraform-sqlserver:
+  terraform-network:
     runs-on:
       - self-hosted
       - linux
@@ -16,7 +16,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: sqlserver
+        working-directory: network
 
     steps:
       - name: Set Az Login with UAMI
@@ -42,12 +42,12 @@ jobs:
           rm -f .terraform.lock.hcl
 
       # 4️⃣ Init (upgrade providers)
-      - name: Terraform Init (SQL Server)
+      - name: Terraform Init (Network)
         env:
           TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
-          TFSTATE_KEY: "sqlpoc.sqlserver.tfstate"
+          TFSTATE_KEY: "sqlpoc.network.tfstate"
           ARM_USE_MSI: true
           ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
@@ -64,7 +64,7 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
+        run: terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
