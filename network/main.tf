@@ -13,6 +13,7 @@ locals {
   sql_snet_dc_name   = "${var.sql_name_prefix}-snet-dc"
   sql_snet_sql1_name = "${var.sql_name_prefix}-snet-sql1"
   sql_snet_sql2_name = "${var.sql_name_prefix}-snet-sql2"
+  sql_snet_pep_name  = "${var.sql_name_prefix}-snet-pep"
 
   ops_snet_runner_name  = "${var.ops_name_prefix}-snet-runner"
   ops_snet_bastion_name = "AzureBastionSubnet"
@@ -62,6 +63,16 @@ resource "azurerm_subnet" "sql_sql2" {
   virtual_network_name            = azurerm_virtual_network.sql.name
   address_prefixes                = [var.sql_subnet_sql2_prefix]
   default_outbound_access_enabled = false
+}
+
+resource "azurerm_subnet" "pep_snet" {
+  name                            = local.sql_snet_pep_name
+  resource_group_name             = var.sql_resource_group_name
+  virtual_network_name            = azurerm_virtual_network.sql.name
+  address_prefixes                = [var.sql_subnet_pep_prefix]
+  default_outbound_access_enabled = false
+
+  private_endpoint_network_policies = "Enabled"
 }
 
 # -----------------------------------------------------------------------------

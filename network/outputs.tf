@@ -19,6 +19,10 @@ output "sql_subnet_sql2_id" {
   value = azurerm_subnet.sql_sql2.id
 }
 
+output "sql_subnet_pep_id" {
+  value = azurerm_subnet.sql_pep.id
+}
+
 output "ops_vnet_id" {
   value = azurerm_virtual_network.ops.id
 }
