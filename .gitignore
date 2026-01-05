@@ -38,6 +38,7 @@ override.tf.json
 # Ignore all tfvars by default
 *.tfvars.json
 *.auto.tfvars
+*.tfvars
 *.auto.tfvars.json
 
 # But allow example/stub files to be committed
