@@ -10,7 +10,6 @@ locals {
   sql_vnet_name = "${var.sql_name_prefix}-vnet"
   ops_vnet_name = "${var.ops_name_prefix}-vnet"
 
-  sql_snet_dc_name   = "${var.sql_name_prefix}-snet-dc"
   sql_snet_sql1_name = "${var.sql_name_prefix}-snet-sql1"
   sql_snet_sql2_name = "${var.sql_name_prefix}-snet-sql2"
   sql_snet_pep_name  = "${var.sql_name_prefix}-snet-pep"
@@ -24,7 +23,6 @@ locals {
   nat_gateway_pip_name = "${var.ops_name_prefix}-pip-natgw"
   nat_gateway_name     = "${var.ops_name_prefix}-natgw"
 
-  nsg_dc_name     = "${var.sql_name_prefix}-nsg-dc"
   nsg_sql1_name   = "${var.sql_name_prefix}-nsg-sql1"
   nsg_sql2_name   = "${var.sql_name_prefix}-nsg-sql2"
   nsg_runner_name = "${var.ops_name_prefix}-nsg-runner"
@@ -39,14 +37,6 @@ resource "azurerm_virtual_network" "sql" {
   resource_group_name = var.sql_resource_group_name
   address_space       = var.sql_vnet_address_space
   tags                = local.tags
-}
-
-resource "azurerm_subnet" "sql_dc" {
-  name                            = local.sql_snet_dc_name
-  resource_group_name             = var.sql_resource_group_name
-  virtual_network_name            = azurerm_virtual_network.sql.name
-  address_prefixes                = [var.sql_subnet_dc_prefix]
-  default_outbound_access_enabled = false
 }
 
 resource "azurerm_subnet" "sql_sql1" {
@@ -190,18 +180,8 @@ resource "azurerm_subnet_nat_gateway_association" "runner" {
 }
 
 # -----------------------------------------------------------------------------
-# NSGs (attach to DC / SQL1 / SQL2 / Runner)
-# NOTE: We intentionally do NOT attach an NSG to AzureBastionSubnet here.
+# NSGs (attach to SQL1 / SQL2 / Runner)
 # -----------------------------------------------------------------------------
-resource "azurerm_network_security_group" "dc" {
-  name                = local.nsg_dc_name
-  location            = var.location
-  resource_group_name = var.sql_resource_group_name
-  tags                = local.tags
-  lifecycle {
-    prevent_destroy = true
-  }
-}
 
 resource "azurerm_network_security_group" "sql1" {
   name                = local.nsg_sql1_name
@@ -224,20 +204,7 @@ resource "azurerm_network_security_group" "runner" {
   tags                = local.tags
 }
 
-# RDP from Bastion subnet -> DC and SQL subnets
-resource "azurerm_network_security_rule" "rdp_to_dc_from_bastion" {
-  name                        = "Allow-RDP-From-Bastion"
-  priority                    = 100
-  direction                   = "Inbound"
-  access                      = "Allow"
-  protocol                    = "Tcp"
-  source_port_range           = "*"
-  destination_port_range      = "3389"
-  source_address_prefix       = var.subnet_bastion_prefix
-  destination_address_prefix  = var.sql_subnet_dc_prefix
-  resource_group_name         = var.sql_resource_group_name
-  network_security_group_name = azurerm_network_security_group.dc.name
-}
+# RDP from Bastion subnet -> SQL subnets
 
 resource "azurerm_network_security_rule" "rdp_to_sql1_from_bastion" {
   name                        = "Allow-RDP-From-Bastion"
@@ -296,53 +263,8 @@ resource "azurerm_network_security_rule" "runner_outbound_https" {
   resource_group_name         = var.ops_resource_group_name
   network_security_group_name = azurerm_network_security_group.runner.name
 }
-
-# DC NSG rules for AD traffic
-resource "azurerm_network_security_rule" "dc_inbound_ad" {
-  name              = "Allow-AD-Inbound"
-  priority          = 110
-  direction         = "Inbound"
-  access            = "Allow"
-  protocol          = "*"
-  source_port_range = "*"
-  destination_port_ranges = [
-    "53",         # DNS
-    "88",         # Kerberos
-    "135",        # RPC
-    "389",        # LDAP
-    "445",        # SMB
-    "464",        # Kerberos pw change
-    "636",        # LDAPS
-    "3268",       # Global Catalog
-    "3269",       # GC SSL
-    "9389",       # ADWS
-    "49152-65535" # RPC dynamic
-  ]
-  source_address_prefix       = "VirtualNetwork"
-  destination_address_prefix  = "*"
-  resource_group_name         = var.sql_resource_group_name
-  network_security_group_name = azurerm_network_security_group.dc.name
-}
-
-resource "azurerm_network_security_rule" "dc_outbound_internal" {
-  name                        = "Allow-Internal-Outbound"
-  priority                    = 100
-  direction                   = "Outbound"
-  access                      = "Allow"
-  protocol                    = "*"
-  source_port_range           = "*"
-  destination_port_range      = "*"
-  source_address_prefix       = "*"
-  destination_address_prefix  = "VirtualNetwork"
-  resource_group_name         = var.sql_resource_group_name
-  network_security_group_name = azurerm_network_security_group.dc.name
-}
-
+# -----------------------------------------------------------------------------
 # Associate NSGs to subnets
-resource "azurerm_subnet_network_security_group_association" "dc" {
-  subnet_id                 = azurerm_subnet.sql_dc.id
-  network_security_group_id = azurerm_network_security_group.dc.id
-}
 
 resource "azurerm_subnet_network_security_group_association" "sql1" {
   subnet_id                 = azurerm_subnet.sql_sql1.id

@@ -27,28 +27,22 @@ variable "sql_vnet_address_space" {
 }
 
 # Split subnets
-variable "sql_subnet_dc_prefix" {
-  type        = string
-  description = "Subnet prefix for Domain Controller VM(s)"
-  default     = "10.10.0.0/26"
-}
-
 variable "sql_subnet_sql1_prefix" {
   type        = string
   description = "Subnet prefix for SQL VM(s)"
-  default     = "10.10.0.64/26"
+  default     = "10.10.0.0/26"
 }
 
 variable "sql_subnet_sql2_prefix" {
   type        = string
   description = "Subnet prefix for SQL VM(s)"
-  default     = "10.10.0.128/26"
+  default     = "10.10.0.64/26"
 }
 
 variable "sql_subnet_pep_prefix" {
   type        = string
   description = "Subnet prefix for Private Endpoints"
-  default     = "10.10.0.192/27"
+  default     = "10.10.0.128/27"
 }
 
 variable "ops_resource_group_name" {
