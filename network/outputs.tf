@@ -7,10 +7,6 @@ output "sql_vnet_name" {
   value = azurerm_virtual_network.sql.name
 }
 
-output "sql_subnet_dc_id" {
-  value = azurerm_subnet.sql_dc.id
-}
-
 output "sql_subnet_sql1_id" {
   value = azurerm_subnet.sql_sql1.id
 }
@@ -49,10 +45,6 @@ output "bastion_public_ip_id" {
 
 output "bastion_public_ip_address" {
   value = azurerm_public_ip.bastion.ip_address
-}
-
-output "nsg_dc_id" {
-  value = azurerm_network_security_group.dc.id
 }
 
 output "nsg_sql1_id" {
