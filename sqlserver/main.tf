@@ -144,6 +144,10 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
       user     = var.sql_admin_username
       password = random_password.sql_vm[count.index].result
       host     = azurerm_network_interface.sql_vm[count.index].private_ip_address
+      timeout  = "15m"
+      https    = false
+      insecure = true
+      use_ntlm = true
     }
   }
 }
