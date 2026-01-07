@@ -134,24 +134,17 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
 
   depends_on = [azurerm_network_interface.sql_vm]
 
-  provisioner "remote-exec" {
-    inline = [
-      "powershell -ExecutionPolicy Unrestricted -Command \"Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\services\\Tcpip\\Parameters' -Name 'NV Domain' -Value 'sqlpoc.local' -Force; Write-Host 'Primary DNS suffix configured'; Restart-Computer -Force\""
-    ]
-
-    connection {
-      type     = "winrm"
-      user     = var.sql_admin_username
-      password = random_password.sql_vm[count.index].result
-      host     = azurerm_network_interface.sql_vm[count.index].private_ip_address
-      timeout  = "15m"
-      https    = false
-      insecure = true
-      use_ntlm = true
-    }
-  }
 }
 
+resource "null_resource" "run_script" {
+  count = local.sql_vm_count
+
+  provisioner "local-exec" {
+    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts 'Set-ItemProperty -Path \"HKLM:\\SYSTEM\\CurrentControlSet\\services\\Tcpip\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force; Restart-Computer -Force'"
+  }
+
+  depends_on = [azurerm_windows_virtual_machine.sql_vm]
+}
 # SQL Server disks - unified resource for all disk types (data, log, tempdb)
 resource "azurerm_managed_disk" "sql_disk" {
   for_each             = local.all_disks_map
