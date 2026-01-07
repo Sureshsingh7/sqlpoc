@@ -220,6 +220,36 @@ resource "azurerm_network_security_rule" "rdp_to_sql1_from_bastion" {
   network_security_group_name = azurerm_network_security_group.sql1.name
 }
 
+# Outbound KMS activation for SQL1
+resource "azurerm_network_security_rule" "sql1_outbound_kms" {
+  name                        = "Allow-Outbound-KMS"
+  priority                    = 100
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "1688"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = "AzureCloud"
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql1.name
+}
+
+# Outbound HTTPS for Windows Updates (SQL1)
+resource "azurerm_network_security_rule" "sql1_outbound_https" {
+  name                        = "Allow-Outbound-HTTPS"
+  priority                    = 110
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "443"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = "Internet"
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql1.name
+}
+
 resource "azurerm_network_security_rule" "rdp_to_sql2_from_bastion" {
   name                        = "Allow-RDP-From-Bastion"
   priority                    = 100
@@ -230,6 +260,36 @@ resource "azurerm_network_security_rule" "rdp_to_sql2_from_bastion" {
   destination_port_range      = "3389"
   source_address_prefix       = var.subnet_bastion_prefix
   destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql2.name
+}
+
+# Outbound KMS activation for SQL2
+resource "azurerm_network_security_rule" "sql2_outbound_kms" {
+  name                        = "Allow-Outbound-KMS"
+  priority                    = 100
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "1688"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = "AzureCloud"
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql2.name
+}
+
+# Outbound HTTPS for Windows Updates (SQL2)
+resource "azurerm_network_security_rule" "sql2_outbound_https" {
+  name                        = "Allow-Outbound-HTTPS"
+  priority                    = 110
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "443"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = "Internet"
   resource_group_name         = var.sql_resource_group_name
   network_security_group_name = azurerm_network_security_group.sql2.name
 }
