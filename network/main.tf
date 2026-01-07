@@ -23,6 +23,9 @@ locals {
   nat_gateway_pip_name = "${var.ops_name_prefix}-pip-natgw"
   nat_gateway_name     = "${var.ops_name_prefix}-natgw"
 
+  sql_nat_gateway_pip_name = "${var.sql_name_prefix}-pip-natgw"
+  sql_nat_gateway_name     = "${var.sql_name_prefix}-natgw"
+
   nsg_sql1_name   = "${var.sql_name_prefix}-nsg-sql1"
   nsg_sql2_name   = "${var.sql_name_prefix}-nsg-sql2"
   nsg_runner_name = "${var.ops_name_prefix}-nsg-runner"
@@ -179,14 +182,40 @@ resource "azurerm_subnet_nat_gateway_association" "runner" {
   nat_gateway_id = azurerm_nat_gateway.ops.id
 }
 
+# -----------------------------------------------------------------------------
+# NAT Gateway for SQL VNet outbound connectivity
+# -----------------------------------------------------------------------------
+
+resource "azurerm_public_ip" "sql_nat" {
+  name                = local.sql_nat_gateway_pip_name
+  location            = var.location
+  resource_group_name = var.sql_resource_group_name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.tags
+}
+
+resource "azurerm_nat_gateway" "sql" {
+  name                = local.sql_nat_gateway_name
+  location            = var.location
+  resource_group_name = var.sql_resource_group_name
+  sku_name            = "Standard"
+  tags                = local.tags
+}
+
+resource "azurerm_nat_gateway_public_ip_association" "sql" {
+  nat_gateway_id       = azurerm_nat_gateway.sql.id
+  public_ip_address_id = azurerm_public_ip.sql_nat.id
+}
+
 resource "azurerm_subnet_nat_gateway_association" "sql1" {
   subnet_id      = azurerm_subnet.sql_sql1.id
-  nat_gateway_id = azurerm_nat_gateway.ops.id
+  nat_gateway_id = azurerm_nat_gateway.sql.id
 }
 
 resource "azurerm_subnet_nat_gateway_association" "sql2" {
   subnet_id      = azurerm_subnet.sql_sql2.id
-  nat_gateway_id = azurerm_nat_gateway.ops.id
+  nat_gateway_id = azurerm_nat_gateway.sql.id
 }
 
 # -----------------------------------------------------------------------------
