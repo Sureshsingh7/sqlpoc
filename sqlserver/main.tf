@@ -107,7 +107,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   zone                = var.availability_zones[floor(count.index / var.data_disk_count) % length(var.availability_zones)]
 
   admin_username = var.sql_admin_username
-  admin_password = random_password.sql_vm[count.index].result
+  admin_password = random_password.sql_vm[0].result
 
   network_interface_ids = [
     azurerm_network_interface.sql_vm[count.index].id
