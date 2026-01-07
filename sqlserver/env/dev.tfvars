@@ -15,20 +15,26 @@ sql_admin_username = "sqladmin"
 vm_size = "Standard_D4s_v4"
 
 # Storage configuration
-os_disk_type    = "Premium_LRS"
+os_disk_type    = "Standard_LRS"
 os_disk_size_gb = 128
 
-data_disk_type    = "Premium_LRS"
-data_disk_count   = 2
+data_disk_type    = "Standard_LRS"
+data_disk_count   = 1
 data_disk_size_gb = 256
 
-backup_disk_type    = "Premium_LRS"
+log_disk_type    = "Premium_LRS"
+log_disk_size_gb = 256
+
+tempdb_disk_type    = "Premium_LRS"
+tempdb_disk_size_gb = 256
+
+backup_disk_type    = "Standard_LRS"
 backup_disk_size_gb = 512
 
 # SQL Server image
-image_publisher = "MicrosoftSQLServer"
-image_offer     = "sql2022-ws2022"
-image_sku       = "enterprise"
+image_publisher = "microsoftsqlserver"
+image_offer     = "sql2025-ws2025"
+image_sku       = "stddev-gen2"
 image_version   = "latest"
 
 # Extensions
