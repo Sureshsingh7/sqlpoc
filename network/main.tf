@@ -179,6 +179,16 @@ resource "azurerm_subnet_nat_gateway_association" "runner" {
   nat_gateway_id = azurerm_nat_gateway.ops.id
 }
 
+resource "azurerm_subnet_nat_gateway_association" "sql1" {
+  subnet_id      = azurerm_subnet.sql_sql1.id
+  nat_gateway_id = azurerm_nat_gateway.ops.id
+}
+
+resource "azurerm_subnet_nat_gateway_association" "sql2" {
+  subnet_id      = azurerm_subnet.sql_sql2.id
+  nat_gateway_id = azurerm_nat_gateway.ops.id
+}
+
 # -----------------------------------------------------------------------------
 # NSGs (attach to SQL1 / SQL2 / Runner)
 # -----------------------------------------------------------------------------
