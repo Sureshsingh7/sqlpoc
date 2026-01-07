@@ -139,6 +139,18 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   }
 
   depends_on = [azurerm_network_interface.sql_vm]
+  #  provisioner "remote-exec" {
+  #   inline = [
+  #     "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
+  #   ]
+
+  #   connection {
+  #     type     = "winrm"
+  #     user     = var.sql_admin_username
+  #     password = random_password.sql_vm[count.index].result
+  #     host     = azurerm_network_interface.sql_vm[count.index].private_ip_address
+  #   }
+  # }
 }
 
 # SQL Server disks - unified resource for all disk types (data, log, tempdb)
