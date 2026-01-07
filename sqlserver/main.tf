@@ -131,8 +131,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   }
 
   provisioner "local-exec" {
-    when    = create
-    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts $'$vmName = \"${var.sql_vm_names[count.index]}\"; $vmIp = \"${azurerm_network_interface.sql_vm[count.index].private_ip_address}\"; $hostsFile = \"C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts\"; $hostEntry = \"$vmIp `t$vmName.sqlpoc.local `t$vmName\"; if (-not (Select-String -Path $hostsFile -Pattern $vmName -Quiet)) { Add-Content -Path $hostsFile -Value $hostEntry }; Set-ItemProperty -Path \"HKLM:\\SYSTEM\\CurrentControlSet\\services\\Tcpip\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force; Rename-Computer -NewName $vmName -Force; Restart-Computer -Force'"
+    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --script-files ${path.module}/scripts/vm-init.ps1 --parameters 'VmName=${var.sql_vm_names[count.index]}' 'VmIp=${azurerm_network_interface.sql_vm[count.index].private_ip_address}' 'Domain=sqlpoc.local'"
   }
 
   tags = local.tags
