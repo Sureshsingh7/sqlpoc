@@ -1,0 +1,70 @@
+name: terraform-ops
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "ops/**"
+
+jobs:
+  terraform-ops:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ops
+
+    steps:
+      - name: Set Az Login with UAMI
+        run: |
+            az login --identity
+
+      # 1️⃣ Checkout FIRST
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2️⃣ Force clean workspace
+      - name: Ensure clean workspace
+        run: |
+          git reset --hard
+          git clean -xfd
+
+      # 3️⃣ Remove Terraform cache AFTER checkout
+      - name: Clean Terraform cache
+        run: |
+          rm -rf .terraform
+          rm -f .terraform.lock.hcl
+
+      # 4️⃣ Init (upgrade providers)
+      - name: Terraform Init (Ops)
+        env:
+          TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
+          TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
+          TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
+          TFSTATE_KEY: "sqlpoc.ops.tfstate"
+          ARM_USE_MSI: true
+          ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_SKIP_AZURECLI_AUTH: "true"
+        run: |
+          terraform init -reconfigure -upgrade \
+            -backend-config="resource_group_name=${TFSTATE_RG}" \
+            -backend-config="storage_account_name=${TFSTATE_SA}" \
+            -backend-config="container_name=${TFSTATE_CONTAINER}" \
+            -backend-config="key=${TFSTATE_KEY}"
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
