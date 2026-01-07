@@ -1,10 +1,10 @@
-name: terraform-sqlserver
+name: terraform-ops
 
 on:
   workflow_dispatch:
 
 jobs:
-  terraform-sqlserver:
+  terraform-ops:
     runs-on:
       - self-hosted
       - linux
@@ -13,7 +13,8 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: sqlserver
+        working-directory: ops
+
     steps:
       - name: Set Az Login with UAMI
         run: |
@@ -38,12 +39,12 @@ jobs:
           rm -f .terraform.lock.hcl
 
       # 4️⃣ Init (upgrade providers)
-      - name: Terraform Init (SQL Server)
+      - name: Terraform Init (Ops)
         env:
           TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
-          TFSTATE_KEY: "sqlpoc.sqlserver.tfstate"
+          TFSTATE_KEY: "sqlpoc.ops.tfstate"
           ARM_USE_MSI: true
           ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
@@ -60,7 +61,7 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
+        run: terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
