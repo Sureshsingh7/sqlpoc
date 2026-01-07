@@ -36,6 +36,11 @@ variable "terraform_uami_principal_id" {
   type        = string
 }
 
+variable "terraform_uami_resource_id" {
+  description = "Resource ID of the Managed Identity used by Terraform"
+  type        = string
+}
+
 variable "suresh_principal_id" {
   description = "AAD Object ID of Suresh"
   type        = string

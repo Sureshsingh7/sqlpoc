@@ -23,3 +23,7 @@ suresh_principal_id = "8c5994da-67b7-4844-b484-026d2e6c3a4a"
 
 # Managed Identity Principal ID used by Terraform
 terraform_uami_principal_id = "2680641f-e875-4270-aa05-246cdef65d17"
+
+# Managed Identity Resource ID used by Terraform (assigned to runner VM)
+# Get this from bootstrap output: $env:TF_UAMI_RESOURCE_ID
+terraform_uami_resource_id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-se/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-fnz-poc-tf-se"
