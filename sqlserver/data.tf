@@ -25,9 +25,3 @@ data "terraform_remote_state" "ops" {
     use_msi              = true
   }
 }
-
-# Fetch DC1 admin password from Key Vault
-data "azurerm_key_vault_secret" "dc_admin_password" {
-  name         = "dc-1-local-admin"
-  key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
-}
