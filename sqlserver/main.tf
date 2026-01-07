@@ -139,18 +139,6 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   }
 
   depends_on = [azurerm_network_interface.sql_vm]
-  # provisioner "remote-exec" {
-  #   inline = [
-  #     "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
-  #   ]
-
-  #   connection {
-  #     type     = "winrm"
-  #     user     = var.sql_admin_username
-  #     password = random_password.sql_vm[count.index].result
-  #     host     = azurerm_network_interface.sql_vm[count.index].private_ip_address
-  #   }
-  # }
 }
 
 # SQL Server disks - unified resource for all disk types (data, log, tempdb)
@@ -175,22 +163,22 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   caching            = "ReadOnly"
 }
 
-# Extension 1: Run common setup on both VMs
-resource "azurerm_virtual_machine_extension" "sql_setup" {
-  count                      = local.sql_vm_count
-  name                       = "sql-setup-${count.index + 1}"
-  virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
-  publisher                  = "Microsoft.Compute"
-  type                       = "CustomScriptExtension"
-  type_handler_version       = "1.10"
-  auto_upgrade_minor_version = true
+# Extension 1: Run common setup on both VMs (commented out - scripts not yet created)
+# resource "azurerm_virtual_machine_extension" "sql_setup" {
+#   count                      = local.sql_vm_count
+#   name                       = "sql-setup-${count.index + 1}"
+#   virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
+#   publisher                  = "Microsoft.Compute"
+#   type                       = "CustomScriptExtension"
+#   type_handler_version       = "1.10"
+#   auto_upgrade_minor_version = true
 
-  protected_settings = jsonencode({
-    commandToExecute = "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
-  })
+#   protected_settings = jsonencode({
+#     commandToExecute = "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
+#   })
 
-  depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
-}
+#   depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
+# }
 
 # Install Failover Clustering on SQL VMs and create cluster on primary
 # resource "azurerm_virtual_machine_extension" "sql_setup" {
