@@ -87,3 +87,20 @@ resource "azurerm_role_assignment" "kv_suresh_reader" {
   role_definition_name = "Key Vault Secrets User"
   principal_id         = var.suresh_principal_id
 }
+
+# Private Endpoint for Key Vault
+resource "azurerm_private_endpoint" "kv_pep" {
+  name                = "pep-kv-fnz-poc"
+  location            = data.azurerm_resource_group.ops.location
+  resource_group_name = data.azurerm_resource_group.ops.name
+  subnet_id           = data.terraform_remote_state.network.outputs.pep_subnet_id
+
+  private_service_connection {
+    name                           = "psc-kv-fnz-poc"
+    private_connection_resource_id = azurerm_key_vault.ops.id
+    is_manual_connection           = false
+    subresource_names              = ["vault"]
+  }
+
+  tags = local.tags
+}
