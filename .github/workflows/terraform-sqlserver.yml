@@ -17,7 +17,6 @@ jobs:
       run:
         shell: bash
         working-directory: sqlserver
-
     steps:
       - name: Set Az Login with UAMI
         run: |
