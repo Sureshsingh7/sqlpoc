@@ -130,21 +130,17 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
     type = "SystemAssigned"
   }
 
+  provisioner "local-exec" {
+    when    = create
+    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts $'$vmName = \"${var.sql_vm_names[count.index]}\"; $vmIp = \"${azurerm_network_interface.sql_vm[count.index].private_ip_address}\"; $hostsFile = \"C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts\"; $hostEntry = \"$vmIp `t$vmName.sqlpoc.local `t$vmName\"; if (-not (Select-String -Path $hostsFile -Pattern $vmName -Quiet)) { Add-Content -Path $hostsFile -Value $hostEntry }; Set-ItemProperty -Path \"HKLM:\\SYSTEM\\CurrentControlSet\\services\\Tcpip\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force; Rename-Computer -NewName $vmName -Force; Restart-Computer -Force'"
+  }
+
   tags = local.tags
 
   depends_on = [azurerm_network_interface.sql_vm]
 
 }
 
-resource "null_resource" "run_script" {
-  count = local.sql_vm_count
-
-  provisioner "local-exec" {
-    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts $'$vmName = \"${var.sql_vm_names[count.index]}\"; $vmIp = \"${azurerm_network_interface.sql_vm[count.index].private_ip_address}\"; $hostsFile = \"C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts\"; $hostEntry = \"$vmIp `t$vmName.sqlpoc.local `t$vmName\"; if (-not (Select-String -Path $hostsFile -Pattern $vmName -Quiet)) { Add-Content -Path $hostsFile -Value $hostEntry }; Set-ItemProperty -Path \"HKLM:\\SYSTEM\\CurrentControlSet\\services\\Tcpip\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force; Rename-Computer -NewName $vmName -Force; Restart-Computer -Force'"
-  }
-
-  depends_on = [azurerm_windows_virtual_machine.sql_vm]
-}
 # SQL Server disks - unified resource for all disk types (data, log, tempdb)
 resource "azurerm_managed_disk" "sql_disk" {
   for_each             = local.all_disks_map
