@@ -132,7 +132,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
 
   provisioner "local-exec" {
     when    = create
-    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts 'if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[count.index]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"${azurerm_network_interface.sql_vm[count.index].private_ip_address} `t${var.sql_vm_names[count.index]}.sqlpoc.local `t${var.sql_vm_names[count.index]}\" }; Set-ItemProperty -Path \"HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\services\\\\Tcpip\\\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force'"
+    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts 'if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[0]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"10.10.0.10 `t${var.sql_vm_names[0]}.sqlpoc.local `t${var.sql_vm_names[0]}\" }; if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[1]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"10.10.0.74 `t${var.sql_vm_names[1]}.sqlpoc.local `t${var.sql_vm_names[1]}\" }; Set-ItemProperty -Path \"HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\services\\\\Tcpip\\\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force'"
   }
   tags = local.tags
 
