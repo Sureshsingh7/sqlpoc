@@ -131,24 +131,24 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   }
 
   provisioner "local-exec" {
-    when    = create
-    command = <<-EOT
-      $vmName = '${var.sql_vm_names[count.index]}'
-      $vmIp = '${azurerm_network_interface.sql_vm[count.index].private_ip_address}'
-      $hostsFile = 'C:\Windows\System32\drivers\etc\hosts'
-      $hostEntry = "$vmIp `t$vmName.sqlpoc.local `t$vmName"
+    when        = create
+    interpreter = ["pwsh", "-Command"]
+    command     = <<-EOT
+      $$vmName = "${var.sql_vm_names[count.index]}"
+      $$vmIp = "${azurerm_network_interface.sql_vm[count.index].private_ip_address}"
+      $$resourceGroup = "${var.sql_resource_group_name}"
       
-      $script = @"
-      if (-not (Select-String -Path '$hostsFile' -Pattern '$vmName' -Quiet)) {
-        Add-Content -Path '$hostsFile' -Value '$hostEntry'
+      $$psScript = @"
+      if (-not (Select-String -Path "C:\Windows\System32\drivers\etc\hosts" -Pattern $$vmName -Quiet)) {
+        Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "$$vmIp `t$$vmName.sqlpoc.local `t$$vmName"
       }
-      Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\services\Tcpip\Parameters' -Name 'NV Domain' -Value 'sqlpoc.local' -Force
-      Rename-Computer -NewName '$vmName' -Force
+      Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\services\Tcpip\Parameters" -Name "NV Domain" -Value "sqlpoc.local" -Force
+      Rename-Computer -NewName $$vmName -Force
       Restart-Computer -Force
       "@
       
-      $encodedScript = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($script))
-      az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name $vmName --command-id RunPowerShellScript --scripts "powershell.exe -EncodedCommand $encodedScript"
+      $$encodedScript = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($$psScript))
+      az vm run-command invoke --resource-group $$resourceGroup --name $$vmName --command-id RunPowerShellScript --scripts "powershell.exe -EncodedCommand $$encodedScript"
     EOT
   }
   tags = local.tags
