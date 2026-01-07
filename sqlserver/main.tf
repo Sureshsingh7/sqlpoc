@@ -133,18 +133,18 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   tags = local.tags
 
   depends_on = [azurerm_network_interface.sql_vm]
-  provisioner "remote-exec" {
-    inline = [
-      "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
-    ]
+  # provisioner "remote-exec" {
+  #   inline = [
+  #     "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
+  #   ]
 
-    connection {
-      type     = "winrm"
-      user     = var.sql_admin_username
-      password = random_password.sql_vm[count.index].result
-      host     = azurerm_network_interface.sql_vm[count.index].private_ip_address
-    }
-  }
+  #   connection {
+  #     type     = "winrm"
+  #     user     = var.sql_admin_username
+  #     password = random_password.sql_vm[count.index].result
+  #     host     = azurerm_network_interface.sql_vm[count.index].private_ip_address
+  #   }
+  # }
 }
 
 # SQL Server disks - unified resource for all disk types (data, log, tempdb)
@@ -169,88 +169,22 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   caching            = "ReadOnly"
 }
 
-# SQL Server data disks (Premium SSD for production)
-resource "azurerm_managed_disk" "sql_data_disk" {
-  count                = local.sql_vm_count * var.data_disk_count
-  name                 = "${var.sql_vm_names[floor(count.index / var.data_disk_count)]}-datadisk-${(count.index % var.data_disk_count) + 1}"
-  location             = var.location
-  resource_group_name  = var.sql_resource_group_name
-  storage_account_type = var.data_disk_type
-  create_option        = "Empty"
-  disk_size_gb         = var.data_disk_size_gb
-  zone                 = var.availability_zones[floor(count.index / var.data_disk_count) % length(var.availability_zones)]
-
-  tags = local.tags
-}
-
-resource "azurerm_virtual_machine_data_disk_attachment" "sql_data_disk_attach" {
-  count              = local.sql_vm_count * var.data_disk_count
-  managed_disk_id    = azurerm_managed_disk.sql_data_disk[count.index].id
-  virtual_machine_id = azurerm_windows_virtual_machine.sql_vm[floor(count.index / var.data_disk_count)].id
-  lun                = (count.index % var.data_disk_count)
-  caching            = "ReadOnly"
-}
-
-# SQL Server log disks (Premium SSD for transaction logs)
-resource "azurerm_managed_disk" "sql_log_disk" {
-  count                = local.sql_vm_count
-  name                 = "${var.sql_vm_names[count.index]}-logdisk"
-  location             = var.location
-  resource_group_name  = var.sql_resource_group_name
-  storage_account_type = var.log_disk_type
-  create_option        = "Empty"
-  disk_size_gb         = var.log_disk_size_gb
-  zone                 = var.availability_zones[count.index % length(var.availability_zones)]
-
-  tags = local.tags
-}
-
-resource "azurerm_virtual_machine_data_disk_attachment" "sql_log_disk_attach" {
-  count              = local.sql_vm_count
-  managed_disk_id    = azurerm_managed_disk.sql_log_disk[count.index].id
-  virtual_machine_id = azurerm_windows_virtual_machine.sql_vm[count.index].id
-  lun                = 1
-  caching            = "ReadOnly"
-}
-
-# SQL Server tempdb disks (Premium SSD for temporary database)
-resource "azurerm_managed_disk" "sql_tempdb_disk" {
-  count                = local.sql_vm_count
-  name                 = "${var.sql_vm_names[count.index]}-tempdbdisk"
-  location             = var.location
-  resource_group_name  = var.sql_resource_group_name
-  storage_account_type = var.tempdb_disk_type
-  create_option        = "Empty"
-  disk_size_gb         = var.tempdb_disk_size_gb
-  zone                 = var.availability_zones[count.index % length(var.availability_zones)]
-
-  tags = local.tags
-}
-
-resource "azurerm_virtual_machine_data_disk_attachment" "sql_tempdb_disk_attach" {
-  count              = local.sql_vm_count
-  managed_disk_id    = azurerm_managed_disk.sql_tempdb_disk[count.index].id
-  virtual_machine_id = azurerm_windows_virtual_machine.sql_vm[count.index].id
-  lun                = 2
-  caching            = "ReadOnly"
-}
-
 # Extension 1: Run common setup on both VMs
-resource "azurerm_virtual_machine_extension" "sql_setup" {
-  count                      = local.sql_vm_count
-  name                       = "sql-setup-${count.index + 1}"
-  virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
-  publisher                  = "Microsoft.Compute"
-  type                       = "CustomScriptExtension"
-  type_handler_version       = "1.10"
-  auto_upgrade_minor_version = true
+# resource "azurerm_virtual_machine_extension" "sql_setup" {
+#   count                      = local.sql_vm_count
+#   name                       = "sql-setup-${count.index + 1}"
+#   virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
+#   publisher                  = "Microsoft.Compute"
+#   type                       = "CustomScriptExtension"
+#   type_handler_version       = "1.10"
+#   auto_upgrade_minor_version = true
 
-  protected_settings = jsonencode({
-    commandToExecute = "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
-  })
+#   protected_settings = jsonencode({
+#     commandToExecute = "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
+#   })
 
-  depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
-}
+#   depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
+# }
 
 # Install Failover Clustering on SQL VMs and create cluster on primary
 # resource "azurerm_virtual_machine_extension" "sql_setup" {
