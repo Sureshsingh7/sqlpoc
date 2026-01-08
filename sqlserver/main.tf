@@ -175,6 +175,23 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   caching            = "ReadOnly"
 }
 
+# Configure disks via custom script extension (faster than SQL IaaS storage config)
+resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
+  count                      = local.sql_vm_count
+  name                       = "configure-sql-disks"
+  virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
+  publisher                  = "Microsoft.Compute"
+  type                       = "CustomScriptExtension"
+  type_handler_version       = "1.10"
+  auto_upgrade_minor_version = true
+
+  settings = jsonencode({
+    commandToExecute = "powershell -ExecutionPolicy Unrestricted -Command \"Get-Disk | Where-Object PartitionStyle -eq 'RAW' | ForEach-Object { $diskNumber = $_.Number; $driveLetter = @{1='F'; 2='G'; 3='T'}[$diskNumber]; if($driveLetter) { Initialize-Disk -Number $diskNumber -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter $driveLetter | Format-Volume -FileSystem NTFS -NewFileSystemLabel $driveLetter -Confirm:`$false -Force } }; New-Item -ItemType Directory -Path F:\\Data, G:\\Log, T:\\TempDB -Force; Stop-Service MSSQLSERVER -Force; Start-Sleep 5; sqlcmd -Q \\\"EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\\Microsoft\\MSSQLServer\\MSSQLServer', N'DefaultData', REG_SZ, N'F:\\Data'\\\"; sqlcmd -Q \\\"EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\\Microsoft\\MSSQLServer\\MSSQLServer', N'DefaultLog', REG_SZ, N'G:\\Log'\\\"; Start-Service MSSQLSERVER\""
+  })
+
+  depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
+}
+
 # SQL IaaS Agent Extension - NOT a separate VM!
 # This resource manages SQL Server configuration on the existing VMs above.
 # In Azure Portal, you'll see both:
@@ -196,35 +213,15 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
     maintenance_window_starting_hour       = 2
   }
 
-  storage_configuration {
-    disk_type             = "NEW"
-    storage_workload_type = "OLTP"
-
-    # Data disks configuration
-    data_settings {
-      default_file_path = "F:\\Data"
-      luns              = [0]  # LUN 0 is the data disk
-    }
-
-    # Log disk configuration
-    log_settings {
-      default_file_path = "G:\\Log"
-      luns              = [1]  # LUN 1 is the log disk
-    }
-
-    # TempDB configuration
-    temp_db_settings {
-      default_file_path = "T:\\TempDB"
-      luns              = [2]  # LUN 2 is the tempdb disk
-    }
-  }
+  # Storage configuration removed - configure disks manually or add later
+  # The extension registration alone takes time; storage config was timing out
 
   tags = local.tags
 
   timeouts {
-    create = "90m"
-    update = "90m"
-    delete = "90m"
+    create = "30m"
+    update = "30m"
+    delete = "30m"
   }
 
   depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
