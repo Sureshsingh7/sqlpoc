@@ -96,6 +96,16 @@ resource "azurerm_role_assignment" "kv_suresh_reader" {
 }
 
 # ============================================================================
+# Role Assignment for Terraform Identity on TF State Storage Account
+# ============================================================================
+
+resource "azurerm_role_assignment" "tfstate_sa_reader" {
+  scope                = "/subscriptions/${var.subscription_id}/resourceGroups/rg-fnz-poc-tfstate-se/providers/Microsoft.Storage/storageAccounts/stfnzpocdj522c"
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = var.terraform_uami_principal_id
+}
+
+# ============================================================================
 # Private DNS Zones for Key Vault and Blob Storage
 # ============================================================================
 
