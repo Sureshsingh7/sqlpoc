@@ -165,25 +165,25 @@ resource "azurerm_private_endpoint" "kv_pep" {
 #   resource_group_name = "rg-fnz-poc-tfstate-se"
 # }
 
-resource "azurerm_private_endpoint" "storage_account_pep" {
-  name                = "pep-state-sa-fnz-poc"
-  location            = data.azurerm_resource_group.ops.location
-  resource_group_name = data.azurerm_resource_group.ops.name
-  subnet_id           = data.terraform_remote_state.network.outputs.pep_subnet_id
+# resource "azurerm_private_endpoint" "storage_account_pep" {
+#   name                = "pep-state-sa-fnz-poc"
+#   location            = data.azurerm_resource_group.ops.location
+#   resource_group_name = data.azurerm_resource_group.ops.name
+#   subnet_id           = data.terraform_remote_state.network.outputs.pep_subnet_id
 
-  private_service_connection {
-    name                           = "psc-blob-fnz-poc"
-    private_connection_resource_id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-tfstate-se/providers/Microsoft.Storage/storageAccounts/stfnzpocdj522c"
-    is_manual_connection           = false
-    subresource_names              = ["Blob"]
-  }
+#   private_service_connection {
+#     name                           = "psc-blob-fnz-poc"
+#     private_connection_resource_id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-tfstate-se/providers/Microsoft.Storage/storageAccounts/stfnzpocdj522c"
+#     is_manual_connection           = false
+#     subresource_names              = ["Blob"]
+#   }
 
-  private_dns_zone_group {
-    name                 = "blob-dns-zone-group"
-    private_dns_zone_ids = [azurerm_private_dns_zone.blob.id]
-  }
+#   private_dns_zone_group {
+#     name                 = "blob-dns-zone-group"
+#     private_dns_zone_ids = [azurerm_private_dns_zone.blob.id]
+#   }
 
-  tags = local.tags
-}
+#   tags = local.tags
+# }
 
 
