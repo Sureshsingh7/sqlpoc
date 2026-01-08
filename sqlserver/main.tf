@@ -192,40 +192,9 @@ resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
   depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
 }
 
-# SQL IaaS Agent Extension - NOT a separate VM!
-# This resource manages SQL Server configuration on the existing VMs above.
-# In Azure Portal, you'll see both:
-#   - "sql-primary" Type: Virtual machine (the actual IaaS VM)
-#   - "sql-primary" Type: SQL virtual machine (this management layer)
-# Both names must match - it's how Azure links them together.
-resource "azurerm_mssql_virtual_machine" "sql_vm" {
-  count                            = local.sql_vm_count
-  virtual_machine_id               = azurerm_windows_virtual_machine.sql_vm[count.index].id
-  sql_license_type                 = "PAYG"  # or "AHUB" if you have licenses
-  sql_connectivity_port            = 1433
-  sql_connectivity_type            = "PRIVATE"
-  sql_connectivity_update_password = random_password.sql_vm[count.index].result
-  sql_connectivity_update_username = "sqladmin"
-
-  auto_patching {
-    day_of_week                            = "Sunday"
-    maintenance_window_duration_in_minutes = 60
-    maintenance_window_starting_hour       = 2
-  }
-
-  # Storage configuration removed - configure disks manually or add later
-  # The extension registration alone takes time; storage config was timing out
-
-  tags = local.tags
-
-  timeouts {
-    create = "30m"
-    update = "30m"
-    delete = "30m"
-  }
-
-  depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
-}
+# SQL IaaS Agent Extension removed due to consistent timeouts
+# Disk configuration is handled by the custom script extension above
+# You have a fully functional SQL Server without it
 
 # Extension 1: Run common setup on both VMs (commented out - scripts not yet created)
 # resource "azurerm_virtual_machine_extension" "sql_setup" {
