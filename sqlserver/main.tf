@@ -175,6 +175,50 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   caching            = "ReadOnly"
 }
 
+# SQL IaaS Agent Extension - manages SQL Server configuration
+resource "azurerm_mssql_virtual_machine" "sql_vm" {
+  count                            = local.sql_vm_count
+  virtual_machine_id               = azurerm_windows_virtual_machine.sql_vm[count.index].id
+  sql_license_type                 = "PAYG"  # or "AHUB" if you have licenses
+  sql_connectivity_port            = 1433
+  sql_connectivity_type            = "PRIVATE"
+  sql_connectivity_update_password = random_password.sql_vm[count.index].result
+  sql_connectivity_update_username = "sqladmin"
+
+  auto_patching {
+    day_of_week                            = "Sunday"
+    maintenance_window_duration_in_minutes = 60
+    maintenance_window_starting_hour       = 2
+  }
+
+  storage_configuration {
+    disk_type             = "NEW"
+    storage_workload_type = "OLTP"
+
+    # Data disks configuration
+    data_settings {
+      default_file_path = "F:\\Data"
+      luns              = [0]  # LUN 0 is the data disk
+    }
+
+    # Log disk configuration
+    log_settings {
+      default_file_path = "G:\\Log"
+      luns              = [1]  # LUN 1 is the log disk
+    }
+
+    # TempDB configuration
+    temp_db_settings {
+      default_file_path = "T:\\TempDB"
+      luns              = [2]  # LUN 2 is the tempdb disk
+    }
+  }
+
+  tags = local.tags
+
+  depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
+}
+
 # Extension 1: Run common setup on both VMs (commented out - scripts not yet created)
 # resource "azurerm_virtual_machine_extension" "sql_setup" {
 #   count                      = local.sql_vm_count
