@@ -1,19 +1,17 @@
 
-# Generate random passwords for SQL VM admin accounts
-resource "random_password" "sql_vm" {
-  count   = length(var.sql_vm_names)
+# Generate single password for both SQL VM admin accounts
+resource "random_password" "sql_vm_admin" {
   length  = 32
   special = true
 }
 
-# Store SQL VM admin passwords in Key Vault
+# Store SQL VM admin password in Key Vault
 resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
-  count        = length(var.sql_vm_names)
-  name         = "${var.sql_vm_names[count.index]}-local-admin"
-  value        = random_password.sql_vm[count.index].result
+  name         = "sql-vm-admin-password"
+  value        = random_password.sql_vm_admin.result
   key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
 
-  content_type = "SQL Server VM local admin password"
+  content_type = "SQL Server VM local admin password (shared for primary and secondary)"
 }
 
 # Locals for naming and organization
@@ -107,7 +105,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   zone                = var.availability_zones[floor(count.index / var.data_disk_count) % length(var.availability_zones)]
 
   admin_username = var.sql_admin_username
-  admin_password = random_password.sql_vm[0].result
+  admin_password = random_password.sql_vm_admin.result
 
   network_interface_ids = [
     azurerm_network_interface.sql_vm[count.index].id
@@ -144,18 +142,6 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   }
 
   depends_on = [azurerm_network_interface.sql_vm]
-  #  provisioner "remote-exec" {
-  #   inline = [
-  #     "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
-  #   ]
-
-  #   connection {
-  #     type     = "winrm"
-  #     user     = var.sql_admin_username
-  #     password = random_password.sql_vm[count.index].result
-  #     host     = azurerm_network_interface.sql_vm[count.index].private_ip_address
-  #   }
-  # }
 }
 
 # SQL Server disks - unified resource for all disk types (data, log, tempdb)
