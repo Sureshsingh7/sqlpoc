@@ -95,6 +95,24 @@ resource "azurerm_role_assignment" "kv_suresh_reader" {
   principal_id         = var.suresh_principal_id
 }
 
+# Private DNS Zone for Key Vault
+resource "azurerm_private_dns_zone" "kv" {
+  name                = "privatelink.vaultcore.azure.net"
+  resource_group_name = data.azurerm_resource_group.ops.name
+
+  tags = local.tags
+}
+
+# Link Private DNS Zone for Key Vault to OPS VNet
+resource "azurerm_private_dns_zone_virtual_network_link" "kv_ops_vnet" {
+  name                  = "link-kv-ops-vnet"
+  resource_group_name   = data.azurerm_resource_group.ops.name
+  private_dns_zone_name = azurerm_private_dns_zone.kv.name
+  virtual_network_id    = data.terraform_remote_state.network.outputs.ops_vnet_id
+
+  tags = local.tags
+}
+
 # Private Endpoint for Key Vault
 resource "azurerm_private_endpoint" "kv_pep" {
   name                = "pep-kv-fnz-poc"
@@ -110,4 +128,10 @@ resource "azurerm_private_endpoint" "kv_pep" {
   }
 
   tags = local.tags
+
+  private_dns_zone_group {
+    name                 = "kv-dns-zone-group"
+    private_dns_zone_ids = [azurerm_private_dns_zone.kv.id]
+  }
 }
+
