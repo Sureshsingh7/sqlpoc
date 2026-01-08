@@ -95,16 +95,12 @@ resource "azurerm_role_assignment" "kv_suresh_reader" {
   principal_id         = var.suresh_principal_id
 }
 
-# Role Assignment for Terraform Identity on TF State Storage Account
-resource "azurerm_role_assignment" "tfstate_sa_reader" {
-  scope                = "/subscriptions/${var.subscription_id}/resourceGroups/rg-fnz-poc-tfstate-se/providers/Microsoft.Storage/storageAccounts/stfnzpocdj522c"
-  role_definition_name = "Reader"
-  principal_id         = var.terraform_uami_principal_id
-}
-
-# ============================================================================
-# Private DNS Zones for Key Vault and Blob Storage
-# ============================================================================
+# # Role Assignment for Terraform Identity on TF State Storage Account
+# resource "azurerm_role_assignment" "tfstate_sa_reader" {
+#   scope                = "/subscriptions/${var.subscription_id}/resourceGroups/rg-fnz-poc-tfstate-se/providers/Microsoft.Storage/storageAccounts/stfnzpocdj522c"
+#   role_definition_name = "Reader"
+#   principal_id         = var.terraform_uami_principal_id
+# }
 
 # Private DNS Zone for Key Vault
 resource "azurerm_private_dns_zone" "kv" {
@@ -123,10 +119,6 @@ resource "azurerm_private_dns_zone_virtual_network_link" "kv_ops_vnet" {
 
   tags = local.tags
 }
-
-# ============================================================================
-# Private DNS Zone for Blob Storage
-# ============================================================================
 
 # Private DNS Zone for Blob Storage
 resource "azurerm_private_dns_zone" "blob" {
