@@ -95,13 +95,6 @@ resource "azurerm_role_assignment" "kv_suresh_reader" {
   principal_id         = var.suresh_principal_id
 }
 
-# # Role Assignment for Terraform Identity on TF State Storage Account
-# resource "azurerm_role_assignment" "tfstate_sa_reader" {
-#   scope                = "/subscriptions/${var.subscription_id}/resourceGroups/rg-fnz-poc-tfstate-se/providers/Microsoft.Storage/storageAccounts/stfnzpocdj522c"
-#   role_definition_name = "Reader"
-#   principal_id         = var.terraform_uami_principal_id
-# }
-
 # Private DNS Zone for Key Vault
 resource "azurerm_private_dns_zone" "kv" {
   name                = "privatelink.vaultcore.azure.net"
@@ -115,24 +108,6 @@ resource "azurerm_private_dns_zone_virtual_network_link" "kv_ops_vnet" {
   name                  = "link-kv-ops-vnet"
   resource_group_name   = data.azurerm_resource_group.ops.name
   private_dns_zone_name = azurerm_private_dns_zone.kv.name
-  virtual_network_id    = data.terraform_remote_state.network.outputs.ops_vnet_id
-
-  tags = local.tags
-}
-
-# Private DNS Zone for Blob Storage
-resource "azurerm_private_dns_zone" "blob" {
-  name                = "privatelink.blob.core.windows.net"
-  resource_group_name = data.azurerm_resource_group.ops.name
-
-  tags = local.tags
-}
-
-# Link Private DNS Zone for Blob to OPS VNet
-resource "azurerm_private_dns_zone_virtual_network_link" "blob_ops_vnet" {
-  name                  = "link-blob-ops-vnet"
-  resource_group_name   = data.azurerm_resource_group.ops.name
-  private_dns_zone_name = azurerm_private_dns_zone.blob.name
   virtual_network_id    = data.terraform_remote_state.network.outputs.ops_vnet_id
 
   tags = local.tags
@@ -159,31 +134,4 @@ resource "azurerm_private_endpoint" "kv_pep" {
     private_dns_zone_ids = [azurerm_private_dns_zone.kv.id]
   }
 }
-
-# data "azurerm_storage_account" "tfstate_sa" {
-#   name                = "stfnzpocdj522c"
-#   resource_group_name = "rg-fnz-poc-tfstate-se"
-# }
-
-# resource "azurerm_private_endpoint" "storage_account_pep" {
-#   name                = "pep-state-sa-fnz-poc"
-#   location            = data.azurerm_resource_group.ops.location
-#   resource_group_name = data.azurerm_resource_group.ops.name
-#   subnet_id           = data.terraform_remote_state.network.outputs.pep_subnet_id
-
-#   private_service_connection {
-#     name                           = "psc-blob-fnz-poc"
-#     private_connection_resource_id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-tfstate-se/providers/Microsoft.Storage/storageAccounts/stfnzpocdj522c"
-#     is_manual_connection           = false
-#     subresource_names              = ["Blob"]
-#   }
-
-#   private_dns_zone_group {
-#     name                 = "blob-dns-zone-group"
-#     private_dns_zone_ids = [azurerm_private_dns_zone.blob.id]
-#   }
-
-#   tags = local.tags
-# }
-
 
