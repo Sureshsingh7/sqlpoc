@@ -95,10 +95,7 @@ resource "azurerm_role_assignment" "kv_suresh_reader" {
   principal_id         = var.suresh_principal_id
 }
 
-# ============================================================================
 # Role Assignment for Terraform Identity on TF State Storage Account
-# ============================================================================
-
 resource "azurerm_role_assignment" "tfstate_sa_reader" {
   scope                = "/subscriptions/${var.subscription_id}/resourceGroups/rg-fnz-poc-tfstate-se/providers/Microsoft.Storage/storageAccounts/stfnzpocdj522c"
   role_definition_name = "Reader"
@@ -171,11 +168,10 @@ resource "azurerm_private_endpoint" "kv_pep" {
   }
 }
 
-data "azurerm_storage_account" "tfstate_sa" {
-  name                = "stfnzpocdj522c"
-  resource_group_name = "rg-fnz-poc-tfstate-se"
-
-}
+# data "azurerm_storage_account" "tfstate_sa" {
+#   name                = "stfnzpocdj522c"
+#   resource_group_name = "rg-fnz-poc-tfstate-se"
+# }
 
 resource "azurerm_private_endpoint" "storage_account_pep" {
   name                = "pep-state-sa-fnz-poc"
@@ -185,7 +181,7 @@ resource "azurerm_private_endpoint" "storage_account_pep" {
 
   private_service_connection {
     name                           = "psc-blob-fnz-poc"
-    private_connection_resource_id = data.azurerm_storage_account.tfstate_sa.id
+    private_connection_resource_id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-tfstate-se/providers/Microsoft.Storage/storageAccounts/stfnzpocdj522c"
     is_manual_connection           = false
     subresource_names              = ["Blob"]
   }
