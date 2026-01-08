@@ -175,7 +175,12 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   caching            = "ReadOnly"
 }
 
-# SQL IaaS Agent Extension - manages SQL Server configuration
+# SQL IaaS Agent Extension - NOT a separate VM!
+# This resource manages SQL Server configuration on the existing VMs above.
+# In Azure Portal, you'll see both:
+#   - "sql-primary" Type: Virtual machine (the actual IaaS VM)
+#   - "sql-primary" Type: SQL virtual machine (this management layer)
+# Both names must match - it's how Azure links them together.
 resource "azurerm_mssql_virtual_machine" "sql_vm" {
   count                            = local.sql_vm_count
   virtual_machine_id               = azurerm_windows_virtual_machine.sql_vm[count.index].id
