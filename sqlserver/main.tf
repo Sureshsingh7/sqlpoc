@@ -216,6 +216,12 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
 
   tags = local.tags
 
+  timeouts {
+    create = "90m"
+    update = "90m"
+    delete = "90m"
+  }
+
   depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
 }
 
