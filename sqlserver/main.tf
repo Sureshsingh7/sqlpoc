@@ -115,7 +115,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
 
   os_disk {
     caching              = "ReadWrite"
-    storage_account_type = var.os_disk_type
+    storage_account_type = "Premium_LRS"
     disk_size_gb         = var.os_disk_size_gb
   }
 
@@ -136,8 +136,26 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   }
   tags = local.tags
 
-  depends_on = [azurerm_network_interface.sql_vm]
+  lifecycle {
+    ignore_changes = [
+      os_disk[0].name,
+      admin_password
+    ]
+  }
 
+  depends_on = [azurerm_network_interface.sql_vm]
+  #  provisioner "remote-exec" {
+  #   inline = [
+  #     "powershell -ExecutionPolicy Unrestricted -File C:/scripts/setup-vm-${count.index}.ps1"
+  #   ]
+
+  #   connection {
+  #     type     = "winrm"
+  #     user     = var.sql_admin_username
+  #     password = random_password.sql_vm[count.index].result
+  #     host     = azurerm_network_interface.sql_vm[count.index].private_ip_address
+  #   }
+  # }
 }
 
 # SQL Server disks - unified resource for all disk types (data, log, tempdb)
@@ -162,7 +180,7 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   caching            = "ReadOnly"
 }
 
-# Extension 1: Run common setup on both VMs
+# Extension 1: Run common setup on both VMs (commented out - scripts not yet created)
 # resource "azurerm_virtual_machine_extension" "sql_setup" {
 #   count                      = local.sql_vm_count
 #   name                       = "sql-setup-${count.index + 1}"

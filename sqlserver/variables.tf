@@ -48,7 +48,7 @@ variable "vm_size" {
 variable "os_disk_type" {
   type        = string
   description = "OS disk storage type"
-  default     = "standard_LRS"
+  default     = "Premium_LRS"
 }
 
 variable "os_disk_size_gb" {
@@ -59,8 +59,8 @@ variable "os_disk_size_gb" {
 
 variable "data_disk_type" {
   type        = string
-  description = "SQL data disk storage type (standard_LRS for production)"
-  default     = "standard_LRS"
+  description = "SQL data disk storage type (Premium_LRS for production)"
+  default     = "Premium_LRS"
 }
 
 variable "data_disk_count" {

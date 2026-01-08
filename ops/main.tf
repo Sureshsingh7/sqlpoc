@@ -50,6 +50,13 @@ resource "azurerm_linux_virtual_machine" "runner" {
     sku       = "22_04-lts"
     version   = "latest"
   }
+
+  identity {
+    type = "UserAssigned"
+    identity_ids = [
+      var.terraform_uami_resource_id
+    ]
+  }
 }
 
 resource "azurerm_key_vault" "ops" {
