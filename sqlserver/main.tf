@@ -167,7 +167,7 @@ resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
 
   settings = jsonencode({
     fileUris         = [local.disk_setup_file_uri]
-    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File disk_setup.ps1"
+    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
   })
 
   depends_on = [
