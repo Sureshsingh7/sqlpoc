@@ -24,6 +24,12 @@ locals {
   primary_vm_ip   = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, 10)
   secondary_vm_ip = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, 10)
 
+  # Dynamically calculate Cluster VIPs from subnet CIDR blocks
+  # Cluster primary VIP in sql_subnet_sql1 (index 20)
+  # Cluster secondary VIP in sql_subnet_sql2 (index 75)
+  cluster_primary_ip   = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, 20)
+  cluster_secondary_ip = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, 75)
+
   tags = merge(
     {
       "project"   = "SQLPOC"
@@ -182,8 +188,8 @@ resource "null_resource" "sql_failover_cluster" {
     cluster_name    = var.failover_cluster_name
     primary_node    = "${var.sql_vm_names[0]}.sqlpoc.local"
     secondary_node  = "${var.sql_vm_names[1]}.sqlpoc.local"
-    cluster_ip_1    = var.cluster_primary_ip
-    cluster_ip_2    = var.cluster_secondary_ip
+    cluster_ip_1    = local.cluster_primary_ip
+    cluster_ip_2    = local.cluster_secondary_ip
     primary_vm_id   = azurerm_windows_virtual_machine.sql_vm[0].id
     secondary_vm_id = azurerm_windows_virtual_machine.sql_vm[1].id
   }
