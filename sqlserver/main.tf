@@ -107,10 +107,6 @@ resource "azurerm_network_interface" "sql_vm" {
     private_ip_address            = count.index == 0 ? local.primary_vm_ip : local.secondary_vm_ip
   }
 
-  lifecycle {
-    create_before_destroy = true
-  }
-
   tags = local.tags
 }
 
