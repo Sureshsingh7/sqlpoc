@@ -26,6 +26,7 @@ variable "sql_vm_names" {
 variable "sql_private_ips" {
   type        = list(string)
   description = "Static private IP addresses for SQL Server VMs"
+  default     = ["10.10.0.10", "10.10.0.74"]
 }
 
 
