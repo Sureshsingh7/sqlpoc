@@ -37,12 +37,12 @@ locals {
   all_disks = flatten([
     for vm_idx in range(local.sql_vm_count) : [
       for disk in local.disks_per_vm : {
-        key             = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
-        vm_index        = vm_idx
-        name            = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
-        disk_size_gb    = disk.disk_size_gb
-        storage_type    = disk.storage_type
-        lun             = disk.lun
+        key          = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
+        vm_index     = vm_idx
+        name         = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
+        disk_size_gb = disk.disk_size_gb
+        storage_type = disk.storage_type
+        lun          = disk.lun
       }
     ]
   ])
@@ -136,7 +136,24 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   caching            = "ReadOnly"
 }
 
-# SQL IaaS Agent Extension - configures attached disks and SQL Server settings
+# Custom script to format and configure disks
+resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
+  count                      = local.sql_vm_count
+  name                       = "configure-sql-disks"
+  virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
+  publisher                  = "Microsoft.Compute"
+  type                       = "CustomScriptExtension"
+  type_handler_version       = "1.10"
+  auto_upgrade_minor_version = true
+
+  settings = jsonencode({
+    commandToExecute = "powershell -ExecutionPolicy Unrestricted -Command \"Get-Disk | Where-Object PartitionStyle -eq 'RAW' | ForEach-Object { $diskNumber = $_.Number; $driveLetter = @{1='F'; 2='G'; 3='T'}[$diskNumber]; if($driveLetter) { Initialize-Disk -Number $diskNumber -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter $driveLetter | Format-Volume -FileSystem NTFS -NewFileSystemLabel $driveLetter -Confirm:`$false -Force } }; New-Item -ItemType Directory -Path F:\\Data, G:\\Log, T\\TempDB -Force\""
+  })
+
+  depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
+}
+
+# SQL IaaS Agent Extension - SQL Server configuration only (no storage config)
 resource "azurerm_mssql_virtual_machine" "sql_vm" {
   count                            = local.sql_vm_count
   virtual_machine_id               = azurerm_windows_virtual_machine.sql_vm[count.index].id
@@ -146,36 +163,12 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   sql_connectivity_update_password = random_password.sql_vm[count.index].result
   sql_connectivity_update_username = var.sql_admin_username
 
-  # Automated disk configuration - uses existing attached disks
-  storage_configuration {
-    disk_type             = "EXTEND"
-    storage_workload_type = "OLTP"
-
-    # Data disks configuration
-    data_settings {
-      default_file_path = "F:\\Data"
-      luns              = [0]
-    }
-
-    # Log disks configuration
-    log_settings {
-      default_file_path = "G:\\Log"
-      luns              = [1]
-    }
-
-    # TempDB configuration
-    temp_db_settings {
-      default_file_path = "T:\\TempDB"
-      luns              = [2]
-    }
-  }
-
   # SQL Server instance configuration
   sql_instance {
     collation                            = "SQL_Latin1_General_CP1_CI_AS"
-    max_dop                              = 0 # 0 = SQL Server decides based on CPU cores
-    max_server_memory_mb                 = 2147483647 # 0 = SQL Server manages memory dynamically
+    max_dop                              = 0
     min_server_memory_mb                 = 0
+    max_server_memory_mb                 = 12288  # 12GB for D4s_v4 (16GB RAM), leaves 4GB for OS
     adhoc_workloads_optimization_enabled = true
     instant_file_initialization_enabled  = true
   }
@@ -190,13 +183,13 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   tags = local.tags
 
   timeouts {
-    create = "120m"
-    update = "120m"
+    create = "30m"
+    update = "30m"
   }
 
   depends_on = [
     azurerm_windows_virtual_machine.sql_vm,
-    azurerm_virtual_machine_data_disk_attachment.sql_disk_attach
+    azurerm_virtual_machine_extension.sql_disk_setup
   ]
 }
 
