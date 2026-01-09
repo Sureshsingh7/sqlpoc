@@ -137,7 +137,22 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          terraform apply -auto-approve tfplan
+
+          log_file="terraform-apply.log"
+          rm -f "$log_file"
+
+          ( terraform apply -auto-approve tfplan 2>&1 | tee "$log_file" ) &
+          pid=$!
+
+          # Heartbeat every 2 minutes so long-running resources don't look hung.
+          while kill -0 "$pid" 2>/dev/null; do
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform apply still running..."
+            tail -n 5 "$log_file" 2>/dev/null || true
+            sleep 120
+          done
+
+          wait "$pid"
           code=$?
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           exit 0
