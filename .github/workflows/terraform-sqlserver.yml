@@ -33,7 +33,7 @@ jobs:
 
       - name: Set Az Login with UAMI
         run: |
-          az login --identity
+          az login --identity --username "$ARM_CLIENT_ID"
 
       # 2️⃣ Force clean workspace
       - name: Ensure clean workspace

@@ -9,15 +9,16 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   try{Set-Disk -Number $n -IsOffline $false -ErrorAction SilentlyContinue|Out-Null}catch{}
   try{Set-Disk -Number $n -IsReadOnly $false -ErrorAction SilentlyContinue|Out-Null}catch{}
   $d=Get-Disk -Number $n
-  if($d.PartitionStyle -eq 'RAW'){
-    Initialize-Disk -Number $n -PartitionStyle GPT|Out-Null
+  if($d.PartitionStyle -eq 'RAW'){Initialize-Disk -Number $n -PartitionStyle GPT|Out-Null}
+  $p=Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue|?{$_.Type -ne 'Reserved'}|Sort Size -Desc|Select -First 1
+  if(-not $p){
     $p=New-Partition -DiskNumber $n -UseMaximumSize -AssignDriveLetter:$false
     Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl|Out-Null
     Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Confirm:$false -Force|Out-Null
   } else {
-    $p=Get-Partition -DiskNumber $n|?{$_.Type -ne 'Reserved'}|Sort Size -Desc|Select -First 1
-    if(-not $p){throw "No usable partition on disk $n"}
     if($p.DriveLetter -ne $dl){Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl|Out-Null}
+    $v=Get-Volume -DriveLetter $dl -ErrorAction SilentlyContinue
+    if(-not $v){Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Confirm:$false -Force|Out-Null}
   }
   New-Item -ItemType Directory -Path $dir -Force|Out-Null
 }
@@ -29,12 +30,18 @@ try{
   $map=@{}
   for($i=0;$i -lt 30;$i++){
     $map=@{}
-    foreach($d in (Get-Disk|?{-not $_.IsBoot -and -not $_.IsSystem})){
-      $loc=$d.Location
-      $lun=$null
-      if($loc -match 'LUN\s*(\d+)'){$lun=[int]$Matches[1]}
-      elseif($loc -match 'L(\d+)\)'){$lun=[int]$Matches[1]}
-      if($lun -ne $null){$map[$lun]=[int]$d.Number}
+    foreach($dd in (Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue)){
+      if($dd.Index -eq $null -or $dd.SCSILogicalUnit -eq $null){continue}
+      $lun=[int]$dd.SCSILogicalUnit;$num=[int]$dd.Index
+      if($lun -in 0,1,2){$map[$lun]=$num}
+    }
+    if(-not ($map.ContainsKey(0) -and $map.ContainsKey(1) -and $map.ContainsKey(2))){
+      foreach($d in (Get-Disk|?{-not $_.IsBoot -and -not $_.IsSystem})){
+        $loc=$d.Location;$lun=$null
+        if($loc -match 'LUN\s*(\d+)'){$lun=[int]$Matches[1]}
+        elseif($loc -match 'L(\d+)\)'){$lun=[int]$Matches[1]}
+        if($lun -ne $null -and ($lun -in 0,1,2)){$map[$lun]=[int]$d.Number}
+      }
     }
     if($i -eq 0 -or ($i % 3 -eq 2)){
       $ds=((Get-Disk|?{-not $_.IsBoot -and -not $_.IsSystem}|%{ "$($_.Number)=$($_.Location)" }) -join ';')
