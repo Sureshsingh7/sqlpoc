@@ -57,7 +57,10 @@ data "azurerm_storage_account_sas" "script_sas" {
   expiry     = timeadd(timestamp(), "24h")
 
   services {
-    blob = true
+    blob  = true
+    queue = false
+    table = false
+    file  = false
   }
 
   resource_types {
@@ -67,8 +70,16 @@ data "azurerm_storage_account_sas" "script_sas" {
   }
 
   permissions {
-    read = true
-    list = true
+    read    = true
+    write   = false
+    delete  = false
+    list    = true
+    add     = false
+    create  = false
+    update  = false
+    process = false
+    tag     = false
+    filter  = false
   }
 }
 
