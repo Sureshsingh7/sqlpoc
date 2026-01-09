@@ -201,11 +201,6 @@ resource "null_resource" "sql_failover_cluster" {
     command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[0]} --command-id RunPowerShellScript --scripts 'Write-Host \"Waiting for secondary node to be ready...\"; Start-Sleep -Seconds 120; Write-Host \"Checking if failover cluster already exists...\"; $clusterExists = $null; try { $clusterExists = Get-Cluster -Name ${self.triggers.cluster_name} -ErrorAction Stop; } catch { Write-Host \"Cluster does not exist, will create it now...\"; }; if ($clusterExists) { Write-Host \"Failover cluster ${self.triggers.cluster_name} already exists. Skipping cluster creation.\"; } else { Write-Host \"Creating failover cluster...\"; New-Cluster -Name ${self.triggers.cluster_name} -Node ${self.triggers.primary_node}, ${self.triggers.secondary_node} -AdministrativeAccessPoint DNS -StaticAddress ${self.triggers.cluster_ip_1}, ${self.triggers.cluster_ip_2} -Force -WarningAction SilentlyContinue; Write-Host \"Failover cluster created successfully\"; }'"
   }
 
-  provisioner "local-exec" {
-    when    = destroy
-    command = "Write-Host \"Cluster resources will be retained. To remove, manually delete the cluster from the primary node.\""
-  }
-
   depends_on = [
     azurerm_virtual_machine_data_disk_attachment.sql_disk_attach,
     azurerm_windows_virtual_machine.sql_vm
