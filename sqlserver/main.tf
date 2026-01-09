@@ -25,6 +25,29 @@ locals {
       "tier"      = "Database"
     },
   )
+
+  # Disk configuration for SQL Server
+  disks_per_vm = [
+    { name_suffix = "data-01", disk_size_gb = var.data_disk_size_gb, storage_type = var.data_disk_type, lun = 0 },
+    { name_suffix = "log-01", disk_size_gb = var.log_disk_size_gb, storage_type = var.log_disk_type, lun = 1 },
+    { name_suffix = "tempdb-01", disk_size_gb = var.tempdb_disk_size_gb, storage_type = var.tempdb_disk_type, lun = 2 }
+  ]
+
+  # Flatten to create all disks across all VMs
+  all_disks = flatten([
+    for vm_idx in range(local.sql_vm_count) : [
+      for disk in local.disks_per_vm : {
+        key             = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
+        vm_index        = vm_idx
+        name            = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
+        disk_size_gb    = disk.disk_size_gb
+        storage_type    = disk.storage_type
+        lun             = disk.lun
+      }
+    ]
+  ])
+
+  all_disks_map = { for disk in local.all_disks : disk.key => disk }
 }
 
 # Network interfaces for SQL VMs
@@ -90,7 +113,30 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   depends_on = [azurerm_network_interface.sql_vm]
 }
 
-# SQL IaaS Agent Extension - handles disk creation, formatting, and SQL Server configuration
+# Create data disks for SQL Server
+resource "azurerm_managed_disk" "sql_disk" {
+  for_each             = local.all_disks_map
+  name                 = each.value.name
+  location             = var.location
+  resource_group_name  = var.sql_resource_group_name
+  storage_account_type = each.value.storage_type
+  create_option        = "Empty"
+  disk_size_gb         = each.value.disk_size_gb
+  zone                 = var.availability_zones[each.value.vm_index % length(var.availability_zones)]
+
+  tags = local.tags
+}
+
+# Attach data disks to SQL Server VMs
+resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
+  for_each           = local.all_disks_map
+  managed_disk_id    = azurerm_managed_disk.sql_disk[each.key].id
+  virtual_machine_id = azurerm_windows_virtual_machine.sql_vm[each.value.vm_index].id
+  lun                = each.value.lun
+  caching            = "ReadOnly"
+}
+
+# SQL IaaS Agent Extension - configures attached disks and SQL Server settings
 resource "azurerm_mssql_virtual_machine" "sql_vm" {
   count                            = local.sql_vm_count
   virtual_machine_id               = azurerm_windows_virtual_machine.sql_vm[count.index].id
@@ -100,9 +146,9 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   sql_connectivity_update_password = random_password.sql_vm[count.index].result
   sql_connectivity_update_username = var.sql_admin_username
 
-  # Automated disk creation and SQL Server storage configuration
+  # Automated disk configuration - uses existing attached disks
   storage_configuration {
-    disk_type             = "NEW"
+    disk_type             = "EXTEND"
     storage_workload_type = "OLTP"
 
     # Data disks configuration
@@ -148,7 +194,10 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
     update = "120m"
   }
 
-  depends_on = [azurerm_windows_virtual_machine.sql_vm]
+  depends_on = [
+    azurerm_windows_virtual_machine.sql_vm,
+    azurerm_virtual_machine_data_disk_attachment.sql_disk_attach
+  ]
 }
 
 # Future: Failover Clustering Configuration
