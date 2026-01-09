@@ -141,7 +141,10 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
     ]
   }
 
-  depends_on = [azurerm_network_interface.sql_vm]
+  depends_on = [
+    azurerm_network_interface.sql_vm,
+    azurerm_key_vault_secret.sql_vm_admin_password
+  ]
 }
 
 # SQL Server disks - unified resource for all disk types (data, log, tempdb)
