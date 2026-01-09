@@ -92,10 +92,10 @@ jobs:
           set -e
           for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
             echo "== $vm configure-sql-disks.err.txt =="
-            az vm run-command invoke -g "$SQL_RG" -n RunPowerShellScript --vm-name "$vm" \
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.err.txt' -ErrorAction SilentlyContinue | Select-Object -Last 400" -o jsonc || true
             echo "== $vm configure-sql-disks.log (tail) =="
-            az vm run-command invoke -g "$SQL_RG" -n RunPowerShellScript --vm-name "$vm" \
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.log' -ErrorAction SilentlyContinue | Select-Object -Last 400" -o jsonc || true
           done
 
