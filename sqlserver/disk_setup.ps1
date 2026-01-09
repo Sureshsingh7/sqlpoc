@@ -50,7 +50,11 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
       if((Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber).DriveLetter -ne $dl){LogPartitionVolume $n $p.PartitionNumber $dl; throw "Set-Partition failed for disk $n -> ${dl}:"}
     }
     $v=Get-Volume -DriveLetter $dl -ErrorAction SilentlyContinue
-    if(-not $v){Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null}
+    $needsFormat = (-not $v) -or [string]::IsNullOrWhiteSpace($v.FileSystem) -or ($v.Size -le 0)
+    if($needsFormat){
+      L ("format {0}: (fs='{1}' size={2})" -f $dl, ($v.FileSystem), ($v.Size))
+      Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null
+    }
   }
 
   # Mount/visibility can lag behind formatting; wait and re-assert drive letter if needed.
