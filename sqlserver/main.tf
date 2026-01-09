@@ -183,8 +183,8 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   tags = local.tags
 
   timeouts {
-    create = "30m"
-    update = "30m"
+    create = "90m"
+    update = "90m"
   }
 
   depends_on = [

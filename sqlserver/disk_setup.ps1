@@ -25,26 +25,32 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
 
 $spec=@{0=@{l='F';b='DATA';d='F:\Data'};1=@{l='G';b='LOG';d='G:\Log'};2=@{l='T';b='TEMPDB';d='T:\TempDB'}}
 
-try{
-  L 'start'
-  $map=@{}
-  for($i=0;$i -lt 30;$i++){
-    $map=@{}
+function GetLunMap(){
+  $m=@{}
+  foreach($d in (Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -ErrorAction SilentlyContinue)){
+    if($d.IsBoot -or $d.IsSystem){continue}
+    $loc=$d.Location;$lun=$null
+    if($loc -match 'LUN\s*(\d+)'){$lun=[int]$Matches[1]}
+    elseif($loc -match 'L(\d+)\)'){$lun=[int]$Matches[1]}
+    if($lun -ne $null -and ($lun -in 0,1,2)){$m[$lun]=[int]$d.Number}
+  }
+  if($m.Count -lt 3){
     foreach($dd in (Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue)){
       if($dd.Index -eq $null -or $dd.SCSILogicalUnit -eq $null){continue}
       $lun=[int]$dd.SCSILogicalUnit;$num=[int]$dd.Index
-      if($lun -in 0,1,2){$map[$lun]=$num}
+      if($lun -in 0,1,2){$m[$lun]=$num}
     }
-    if(-not ($map.ContainsKey(0) -and $map.ContainsKey(1) -and $map.ContainsKey(2))){
-      foreach($d in (Get-Disk|?{-not $_.IsBoot -and -not $_.IsSystem})){
-        $loc=$d.Location;$lun=$null
-        if($loc -match 'LUN\s*(\d+)'){$lun=[int]$Matches[1]}
-        elseif($loc -match 'L(\d+)\)'){$lun=[int]$Matches[1]}
-        if($lun -ne $null -and ($lun -in 0,1,2)){$map[$lun]=[int]$d.Number}
-      }
-    }
+  }
+  $m
+}
+
+try{
+  L 'start'
+  $map=@{}
+  for($i=0;$i -lt 60;$i++){
+    $map=GetLunMap
     if($map.ContainsKey(0) -and $map.ContainsKey(1) -and $map.ContainsKey(2)){break}
-    L ("wait disks retry {0}/30" -f ($i+1)); Start-Sleep -Seconds 10
+    L ("wait disks retry {0}/60 (found {1}/3)" -f ($i+1),$map.Count); Start-Sleep -Seconds 10
   }
   foreach($lun in 0,1,2){
     if(-not $map.ContainsKey($lun)){throw "No disk for LUN $lun"}
@@ -55,6 +61,8 @@ try{
   L 'ok'
   exit 0
 }catch{
-  Add-Content -Path $err -Value ((Get-Date -Format o)+" ERROR: "+($_|Out-String))
+  $e=$_
+  Add-Content -Path $err -Value ((Get-Date -Format o)+" ERROR: "+($e|Out-String))
+  if($e.ScriptStackTrace){Add-Content -Path $err -Value $e.ScriptStackTrace}
   exit 1
 }

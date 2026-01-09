@@ -109,6 +109,16 @@ jobs:
             az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.log' -ErrorAction SilentlyContinue | Select-Object -Last 400 | Out-String" \
               --query "value[0].message" -o tsv || true
+
+            echo "== $vm CustomScriptExtension status files (tail) =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "Get-ChildItem 'C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\Status\\*.status' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 3 | ForEach-Object { '--- ' + $_.FullName; Get-Content $_.FullName -Tail 200 } | Out-String" \
+              --query "value[0].message" -o tsv || true
+
+            echo "== $vm CustomScriptHandler.log (tail) =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "Get-ChildItem 'C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\CustomScriptHandler.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { '--- ' + $_.FullName; Get-Content $_.FullName -Tail 400 } | Out-String" \
+              --query "value[0].message" -o tsv || true
           done
 
       - name: Fail job if apply failed
