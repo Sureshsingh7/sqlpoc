@@ -215,11 +215,11 @@ resource "null_resource" "sql_failover_cluster" {
     command = "Write-Host \"Cluster resources will be retained. To remove, manually delete the cluster from the primary node.\""
   }
 
-#   depends_on = [
-#     azurerm_virtual_machine_data_disk_attachment.sql_disk_attach,
-#     azurerm_windows_virtual_machine.sql_vm
-#   ]
-# }
+  depends_on = [
+    azurerm_virtual_machine_data_disk_attachment.sql_disk_attach,
+    azurerm_windows_virtual_machine.sql_vm
+  ]
+}
 
 # Extension 1: Run common setup on both VMs (commented out - scripts not yet created)
 # resource "azurerm_virtual_machine_extension" "sql_setup" {
