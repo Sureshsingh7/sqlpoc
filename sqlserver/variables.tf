@@ -23,6 +23,11 @@ variable "sql_vm_names" {
   }
 }
 
+variable "sql_private_ips" {
+  type        = list(string)
+  description = "Static private IP addresses for SQL Server VMs"
+}
+
 
 variable "sql_admin_username" {
   type        = string
