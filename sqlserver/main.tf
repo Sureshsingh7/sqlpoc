@@ -147,7 +147,7 @@ resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
   auto_upgrade_minor_version = true
 
   settings = jsonencode({
-    commandToExecute = "powershell -ExecutionPolicy Unrestricted -Command \"Get-Disk | Where-Object PartitionStyle -eq 'RAW' | ForEach-Object { $diskNumber = $_.Number; $driveLetter = @{1='F'; 2='G'; 3='T'}[$diskNumber]; if($driveLetter) { Initialize-Disk -Number $diskNumber -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter $driveLetter | Format-Volume -FileSystem NTFS -NewFileSystemLabel $driveLetter -Confirm:`$false -Force } }; New-Item -ItemType Directory -Path F:\\Data, G:\\Log, T\\TempDB -Force\""
+    commandToExecute = "powershell -ExecutionPolicy Unrestricted -Command \"Get-Disk | Where-Object PartitionStyle -eq 'RAW' | ForEach-Object { $diskNumber = $_.Number; $driveLetter = @{1='F'; 2='G'; 3='T'}[$diskNumber]; if($driveLetter) { Initialize-Disk -Number $diskNumber -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter $driveLetter | Format-Volume -FileSystem NTFS -NewFileSystemLabel $driveLetter -Confirm:`$false -Force } }; New-Item -ItemType Directory -Path F:\\Data -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Path G:\\Log -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Path T:\\TempDB -Force -ErrorAction SilentlyContinue\""
   })
 
   depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
