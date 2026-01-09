@@ -14,11 +14,11 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   if(-not $p){
     $p=New-Partition -DiskNumber $n -UseMaximumSize -AssignDriveLetter:$false
     Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl|Out-Null
-    Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Confirm:$false -Force|Out-Null
+    Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null
   } else {
     if($p.DriveLetter -ne $dl){Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl|Out-Null}
     $v=Get-Volume -DriveLetter $dl -ErrorAction SilentlyContinue
-    if(-not $v){Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Confirm:$false -Force|Out-Null}
+    if(-not $v){Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null}
   }
   New-Item -ItemType Directory -Path $dir -Force|Out-Null
 }
