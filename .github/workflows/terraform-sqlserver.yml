@@ -21,6 +21,9 @@ jobs:
       ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
       ARM_SKIP_AZURECLI_AUTH: "true"
+      SQL_RG: rg-fnz-poc-sql-se
+      SQL_VM_PRIMARY: sql-primary
+      SQL_VM_SECONDARY: sql-secondary
     steps:
       # 1️⃣ Checkout FIRST
       - name: Checkout repository
@@ -65,4 +68,39 @@ jobs:
         run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+        id: tf_apply
+        continue-on-error: true
+        run: |
+          set +e
+          terraform apply -auto-approve tfplan
+          code=$?
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Diagnostics (extension instance-view)
+        if: steps.tf_apply.outputs.exitcode != '0'
+        run: |
+          set -e
+          echo "== sql-primary extension instance-view =="
+          az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_PRIMARY" -n configure-sql-disks --instance-view -o jsonc || true
+          echo "== sql-secondary extension instance-view =="
+          az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_SECONDARY" -n configure-sql-disks --instance-view -o jsonc || true
+
+      - name: Diagnostics (pull on-VM logs)
+        if: steps.tf_apply.outputs.exitcode != '0'
+        run: |
+          set -e
+          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+            echo "== $vm configure-sql-disks.err.txt =="
+            az vm run-command invoke -g "$SQL_RG" -n RunPowerShellScript --vm-name "$vm" \
+              --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.err.txt' -ErrorAction SilentlyContinue | Select-Object -Last 400" -o jsonc || true
+            echo "== $vm configure-sql-disks.log (tail) =="
+            az vm run-command invoke -g "$SQL_RG" -n RunPowerShellScript --vm-name "$vm" \
+              --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.log' -ErrorAction SilentlyContinue | Select-Object -Last 400" -o jsonc || true
+          done
+
+      - name: Fail job if apply failed
+        if: steps.tf_apply.outputs.exitcode != '0'
+        run: |
+          echo "Terraform apply failed (exitcode=${{ steps.tf_apply.outputs.exitcode }})"
+          exit 1

@@ -36,6 +36,10 @@ try{
       elseif($loc -match 'L(\d+)\)'){$lun=[int]$Matches[1]}
       if($lun -ne $null){$map[$lun]=[int]$d.Number}
     }
+    if($i -eq 0 -or ($i % 3 -eq 2)){
+      $ds=((Get-Disk|?{-not $_.IsBoot -and -not $_.IsSystem}|%{ "$($_.Number)=$($_.Location)" }) -join ';')
+      L ("disks: "+$ds)
+    }
     if($map.ContainsKey(0) -and $map.ContainsKey(1) -and $map.ContainsKey(2)){break}
     L ("wait disks retry {0}/30" -f ($i+1)); Start-Sleep -Seconds 10
   }
