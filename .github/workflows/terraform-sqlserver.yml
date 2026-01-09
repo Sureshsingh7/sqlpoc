@@ -91,12 +91,24 @@ jobs:
         run: |
           set -e
           for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+            echo "== $vm disk inventory =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "Get-Disk | Select Number,PartitionStyle,IsOffline,IsReadOnly,OperationalStatus,Size,Location | Format-Table -AutoSize | Out-String" \
+              --query "value[0].message" -o tsv || true
+
+            echo "== $vm temp log file list =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "Get-ChildItem 'C:\\Windows\\Temp\\configure-sql-disks*' -ErrorAction SilentlyContinue | Select Name,Length,LastWriteTime | Format-Table -AutoSize | Out-String" \
+              --query "value[0].message" -o tsv || true
+
             echo "== $vm configure-sql-disks.err.txt =="
             az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
-              --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.err.txt' -ErrorAction SilentlyContinue | Select-Object -Last 400" -o jsonc || true
+              --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.err.txt' -ErrorAction SilentlyContinue | Select-Object -Last 400 | Out-String" \
+              --query "value[0].message" -o tsv || true
             echo "== $vm configure-sql-disks.log (tail) =="
             az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
-              --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.log' -ErrorAction SilentlyContinue | Select-Object -Last 400" -o jsonc || true
+              --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.log' -ErrorAction SilentlyContinue | Select-Object -Last 400 | Out-String" \
+              --query "value[0].message" -o tsv || true
           done
 
       - name: Fail job if apply failed
