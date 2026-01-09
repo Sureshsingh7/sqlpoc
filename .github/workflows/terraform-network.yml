@@ -13,18 +13,25 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: network
+        working-directory: SQLPOC/network
+
+    env:
+      ARM_USE_MSI: true
+      ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      ARM_SKIP_AZURECLI_AUTH: "true"
 
     steps:
-      - name: Set Az Login with UAMI
-        run: |
-            az login --identity
-
       # 1️⃣ Checkout FIRST
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set Az Login with UAMI
+        run: |
+          az login --identity
 
       # 2️⃣ Force clean workspace
       - name: Ensure clean workspace
@@ -45,11 +52,6 @@ jobs:
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
           TFSTATE_KEY: "sqlpoc.network.tfstate"
-          ARM_USE_MSI: true
-          ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          ARM_SKIP_AZURECLI_AUTH: "true"
         run: |
           terraform init -reconfigure -upgrade \
             -backend-config="resource_group_name=${TFSTATE_RG}" \

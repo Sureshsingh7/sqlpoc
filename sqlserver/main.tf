@@ -148,6 +148,7 @@ resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
 
   settings = jsonencode({
     commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${trimspace(file("${path.module}/disk_setup_encoded.txt"))}"
+    timestamp        = filesha256("${path.module}/disk_setup.ps1")
   })
 
   depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
