@@ -3,6 +3,12 @@ variable "subscription_id" {
   description = "Azure Subscription ID"
 }
 
+variable "disk_setup_sas" {
+  type        = string
+  description = "User delegation SAS token (no leading '?') for downloading scripts/disk_setup.ps1 from the TFSTATE storage container"
+  sensitive   = true
+}
+
 variable "location" {
   type        = string
   description = "Azure region for SQL VM deployment"

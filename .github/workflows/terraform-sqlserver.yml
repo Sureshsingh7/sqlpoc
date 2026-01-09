@@ -64,6 +64,45 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
+      - name: Publish disk_setup.ps1 to TFSTATE + generate SAS
+        env:
+          TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
+          TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
+        run: |
+          set -euo pipefail
+
+          echo "Uploading disk_setup.ps1 to: ${TFSTATE_SA}/${TFSTATE_CONTAINER}/scripts/disk_setup.ps1"
+          az storage blob upload \
+            --auth-mode login \
+            --account-name "${TFSTATE_SA}" \
+            --container-name "${TFSTATE_CONTAINER}" \
+            --name "scripts/disk_setup.ps1" \
+            --file "disk_setup.ps1" \
+            --overwrite true \
+            --only-show-errors
+
+          # Short-lived user delegation SAS (AAD-based, no account keys)
+          expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
+          sas="$(az storage blob generate-sas \
+            --auth-mode login \
+            --as-user \
+            --account-name "${TFSTATE_SA}" \
+            --container-name "${TFSTATE_CONTAINER}" \
+            --name "scripts/disk_setup.ps1" \
+            --permissions r \
+            --expiry "${expiry}" \
+            --https-only \
+            -o tsv)"
+
+          if [ -z "${sas}" ]; then
+            echo "Failed to generate user-delegation SAS (empty output)."
+            echo "Ensure the runner identity can generate SAS via AAD (often requires Storage Blob Data Contributor + Blob Delegator on the storage account)."
+            exit 1
+          fi
+
+          # Export for Terraform (sensitive; avoid echoing the SAS)
+          echo "TF_VAR_disk_setup_sas=${sas}" >> "$GITHUB_ENV"
+
       - name: Terraform Plan
         run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
 
@@ -118,20 +157,6 @@ jobs:
             echo "== $vm CustomScriptHandler.log (tail) =="
             az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
               --scripts "(Get-ChildItem 'C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\CustomScriptHandler.log' -ErrorAction SilentlyContinue; Get-ChildItem 'C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\CustomScriptHandler.log' -ErrorAction SilentlyContinue) | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { '--- ' + $_.FullName; Get-Content $_.FullName -Tail 400 } | Out-String" \
-              --query "value[0].message" -o tsv || true
-          done
-
-      - name: Diagnostics (blob download via managed identity)
-        if: steps.tf_apply.outputs.exitcode != '0'
-        env:
-          DISK_SETUP_BLOB_URL: https://${{ secrets.TFSTATE_SA }}.blob.core.windows.net/${{ secrets.TFSTATE_CONTAINER }}/scripts/disk_setup.ps1
-        run: |
-          set -e
-          echo "Blob URL: $DISK_SETUP_BLOB_URL"
-          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
-            echo "== $vm blob access check (MI -> Storage) =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
-              --scripts "$ErrorActionPreference='Continue';$u='${DISK_SETUP_BLOB_URL}';Write-Host ('URL=' + $u);try{$tok=(Invoke-RestMethod -Headers @{Metadata='true'} -Method GET -Uri 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fstorage.azure.com%2F').access_token;Write-Host 'IMDS token: OK'}catch{Write-Host ('IMDS token: FAIL: ' + $_.Exception.Message);throw};$h=@{Authorization=('Bearer '+$tok);'x-ms-version'='2019-12-12';'x-ms-date'=(Get-Date).ToUniversalTime().ToString('R')};try{Write-Host 'HEAD request...';$r=Invoke-WebRequest -UseBasicParsing -Method Head -Headers $h -Uri $u;Write-Host ('HEAD status=' + [int]$r.StatusCode);$r.Headers.GetEnumerator() | Sort-Object Name | ForEach-Object { Write-Host (($_.Name)+': '+($_.Value -join ',')) }}catch{Write-Host ('HEAD failed: ' + $_.Exception.Message);if($_.Exception.Response){$resp=$_.Exception.Response;try{Write-Host ('HTTP=' + [int]$resp.StatusCode + ' ' + $resp.StatusDescription)}catch{};try{$resp.Headers.AllKeys | Sort-Object | ForEach-Object { Write-Host (($_)+': '+($resp.Headers[$_] -join ',')) }}catch{}}};try{Write-Host 'GET request (first 1KB)...';$g=Invoke-WebRequest -UseBasicParsing -Method Get -Headers $h -Uri $u;Write-Host ('GET status=' + [int]$g.StatusCode);Write-Host ('ContentLength=' + $g.RawContentLength);if($g.Content){Write-Host ($g.Content.Substring(0,[Math]::Min(1024,$g.Content.Length)))} }catch{Write-Host ('GET failed: ' + $_.Exception.Message);if($_.Exception.Response){$resp=$_.Exception.Response;try{Write-Host ('HTTP=' + [int]$resp.StatusCode + ' ' + $resp.StatusDescription)}catch{};try{$resp.Headers.AllKeys | Sort-Object | ForEach-Object { Write-Host (($_)+': '+($resp.Headers[$_] -join ',')) }}catch{}}}"
               --query "value[0].message" -o tsv || true
           done
 

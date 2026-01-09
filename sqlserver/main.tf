@@ -16,7 +16,12 @@ resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
 }
 
 # Host the disk setup script in the existing TFSTATE storage account/container.
-# This avoids account keys / SAS (which are blocked by policy) and uses Azure AD instead.
+# Terraform itself should not manage uploads/RBAC here because the runner identity
+# typically lacks `storageAccounts/read` and `Microsoft.Authorization/roleAssignments/*`
+# on the TFSTATE resource group.
+#
+# Instead, the GitHub Actions workflow uploads the script and generates a short-lived
+# *user delegation SAS* (Azure AD) which is passed to Terraform via `TF_VAR_disk_setup_sas`.
 locals {
   tfstate_resource_group_name  = "rg-fnz-poc-tfstate-se"
   tfstate_storage_account_name = "stfnzpocdj522c"
@@ -25,18 +30,8 @@ locals {
   disk_setup_blob_name = "scripts/disk_setup.ps1"
   disk_setup_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/${local.disk_setup_blob_name}"
 
-  tfstate_container_scope = "/subscriptions/${var.subscription_id}/resourceGroups/${local.tfstate_resource_group_name}/providers/Microsoft.Storage/storageAccounts/${local.tfstate_storage_account_name}/blobServices/default/containers/${local.tfstate_container_name}"
-
-  disk_setup_download_one_liner = "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';$u='${local.disk_setup_blob_url}';$o='C:\\Windows\\Temp\\disk_setup.ps1';$tok=(Invoke-RestMethod -Headers @{Metadata='true'} -Method GET -Uri 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fstorage.azure.com%2F').access_token;$h=@{Authorization=('Bearer '+$tok);'x-ms-version'='2019-12-12';'x-ms-date'=(Get-Date).ToUniversalTime().ToString('R')};for($i=1;$i -le 12;$i++){try{Invoke-WebRequest -UseBasicParsing -Headers $h -Uri $u -OutFile $o;break}catch{if($i -eq 12){throw};Start-Sleep -Seconds 10}};& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $o"
-  disk_setup_command_to_execute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"${local.disk_setup_download_one_liner}\""
-}
-
-resource "azurerm_storage_blob" "disk_setup" {
-  name                   = local.disk_setup_blob_name
-  storage_account_name   = local.tfstate_storage_account_name
-  storage_container_name = local.tfstate_container_name
-  type                   = "Block"
-  source                 = "${path.module}/disk_setup.ps1"
+  # The workflow provides a user-delegation SAS without a leading '?'.
+  disk_setup_file_uri = "${local.disk_setup_blob_url}?${var.disk_setup_sas}"
 }
 
 # Locals for naming and organization
@@ -72,14 +67,6 @@ locals {
   ])
 
   all_disks_map = { for disk in local.all_disks : disk.key => disk }
-}
-
-# Allow each SQL VM's managed identity to read the disk setup script blob.
-resource "azurerm_role_assignment" "sql_vm_tfstate_blob_reader" {
-  count                = local.sql_vm_count
-  scope                = local.tfstate_container_scope
-  role_definition_name = "Storage Blob Data Reader"
-  principal_id         = azurerm_windows_virtual_machine.sql_vm[count.index].identity[0].principal_id
 }
 
 # Network interfaces for SQL VMs
@@ -179,13 +166,12 @@ resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
   auto_upgrade_minor_version = true
 
   settings = jsonencode({
-    commandToExecute = local.disk_setup_command_to_execute
+    fileUris         = [local.disk_setup_file_uri]
+    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File disk_setup.ps1"
   })
 
   depends_on = [
     azurerm_virtual_machine_data_disk_attachment.sql_disk_attach,
-    azurerm_storage_blob.disk_setup,
-    azurerm_role_assignment.sql_vm_tfstate_blob_reader,
   ]
 }
 
