@@ -37,21 +37,6 @@ jobs:
           rm -rf .terraform
           rm -f .terraform.lock.hcl
 
-      # 3️⃣.5️⃣ Unlock Terraform State File
-      - name: Unlock Terraform State File
-        env:
-          TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
-          TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
-          TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
-          TFSTATE_KEY: "sqlpoc.sqlserver.tfstate"
-          ARM_USE_MSI: true
-          ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          ARM_SKIP_AZURECLI_AUTH: "true"
-        run: |
-          terraform force-unlock 1c48a0fb-4a8d-dd88-f0cf-1853b866d7ad -force
-
       # 4️⃣ Init (upgrade providers)
       - name: Terraform Init (SQL Server)
         env:
