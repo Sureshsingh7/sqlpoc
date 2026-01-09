@@ -13,13 +13,27 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   $p=Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue|?{$_.Type -ne 'Reserved'}|Sort Size -Desc|Select -First 1
   if(-not $p){
     $p=New-Partition -DiskNumber $n -UseMaximumSize -AssignDriveLetter:$false
-    Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl|Out-Null
+    $x=Get-Partition -DriveLetter $dl -ErrorAction SilentlyContinue
+    if($x -and $x.DiskNumber -ne $n){try{Remove-PartitionAccessPath -DiskNumber $x.DiskNumber -PartitionNumber $x.PartitionNumber -AccessPath "${dl}:\\" -ErrorAction SilentlyContinue|Out-Null}catch{}}
+    for($k=0;$k -lt 10;$k++){
+      try{Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl -ErrorAction Stop|Out-Null;break}catch{Start-Sleep -Seconds 1}
+    }
+    if((Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber).DriveLetter -ne $dl){throw "Set-Partition failed for disk $n -> ${dl}:"}
     Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null
   } else {
-    if($p.DriveLetter -ne $dl){Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl|Out-Null}
+    if($p.DriveLetter -ne $dl){
+      $x=Get-Partition -DriveLetter $dl -ErrorAction SilentlyContinue
+      if($x -and $x.DiskNumber -ne $n){try{Remove-PartitionAccessPath -DiskNumber $x.DiskNumber -PartitionNumber $x.PartitionNumber -AccessPath "${dl}:\\" -ErrorAction SilentlyContinue|Out-Null}catch{}}
+      for($k=0;$k -lt 10;$k++){
+        try{Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl -ErrorAction Stop|Out-Null;break}catch{Start-Sleep -Seconds 1}
+      }
+      if((Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber).DriveLetter -ne $dl){throw "Set-Partition failed for disk $n -> ${dl}:"}
+    }
     $v=Get-Volume -DriveLetter $dl -ErrorAction SilentlyContinue
     if(-not $v){Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null}
   }
+  for($j=0;$j -lt 20 -and -not (Test-Path "${dl}:\\");$j++){Start-Sleep -Milliseconds 500}
+  if(-not (Test-Path "${dl}:\\")){throw "Drive ${dl}: missing after format"}
   New-Item -ItemType Directory -Path $dir -Force|Out-Null
 }
 
@@ -45,6 +59,7 @@ function GetLunMap(){
 }
 
 try{
+  try{Remove-Item $log,$err -ErrorAction SilentlyContinue}catch{}
   L 'start'
   $map=@{}
   for($i=0;$i -lt 60;$i++){

@@ -15,6 +15,67 @@ resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
   content_type = "SQL Server VM local admin password"
 }
 
+# Host the disk setup script in a temporary blob so CustomScriptExtension can download it
+resource "random_string" "script_sa_suffix" {
+  length  = 6
+  upper   = false
+  special = false
+}
+
+resource "azurerm_storage_account" "script_sa" {
+  name                     = "stsqlpoc${random_string.script_sa_suffix.result}"
+  resource_group_name      = var.sql_resource_group_name
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+
+  tags = local.tags
+}
+
+resource "azurerm_storage_container" "script_container" {
+  name                  = "scripts"
+  storage_account_name  = azurerm_storage_account.script_sa.name
+  container_access_type = "private"
+}
+
+resource "azurerm_storage_blob" "disk_setup" {
+  name                   = "disk_setup.ps1"
+  storage_account_name   = azurerm_storage_account.script_sa.name
+  storage_container_name = azurerm_storage_container.script_container.name
+  type                   = "Block"
+  source                 = "${path.module}/disk_setup.ps1"
+}
+
+data "azurerm_storage_account_sas" "script_sas" {
+  connection_string = azurerm_storage_account.script_sa.primary_connection_string
+
+  https_only = true
+  start      = timestamp()
+  expiry     = timeadd(timestamp(), "24h")
+
+  services {
+    blob = true
+  }
+
+  resource_types {
+    service   = true
+    container = true
+    object    = true
+  }
+
+  permissions {
+    read = true
+    list = true
+  }
+}
+
+locals {
+  disk_setup_file_uri = "https://${azurerm_storage_account.script_sa.name}.blob.core.windows.net/${azurerm_storage_container.script_container.name}/${azurerm_storage_blob.disk_setup.name}?${data.azurerm_storage_account_sas.script_sas.sas}"
+}
+
 # Locals for naming and organization
 locals {
   sql_vm_count = length(var.sql_vm_names)
@@ -147,10 +208,14 @@ resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
   auto_upgrade_minor_version = true
 
   settings = jsonencode({
-    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${trimspace(file("${path.module}/disk_setup_encoded.txt"))}"
+    fileUris         = [local.disk_setup_file_uri]
+    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File disk_setup.ps1"
   })
 
-  depends_on = [azurerm_virtual_machine_data_disk_attachment.sql_disk_attach]
+  depends_on = [
+    azurerm_virtual_machine_data_disk_attachment.sql_disk_attach,
+    azurerm_storage_blob.disk_setup,
+  ]
 }
 
 # SQL IaaS Agent Extension - SQL Server configuration only (no storage config)
