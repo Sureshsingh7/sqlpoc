@@ -127,7 +127,7 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   sql_instance {
     collation                            = "SQL_Latin1_General_CP1_CI_AS"
     max_dop                              = 0 # 0 = SQL Server decides based on CPU cores
-    max_server_memory_mb                 = 0 # 0 = SQL Server manages memory dynamically
+    max_server_memory_mb                 = 2147483647 # 0 = SQL Server manages memory dynamically
     min_server_memory_mb                 = 0
     adhoc_workloads_optimization_enabled = true
     instant_file_initialization_enabled  = true
