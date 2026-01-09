@@ -18,17 +18,30 @@ resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
 locals {
   sql_vm_count = length(var.sql_vm_names)
 
+  # Extract subnet prefix lengths from CIDR notation (e.g., "10.10.0.0/26" → 26)
+  sql1_prefix_length = tonumber(split("/", data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix)[1])
+  sql2_prefix_length = tonumber(split("/", data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix)[1])
+
+  # Calculate maximum usable host index for each subnet
+  # Max hosts = 2^(32 - prefix_length) - 1, minus 4 reserved by Azure (.0, .1, .2, .3)
+  sql1_max_usable_index = pow(2, 32 - local.sql1_prefix_length) - 5
+  sql2_max_usable_index = pow(2, 32 - local.sql2_prefix_length) - 5
+
+  # Dynamically calculate host indices based on subnet size
+  # VM indices: 15% into usable range (ensures consistency across different subnet sizes)
+  # Cluster indices: 30% and 45% into usable range
+  primary_vm_host_index        = max(10, floor(local.sql1_max_usable_index * 0.15))
+  secondary_vm_host_index      = max(10, floor(local.sql2_max_usable_index * 0.15))
+  cluster_primary_host_index   = max(20, floor(local.sql1_max_usable_index * 0.30))
+  cluster_secondary_host_index = max(20, floor(local.sql2_max_usable_index * 0.45))
+
   # Dynamically calculate VM IPs from subnet CIDR blocks
-  # Using cidrhost() function: cidrhost(cidr_block, host_index)
-  # Index 10 and beyond to avoid Azure reserved IPs (.0, .1, .2, .3)
-  primary_vm_ip   = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, 10)
-  secondary_vm_ip = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, 10)
+  primary_vm_ip   = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, local.primary_vm_host_index)
+  secondary_vm_ip = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, local.secondary_vm_host_index)
 
   # Dynamically calculate Cluster VIPs from subnet CIDR blocks
-  # Cluster primary VIP in sql_subnet_sql1 (index 20)
-  # Cluster secondary VIP in sql_subnet_sql2 (index 75)
-  cluster_primary_ip   = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, 20)
-  cluster_secondary_ip = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, 75)
+  cluster_primary_ip   = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, local.cluster_primary_host_index)
+  cluster_secondary_ip = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, local.cluster_secondary_host_index)
 
   tags = merge(
     {
