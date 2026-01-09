@@ -5,6 +5,7 @@ on:
 
 jobs:
   terraform-sqlserver:
+    timeout-minutes: 240
     runs-on:
       - self-hosted
       - linux
@@ -141,6 +142,14 @@ jobs:
           log_file="terraform-apply.log"
           rm -f "$log_file"
 
+          on_term() {
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform apply received termination signal"
+            echo "Last 50 lines of $log_file:"
+            tail -n 50 "$log_file" 2>/dev/null || true
+          }
+          trap on_term SIGINT SIGTERM
+
           ( terraform apply -auto-approve tfplan 2>&1 | tee "$log_file" ) &
           pid=$!
 
@@ -154,6 +163,9 @@ jobs:
 
           wait "$pid"
           code=$?
+          # Always print a small tail for context
+          echo "Last 30 lines of $log_file:"
+          tail -n 30 "$log_file" 2>/dev/null || true
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
@@ -165,6 +177,16 @@ jobs:
           az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_PRIMARY" -n configure-sql-disks --instance-view -o jsonc || true
           echo "== sql-secondary extension instance-view =="
           az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_SECONDARY" -n configure-sql-disks --instance-view -o jsonc || true
+
+      - name: Diagnostics (SQL IaaS provisioning state)
+        if: steps.tf_apply.outputs.exitcode != '0'
+        run: |
+          set -e
+          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+            echo "== $vm SQL IaaS resource =="
+            az resource show --ids "$rid" -o jsonc || true
+          done
 
       - name: Diagnostics (pull on-VM logs)
         if: steps.tf_apply.outputs.exitcode != '0'
