@@ -27,7 +27,7 @@ $spec=@{0=@{l='F';b='DATA';d='F:\Data'};1=@{l='G';b='LOG';d='G:\Log'};2=@{l='T';
 
 function GetLunMap(){
   $m=@{}
-  foreach($d in (Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -ErrorAction SilentlyContinue)){
+  foreach($d in (gcim -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -ErrorAction SilentlyContinue)){
     if($d.IsBoot -or $d.IsSystem){continue}
     $loc=$d.Location;$lun=$null
     if($loc -match 'LUN\s*(\d+)'){$lun=[int]$Matches[1]}
@@ -35,7 +35,7 @@ function GetLunMap(){
     if($lun -ne $null -and ($lun -in 0,1,2)){$m[$lun]=[int]$d.Number}
   }
   if($m.Count -lt 3){
-    foreach($dd in (Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue)){
+    foreach($dd in (gcim Win32_DiskDrive -ErrorAction SilentlyContinue)){
       if($dd.Index -eq $null -or $dd.SCSILogicalUnit -eq $null){continue}
       $lun=[int]$dd.SCSILogicalUnit;$num=[int]$dd.Index
       if($lun -in 0,1,2){$m[$lun]=$num}
@@ -50,7 +50,7 @@ try{
   for($i=0;$i -lt 60;$i++){
     $map=GetLunMap
     if($map.ContainsKey(0) -and $map.ContainsKey(1) -and $map.ContainsKey(2)){break}
-    L ("wait disks retry {0}/60 (found {1}/3)" -f ($i+1),$map.Count); Start-Sleep -Seconds 10
+    L ("wait {0}/60 {1}/3" -f ($i+1),$map.Count); Start-Sleep -Seconds 10
   }
   foreach($lun in 0,1,2){
     if(-not $map.ContainsKey($lun)){throw "No disk for LUN $lun"}
