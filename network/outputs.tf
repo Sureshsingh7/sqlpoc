@@ -66,3 +66,11 @@ output "peering_ops_to_sql_id" {
 output "peering_sql_to_ops_id" {
   value = azurerm_virtual_network_peering.sql_to_ops.id
 }
+
+output "sql_subnet_sql1_address_prefix" {
+  value = azurerm_subnet.sql_sql1.address_prefixes[0]
+}
+
+output "sql_subnet_sql2_address_prefix" {
+  value = azurerm_subnet.sql_sql2.address_prefixes[0]
+}

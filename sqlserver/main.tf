@@ -17,6 +17,13 @@ resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
 # Locals for naming and organization
 locals {
   sql_vm_count = length(var.sql_vm_names)
+
+  # Dynamically calculate VM IPs from subnet CIDR blocks
+  # Using cidrhost() function: cidrhost(cidr_block, host_index)
+  # Index 10 and beyond to avoid Azure reserved IPs (.0, .1, .2, .3)
+  primary_vm_ip   = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, 10)
+  secondary_vm_ip = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, 10)
+
   tags = merge(
     {
       "project"   = "SQLPOC"
@@ -89,7 +96,7 @@ resource "azurerm_network_interface" "sql_vm" {
     name                          = "internal"
     subnet_id                     = count.index == 0 ? data.terraform_remote_state.network.outputs.sql_subnet_sql1_id : data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
     private_ip_address_allocation = "Static"
-    private_ip_address            = count.index == 0 ? "10.10.0.10" : "10.10.0.74"
+    private_ip_address            = count.index == 0 ? local.primary_vm_ip : local.secondary_vm_ip
   }
 
   tags = local.tags
@@ -130,7 +137,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
 
   provisioner "local-exec" {
     when    = create
-    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts 'if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[0]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"10.10.0.10 `t${var.sql_vm_names[0]}.sqlpoc.local `t${var.sql_vm_names[0]}\" }; if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[1]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"10.10.0.74 `t${var.sql_vm_names[1]}.sqlpoc.local `t${var.sql_vm_names[1]}\" }; Set-ItemProperty -Path \"HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\services\\\\Tcpip\\\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force; New-ItemProperty -Path \"HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\System\" -Name \"LocalAccountTokenFilterPolicy\" -Value 1 -PropertyType DWord -Force; Write-Host \"Enabling ICMP in Windows Firewall...\"; netsh advfirewall firewall add rule name=\"Allow ICMPv4\" protocol=icmpv4 dir=in action=allow; Write-Host \"ICMP enabled successfully\"; Write-Host \"Installing Failover Clustering...\"; Import-Module ServerManager; Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools -Restart; Write-Host \"Failover Clustering installed successfully\"'"
+    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts 'if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[0]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"${local.primary_vm_ip} `t${var.sql_vm_names[0]}.sqlpoc.local `t${var.sql_vm_names[0]}\" }; if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[1]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"${local.secondary_vm_ip} `t${var.sql_vm_names[1]}.sqlpoc.local `t${var.sql_vm_names[1]}\" }; Set-ItemProperty -Path \"HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\services\\\\Tcpip\\\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force; New-ItemProperty -Path \"HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\System\" -Name \"LocalAccountTokenFilterPolicy\" -Value 1 -PropertyType DWord -Force; Write-Host \"Enabling ICMP in Windows Firewall...\"; netsh advfirewall firewall add rule name=\"Allow ICMPv4\" protocol=icmpv4 dir=in action=allow; Write-Host \"ICMP enabled successfully\"; Write-Host \"Installing Failover Clustering...\"; Import-Module ServerManager; Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools -Restart; Write-Host \"Failover Clustering installed successfully\"'"
   }
   tags = local.tags
 
@@ -172,11 +179,11 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
 # Null resource to trigger failover cluster creation via local-exec provisioner
 resource "null_resource" "sql_failover_cluster" {
   triggers = {
-    cluster_name    = "sqlpoc-cluster"
+    cluster_name    = var.failover_cluster_name
     primary_node    = "${var.sql_vm_names[0]}.sqlpoc.local"
     secondary_node  = "${var.sql_vm_names[1]}.sqlpoc.local"
-    cluster_ip_1    = "10.10.0.20"
-    cluster_ip_2    = "10.10.0.75"
+    cluster_ip_1    = var.cluster_primary_ip
+    cluster_ip_2    = var.cluster_secondary_ip
     primary_vm_id   = azurerm_windows_virtual_machine.sql_vm[0].id
     secondary_vm_id = azurerm_windows_virtual_machine.sql_vm[1].id
   }

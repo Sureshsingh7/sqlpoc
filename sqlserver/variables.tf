@@ -199,3 +199,22 @@ variable "tags" {
   description = "Additional tags to apply to all resources"
   default     = {}
 }
+
+# Cluster configuration variables
+variable "failover_cluster_name" {
+  type        = string
+  description = "Name of the SQL Server Failover Cluster"
+  default     = "sqlpoc-cluster"
+}
+
+variable "cluster_primary_ip" {
+  type        = string
+  description = "Primary IP address for the Failover Cluster"
+  default     = "10.10.0.20"
+}
+
+variable "cluster_secondary_ip" {
+  type        = string
+  description = "Secondary IP address for the Failover Cluster"
+  default     = "10.10.0.75"
+}
