@@ -243,6 +243,67 @@ resource "azurerm_network_security_group" "runner" {
   tags                = local.tags
 }
 
+# Allow intra-subnet and inter-subnet communication for Failover Clustering
+# SQL1 to SQL2 communication (all protocols)
+resource "azurerm_network_security_rule" "sql1_to_sql2" {
+  name                        = "Allow-SQL1-To-SQL2"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql2.name
+}
+
+# SQL2 to SQL1 communication (all protocols)
+resource "azurerm_network_security_rule" "sql2_to_sql1" {
+  name                        = "Allow-SQL2-To-SQL1"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql1.name
+}
+
+# Explicit ICMP (ping) from SQL1 to SQL2
+resource "azurerm_network_security_rule" "icmp_sql1_to_sql2" {
+  name                        = "Allow-ICMP-SQL1-To-SQL2"
+  priority                    = 105
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Icmp"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql2.name
+}
+
+# Explicit ICMP (ping) from SQL2 to SQL1
+resource "azurerm_network_security_rule" "icmp_sql2_to_sql1" {
+  name                        = "Allow-ICMP-SQL2-To-SQL1"
+  priority                    = 105
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Icmp"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql1.name
+}
+
 # RDP from Bastion subnet -> SQL subnets
 
 resource "azurerm_network_security_rule" "rdp_to_sql1_from_bastion" {
