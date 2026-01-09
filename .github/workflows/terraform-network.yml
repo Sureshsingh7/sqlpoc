@@ -13,7 +13,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: SQLPOC/network
+        working-directory: network
 
     env:
       ARM_USE_MSI: true

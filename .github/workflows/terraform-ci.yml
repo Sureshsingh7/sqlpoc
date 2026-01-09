@@ -33,7 +33,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: SQLPOC/${{ matrix.dir }}
+        working-directory: ${{ matrix.dir }}
 
     steps:
 
@@ -46,10 +46,6 @@ jobs:
         uses: actions/checkout@v4
         with:
          fetch-depth: 0
-
-      - name: Set Az Login with UAMI
-        run: |
-          az login --identity
 
       - name: Force clean workspace
         run: |
