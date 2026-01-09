@@ -62,8 +62,8 @@ jobs:
       - name: Terraform Plan
         run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
 
-      # - name: Terraform Apply
-      #   run: terraform apply -auto-approve tfplan
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
 
-      - name: Terraform Destroy
-        run: terraform destroy -auto-approve -var-file=env/dev.tfvars
+      # - name: Terraform Destroy
+      #   run: terraform destroy -auto-approve -var-file=env/dev.tfvars
