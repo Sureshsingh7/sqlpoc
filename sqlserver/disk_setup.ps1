@@ -11,29 +11,60 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   $d=Get-Disk -Number $n
   if($d.PartitionStyle -eq 'RAW'){Initialize-Disk -Number $n -PartitionStyle GPT|Out-Null}
   $p=Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue|?{$_.Type -ne 'Reserved'}|Sort Size -Desc|Select -First 1
+
+  function RefreshStorage(){
+    try { Update-HostStorageCache | Out-Null } catch {}
+  }
+
+  function LogPartitionVolume([int]$diskNumber,[int]$partitionNumber,[string]$letter){
+    try {
+      $pp = Get-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -ErrorAction SilentlyContinue
+      if($pp){ L ("partition disk {0} part {1} letter={2} access={3}" -f $diskNumber,$partitionNumber,$pp.DriveLetter,($pp.AccessPaths -join ';')) }
+    } catch {}
+    try {
+      $vv = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+      if($vv){ L ("volume {0}: fs={1} label={2} health={3} size={4}" -f $letter,$vv.FileSystem,$vv.FileSystemLabel,$vv.HealthStatus,$vv.Size) }
+      else { L ("volume {0}: not found" -f $letter) }
+    } catch {}
+  }
+
+  function EnsureLetter([int]$diskNumber,[int]$partitionNumber,[string]$letter){
+    $x=Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue
+    if($x -and ($x.DiskNumber -ne $diskNumber -or $x.PartitionNumber -ne $partitionNumber)){
+      try{Remove-PartitionAccessPath -DiskNumber $x.DiskNumber -PartitionNumber $x.PartitionNumber -AccessPath "${letter}:\\" -ErrorAction SilentlyContinue|Out-Null}catch{}
+    }
+    for($k=0;$k -lt 20;$k++){
+      try{Set-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -NewDriveLetter $letter -ErrorAction Stop|Out-Null;break}catch{Start-Sleep -Seconds 2}
+      RefreshStorage
+    }
+  }
+
   if(-not $p){
     $p=New-Partition -DiskNumber $n -UseMaximumSize -AssignDriveLetter:$false
-    $x=Get-Partition -DriveLetter $dl -ErrorAction SilentlyContinue
-    if($x -and $x.DiskNumber -ne $n){try{Remove-PartitionAccessPath -DiskNumber $x.DiskNumber -PartitionNumber $x.PartitionNumber -AccessPath "${dl}:\\" -ErrorAction SilentlyContinue|Out-Null}catch{}}
-    for($k=0;$k -lt 10;$k++){
-      try{Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl -ErrorAction Stop|Out-Null;break}catch{Start-Sleep -Seconds 1}
-    }
-    if((Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber).DriveLetter -ne $dl){throw "Set-Partition failed for disk $n -> ${dl}:"}
+    EnsureLetter $n $p.PartitionNumber $dl
+    if((Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber).DriveLetter -ne $dl){LogPartitionVolume $n $p.PartitionNumber $dl; throw "Set-Partition failed for disk $n -> ${dl}:"}
     Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null
   } else {
     if($p.DriveLetter -ne $dl){
-      $x=Get-Partition -DriveLetter $dl -ErrorAction SilentlyContinue
-      if($x -and $x.DiskNumber -ne $n){try{Remove-PartitionAccessPath -DiskNumber $x.DiskNumber -PartitionNumber $x.PartitionNumber -AccessPath "${dl}:\\" -ErrorAction SilentlyContinue|Out-Null}catch{}}
-      for($k=0;$k -lt 10;$k++){
-        try{Set-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -NewDriveLetter $dl -ErrorAction Stop|Out-Null;break}catch{Start-Sleep -Seconds 1}
-      }
-      if((Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber).DriveLetter -ne $dl){throw "Set-Partition failed for disk $n -> ${dl}:"}
+      EnsureLetter $n $p.PartitionNumber $dl
+      if((Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber).DriveLetter -ne $dl){LogPartitionVolume $n $p.PartitionNumber $dl; throw "Set-Partition failed for disk $n -> ${dl}:"}
     }
     $v=Get-Volume -DriveLetter $dl -ErrorAction SilentlyContinue
     if(-not $v){Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null}
   }
-  for($j=0;$j -lt 20 -and -not (Test-Path "${dl}:\\");$j++){Start-Sleep -Milliseconds 500}
-  if(-not (Test-Path "${dl}:\\")){throw "Drive ${dl}: missing after format"}
+
+  # Mount/visibility can lag behind formatting; wait and re-assert drive letter if needed.
+  for($j=0;$j -lt 60;$j++){
+    RefreshStorage
+    $pp=Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -ErrorAction SilentlyContinue
+    if($pp -and $pp.DriveLetter -ne $dl){ EnsureLetter $n $p.PartitionNumber $dl }
+    if(Test-Path "${dl}:\\"){break}
+    Start-Sleep -Seconds 2
+  }
+  if(-not (Test-Path "${dl}:\\")){
+    LogPartitionVolume $n $p.PartitionNumber $dl
+    throw "Drive ${dl}: missing after format"
+  }
   New-Item -ItemType Directory -Path $dir -Force|Out-Null
 }
 
