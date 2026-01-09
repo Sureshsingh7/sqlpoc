@@ -8,7 +8,7 @@ sql_resource_group_name = "rg-fnz-poc-sql-se"
 
 # SQL VM configuration
 sql_vm_names       = ["sql-primary", "sql-secondary"]
-sql_private_ips    = ["10.0.2.10", "10.0.2.11"]
+sql_private_ips    = ["10.10.0.10", "10.10.0.74"]
 sql_admin_username = "sqladmin"
 
 # VM sizing
