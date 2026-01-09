@@ -169,6 +169,34 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   caching            = "ReadOnly"
 }
 
+# Null resource to trigger failover cluster creation via local-exec provisioner
+resource "null_resource" "sql_failover_cluster" {
+  triggers = {
+    cluster_name    = "sqlpoc-cluster"
+    primary_node    = "${var.sql_vm_names[0]}.sqlpoc.local"
+    secondary_node  = "${var.sql_vm_names[1]}.sqlpoc.local"
+    cluster_ip_1    = "10.10.0.20"
+    cluster_ip_2    = "10.10.0.75"
+    primary_vm_id   = azurerm_windows_virtual_machine.sql_vm[0].id
+    secondary_vm_id = azurerm_windows_virtual_machine.sql_vm[1].id
+  }
+
+  provisioner "local-exec" {
+    when    = create
+    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[0]} --command-id RunPowerShellScript --scripts 'Write-Host \"Waiting for secondary node to be ready...\"; Start-Sleep -Seconds 120; Write-Host \"Creating failover cluster...\"; New-Cluster -Name ${self.triggers.cluster_name} -Node ${self.triggers.primary_node}, ${self.triggers.secondary_node} -AdministrativeAccessPoint DNS -StaticAddress ${self.triggers.cluster_ip_1}, ${self.triggers.cluster_ip_2} -Force -WarningAction SilentlyContinue; Write-Host \"Failover cluster created successfully\"'"
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "Write-Host \"Cluster resources will be retained. To remove, manually delete the cluster from the primary node.\""
+  }
+
+  depends_on = [
+    azurerm_virtual_machine_data_disk_attachment.sql_disk_attach,
+    azurerm_windows_virtual_machine.sql_vm
+  ]
+}
+
 # Extension 1: Run common setup on both VMs (commented out - scripts not yet created)
 # resource "azurerm_virtual_machine_extension" "sql_setup" {
 #   count                      = local.sql_vm_count
