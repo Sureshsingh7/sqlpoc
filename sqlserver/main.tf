@@ -199,6 +199,8 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
 resource "null_resource" "sql_failover_cluster" {
   triggers = {
     cluster_name    = var.failover_cluster_name
+    primary_node    = "${var.sql_vm_names[0]}"
+    secondary_node  = "${var.sql_vm_names[1]}"
     cluster_ip_1    = local.cluster_primary_ip
     cluster_ip_2    = local.cluster_secondary_ip
     primary_vm_id   = azurerm_windows_virtual_machine.sql_vm[0].id
