@@ -29,13 +29,59 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   }
 
   function EnsureLetter([int]$diskNumber,[int]$partitionNumber,[string]$letter){
+    # Some environments have automount disabled; make sure it's enabled.
+    try { cmd /c "mountvol /E" | Out-Null } catch {}
+
+    # Remove any conflicting drive letter use (both other partitions holding our target letter,
+    # and our target partition holding a different letter).
     $x=Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue
     if($x -and ($x.DiskNumber -ne $diskNumber -or $x.PartitionNumber -ne $partitionNumber)){
       try{Remove-PartitionAccessPath -DiskNumber $x.DiskNumber -PartitionNumber $x.PartitionNumber -AccessPath "${letter}:\\" -ErrorAction SilentlyContinue|Out-Null}catch{}
     }
+
+    try {
+      $cur = Get-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -ErrorAction SilentlyContinue
+      if($cur){
+        if($cur.DriveLetter -and $cur.DriveLetter -ne $letter){
+          try{Remove-PartitionAccessPath -DiskNumber $diskNumber -PartitionNumber $partitionNumber -AccessPath "${($cur.DriveLetter)}:\\" -ErrorAction SilentlyContinue|Out-Null}catch{}
+        }
+        foreach($ap in ($cur.AccessPaths|Where-Object {$_ -match '^[A-Z]:\\$'})){
+          if($ap.Substring(0,1) -ne $letter){
+            try{Remove-PartitionAccessPath -DiskNumber $diskNumber -PartitionNumber $partitionNumber -AccessPath $ap -ErrorAction SilentlyContinue|Out-Null}catch{}
+          }
+        }
+      }
+    } catch {}
+
     for($k=0;$k -lt 20;$k++){
-      try{Set-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -NewDriveLetter $letter -ErrorAction Stop|Out-Null;break}catch{Start-Sleep -Seconds 2}
+      try{
+        Set-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -NewDriveLetter $letter -ErrorAction Stop|Out-Null
+        break
+      }catch{
+        L ("Set-Partition retry {0}/20 failed: {1}" -f ($k+1), ($_.Exception.Message))
+        Start-Sleep -Seconds 2
+      }
       RefreshStorage
+    }
+
+    # DiskPart fallback for cases where StorageWMI flaps.
+    $pp = Get-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -ErrorAction SilentlyContinue
+    if(-not $pp -or $pp.DriveLetter -ne $letter){
+      try {
+        $dp = @(
+          "select disk $diskNumber",
+          "select partition $partitionNumber",
+          "assign letter=$letter noerr",
+          "exit"
+        ) -join "`r`n"
+        $dpFile = Join-Path $env:TEMP "diskpart-assign-$diskNumber-$partitionNumber-$letter.txt"
+        Set-Content -Path $dpFile -Value $dp -Encoding ASCII
+        L ("diskpart assign fallback: {0}" -f $dpFile)
+        cmd /c "diskpart /s \"$dpFile\"" | Out-Null
+        RefreshStorage
+      } catch {
+        L ("diskpart fallback failed: {0}" -f ($_.Exception.Message))
+      }
     }
   }
 
