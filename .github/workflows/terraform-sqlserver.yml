@@ -223,6 +223,42 @@ jobs:
               --query "value[0].message" -o tsv || true
           done
 
+      - name: Diagnostics (disk + drive-letter mapping)
+        if: steps.tf_apply.outputs.exitcode != '0'
+        run: |
+          set -e
+          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+            echo "== $vm drive letters / volumes =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "Get-PSDrive -PSProvider FileSystem | Sort-Object Name | Format-Table -AutoSize | Out-String" \
+              --query "value[0].message" -o tsv || true
+
+            echo "== $vm Get-Volume =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "Get-Volume | Sort-Object DriveLetter | Select DriveLetter,FileSystemLabel,FileSystem,HealthStatus,Size,SizeRemaining,Path | Format-Table -AutoSize | Out-String" \
+              --query "value[0].message" -o tsv || true
+
+            echo "== $vm Get-Partition (data disks only) =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem } | ForEach-Object { $dn=$_.Number; Get-Partition -DiskNumber $dn -ErrorAction SilentlyContinue | Select DiskNumber,PartitionNumber,DriveLetter,Type,Size,AccessPaths } | Format-Table -Wrap -AutoSize | Out-String" \
+              --query "value[0].message" -o tsv || true
+
+            echo "== $vm mountvol output =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "cmd /c 'mountvol' | Out-String" \
+              --query "value[0].message" -o tsv || true
+
+            echo "== $vm diskpart list volume =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "$t=Join-Path $env:TEMP 'diskpart-listvol.txt'; Set-Content -Path $t -Value 'list volume' -Encoding ASCII; cmd /c \"diskpart /s $t\" 2^>^&1 | Out-String" \
+              --query "value[0].message" -o tsv || true
+
+            echo "== $vm MountedDevices (F/G/T) =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "$p='HKLM:\\SYSTEM\\MountedDevices'; $names='\\DosDevices\\F:','\\DosDevices\\G:','\\DosDevices\\T:'; foreach($n in $names){ try{ $v=(Get-ItemProperty -Path $p -Name $n -ErrorAction Stop).$n; Write-Host ($n+' = '+([BitConverter]::ToString($v))) } catch { Write-Host ($n+' = <none>') } }" \
+              --query "value[0].message" -o tsv || true
+          done
+
       - name: Fail job if apply failed
         if: steps.tf_apply.outputs.exitcode != '0'
         run: |
