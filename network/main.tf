@@ -348,6 +348,21 @@ resource "azurerm_network_security_rule" "ssh_to_runner_from_bastion" {
   network_security_group_name = azurerm_network_security_group.runner.name
 }
 
+# RDP from Bastion subnet -> OPS runner subnet (used for Windows jumpbox)
+resource "azurerm_network_security_rule" "rdp_to_runner_from_bastion" {
+  name                        = "Allow-RDP-From-Bastion"
+  priority                    = 110
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "3389"
+  source_address_prefix       = var.subnet_bastion_prefix
+  destination_address_prefix  = var.ops_subnet_runner_prefix
+  resource_group_name         = var.ops_resource_group_name
+  network_security_group_name = azurerm_network_security_group.runner.name
+}
+
 # (Optional) Outbound 443 for runner
 resource "azurerm_network_security_rule" "runner_outbound_https" {
   name                        = "Allow-Outbound-HTTPS"
