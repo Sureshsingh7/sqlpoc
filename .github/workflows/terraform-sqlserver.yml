@@ -216,6 +216,16 @@ jobs:
                 echo "-- $vm SQL IaaS provisioningState --"
                 rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
                 az resource show --ids "$rid" --query "properties.provisioningState" -o tsv 2>/dev/null || true
+
+                echo "-- $vm SQL IaaS key properties --"
+                az resource show --ids "$rid" \
+                  --query "{provisioningState:properties.provisioningState, sqlImageSku:properties.sqlImageSku, sqlManagement:properties.sqlManagement, license:properties.sqlServerLicenseType, leastPrivilegeMode:properties.leastPrivilegeMode}" \
+                  -o jsonc 2>/dev/null || true
+
+                echo "-- $vm VM extensions (name: provisioningState / status) --"
+                az vm extension list -g "$SQL_RG" --vm-name "$vm" \
+                  --query "[].{name:name, publisher:publisher, type:typePropertiesType, provisioningState:provisioningState, status:instanceView.statuses[0].displayStatus}" \
+                  -o table 2>/dev/null || true
               done
             fi
             sleep 120
