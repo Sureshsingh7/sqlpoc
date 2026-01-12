@@ -32,6 +32,24 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
     # Some environments have automount disabled; make sure it's enabled.
     try { cmd /c "mountvol /E" | Out-Null } catch {}
 
+    function FreeLetter([string]$l){
+      try { cmd /c "mountvol ${l}: /D" | Out-Null } catch {}
+      try { cmd /c "net use ${l}: /delete /y" | Out-Null } catch {}
+      try { cmd /c "subst ${l}: /D" | Out-Null } catch {}
+    }
+
+    function MountLetterToVolume([string]$l,[string]$vol){
+      # $vol is like \\?\Volume{GUID}\
+      FreeLetter $l
+      try {
+        L ("mountvol {0}: -> {1}" -f $l,$vol)
+        cmd /c "mountvol ${l}: \"$vol\"" | Out-Null
+      } catch {
+        L ("mountvol failed: {0}" -f ($_.Exception.Message))
+      }
+      RefreshStorage
+    }
+
     # Remove any conflicting drive letter use (both other partitions holding our target letter,
     # and our target partition holding a different letter).
     $x=Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue
@@ -82,6 +100,14 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
       } catch {
         L ("diskpart fallback failed: {0}" -f ($_.Exception.Message))
       }
+    }
+
+    # Mountvol fallback: directly mount the target volume GUID to the requested drive letter.
+    $pp = Get-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -ErrorAction SilentlyContinue
+    $volGuid = $null
+    try { $volGuid = ($pp.AccessPaths | Where-Object { $_ -like '\\?\Volume{*}\' } | Select-Object -First 1) } catch {}
+    if($volGuid){
+      MountLetterToVolume $letter $volGuid
     }
   }
 
