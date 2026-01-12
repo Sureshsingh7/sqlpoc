@@ -62,6 +62,27 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
+      - name: State cleanup (skip RBAC destroys when disabled)
+        run: |
+          set -euo pipefail
+
+          if grep -Eq '^\s*manage_role_assignments\s*=\s*false\b' terraform.tfvars; then
+            echo "manage_role_assignments=false; removing role assignments from Terraform state (if present)"
+            for addr in \
+              'azurerm_role_assignment.jumpbox_vm_admin_login[0]' \
+              'azurerm_role_assignment.kv_tf_secrets_officer[0]' \
+              'azurerm_role_assignment.kv_suresh_reader[0]'; do
+              if terraform state list | grep -Fxq "$addr"; then
+                echo "terraform state rm $addr"
+                terraform state rm "$addr" || true
+              else
+                echo "not in state: $addr"
+              fi
+            done
+          else
+            echo "manage_role_assignments not set to false; leaving state as-is"
+          fi
+
       - name: Terraform Plan
         run: terraform plan -input=false -out=tfplan
 
