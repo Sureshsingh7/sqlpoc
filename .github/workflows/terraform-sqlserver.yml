@@ -32,6 +32,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Show checked-out commit + SQL IaaS timeout
+        run: |
+          set -euo pipefail
+          echo "GIT_SHA=$(git rev-parse HEAD)"
+          echo "== azurerm_mssql_virtual_machine timeouts in main.tf =="
+          awk 'NR>=160 && NR<=230 {print NR ":" $0}' main.tf | sed -n '/resource "azurerm_mssql_virtual_machine"/,/depends_on/p' || true
+
       - name: Set Az Login with UAMI
         run: |
           az login --identity --username "$ARM_CLIENT_ID"
