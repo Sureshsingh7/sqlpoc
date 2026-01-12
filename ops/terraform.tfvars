@@ -32,3 +32,7 @@ terraform_uami_resource_id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a
 enable_jumpbox = true
 jumpbox_name   = "vm-jumpbox"
 jumpbox_size   = "Standard_B2ms"
+
+# The Terraform identity needs 'User Access Administrator' or 'Owner' to create RBAC role assignments.
+# Keep this off unless that permission is granted.
+manage_role_assignments = false

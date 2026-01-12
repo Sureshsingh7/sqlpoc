@@ -63,3 +63,9 @@ variable "jumpbox_size" {
   type        = string
   default     = "Standard_B2ms"
 }
+
+variable "manage_role_assignments" {
+  description = "Whether Terraform should create Azure RBAC role assignments (requires Microsoft.Authorization/roleAssignments/write)"
+  type        = bool
+  default     = false
+}

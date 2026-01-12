@@ -138,7 +138,7 @@ resource "azurerm_virtual_machine_extension" "jumpbox_aad_login" {
 }
 
 resource "azurerm_role_assignment" "jumpbox_vm_admin_login" {
-  count                = var.enable_jumpbox ? 1 : 0
+  count                = (var.enable_jumpbox && var.manage_role_assignments) ? 1 : 0
   scope                = azurerm_windows_virtual_machine.jumpbox[0].id
   role_definition_name = "Virtual Machine Administrator Login"
   principal_id         = var.suresh_principal_id
@@ -170,6 +170,7 @@ resource "azurerm_key_vault" "ops" {
 }
 
 resource "azurerm_role_assignment" "kv_tf_secrets_officer" {
+  count                = var.manage_role_assignments ? 1 : 0
   scope                = azurerm_key_vault.ops.id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = var.terraform_uami_principal_id
@@ -177,6 +178,7 @@ resource "azurerm_role_assignment" "kv_tf_secrets_officer" {
 
 
 resource "azurerm_role_assignment" "kv_suresh_reader" {
+  count                = var.manage_role_assignments ? 1 : 0
   scope                = azurerm_key_vault.ops.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = var.suresh_principal_id
