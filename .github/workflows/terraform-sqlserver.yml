@@ -153,11 +153,28 @@ jobs:
           ( terraform apply -auto-approve tfplan 2>&1 | tee "$log_file" ) &
           pid=$!
 
+          azure_watch_counter=0
+
           # Heartbeat every 2 minutes so long-running resources don't look hung.
           while kill -0 "$pid" 2>/dev/null; do
             ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "[$ts] terraform apply still running..."
             tail -n 5 "$log_file" 2>/dev/null || true
+
+            # Every 10 minutes, also print Azure-side provisioning + power state.
+            azure_watch_counter=$((azure_watch_counter + 1))
+            if [ $((azure_watch_counter % 5)) -eq 0 ]; then
+              echo "[$ts] Azure status snapshot (every ~10 minutes)"
+              for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+                echo "-- $vm power state --"
+                az vm get-instance-view -g "$SQL_RG" -n "$vm" \
+                  --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
+
+                echo "-- $vm SQL IaaS provisioningState --"
+                rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+                az resource show --ids "$rid" --query "properties.provisioningState" -o tsv 2>/dev/null || true
+              done
+            fi
             sleep 120
           done
 
