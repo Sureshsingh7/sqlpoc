@@ -291,6 +291,14 @@ jobs:
             az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
               --scripts "(Get-ChildItem 'C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\CustomScriptHandler.log' -ErrorAction SilentlyContinue; Get-ChildItem 'C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\CustomScriptHandler.log' -ErrorAction SilentlyContinue) | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { '--- ' + $_.FullName; Get-Content $_.FullName -Tail 400 } | Out-String" \
               --query "value[0].message" -o tsv || true
+
+            echo "== $vm SqlIaasExtension instance-view =="
+            az vm extension show -g "$SQL_RG" --vm-name "$vm" -n SqlIaasExtension --instance-view -o jsonc || true
+
+            echo "== $vm SQL IaaS extension logs (tail) =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "$paths=@('C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.SqlServer.Management.SqlIaasExtension','C:\\Packages\\Plugins\\Microsoft.SqlServer.Management.SqlIaasExtension','C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.SqlServer.Management.SqlIaaSAgent','C:\\Packages\\Plugins\\Microsoft.SqlServer.Management.SqlIaaSAgent'); foreach($p in $paths){ if(Test-Path $p){ Write-Host ('--- ' + $p); Get-ChildItem $p -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 6 | ForEach-Object { '### ' + $_.FullName; Get-Content $_.FullName -Tail 200 -ErrorAction SilentlyContinue } } } | Out-String" \
+              --query "value[0].message" -o tsv || true
           done
 
       - name: Diagnostics (disk + drive-letter mapping)
