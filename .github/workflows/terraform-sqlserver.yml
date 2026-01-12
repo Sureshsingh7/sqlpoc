@@ -221,6 +221,11 @@ jobs:
                 az vm get-instance-view -g "$SQL_RG" -n "$vm" \
                   --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
 
+                echo "-- $vm imageReference / plan --"
+                az vm show -g "$SQL_RG" -n "$vm" \
+                  --query "{image:storageProfile.imageReference, plan:plan}" \
+                  -o jsonc 2>/dev/null || true
+
                 echo "-- $vm SQL IaaS provisioningState --"
                 rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
                 az resource show --ids "$rid" --query "properties.provisioningState" -o tsv 2>/dev/null || true
