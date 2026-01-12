@@ -10,7 +10,7 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   try{Set-Disk -Number $n -IsReadOnly $false -ErrorAction SilentlyContinue|Out-Null}catch{}
   $d=Get-Disk -Number $n
   if($d.PartitionStyle -eq 'RAW'){Initialize-Disk -Number $n -PartitionStyle GPT|Out-Null}
-  $p=Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue|?{$_.Type -ne 'Reserved'}|Sort Size -Desc|Select -First 1
+  $p=Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue | Where-Object { $_.Type -ne 'Reserved' } | Sort-Object Size -Desc | Select-Object -First 1
 
   function RefreshStorage(){
     try { Update-HostStorageCache | Out-Null } catch {}
@@ -83,6 +83,21 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
 
     DescribeLetter $letter
 
+    # Proactively free the requested drive letter before trying to assign it.
+    FreeLetter $letter
+
+    # If any partition currently claims this drive letter/access path, remove it.
+    try {
+      $claiming = Get-Partition -ErrorAction SilentlyContinue | Where-Object {
+        ($_.DriveLetter -eq $letter) -or ($_.AccessPaths -contains "${letter}:\\")
+      }
+      foreach($c in $claiming){
+        if($c.DiskNumber -eq $diskNumber -and $c.PartitionNumber -eq $partitionNumber){ continue }
+        try{ Remove-PartitionAccessPath -DiskNumber $c.DiskNumber -PartitionNumber $c.PartitionNumber -AccessPath "${letter}:\\" -ErrorAction SilentlyContinue | Out-Null }catch{}
+        try{ Set-Partition -DiskNumber $c.DiskNumber -PartitionNumber $c.PartitionNumber -NewDriveLetter $null -ErrorAction SilentlyContinue | Out-Null }catch{}
+      }
+    } catch {}
+
     # Remove any conflicting drive letter use (both other partitions holding our target letter,
     # and our target partition holding a different letter).
     $x=Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue
@@ -110,6 +125,7 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
         break
       }catch{
         L ("Set-Partition retry {0}/20 failed: {1}" -f ($k+1), ($_.Exception.Message))
+        FreeLetter $letter
         Start-Sleep -Seconds 2
       }
       RefreshStorage
@@ -120,6 +136,8 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
     if(-not $pp -or $pp.DriveLetter -ne $letter){
       try {
         $dp = @(
+          "select volume $letter",
+          "remove letter=$letter noerr",
           "select disk $diskNumber",
           "select partition $partitionNumber",
           "assign letter=$letter noerr",
@@ -156,12 +174,18 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   if(-not $p){
     $p=New-Partition -DiskNumber $n -UseMaximumSize -AssignDriveLetter:$false
     EnsureLetter $n $p.PartitionNumber $dl
-    if((Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber).DriveLetter -ne $dl){LogPartitionVolume $n $p.PartitionNumber $dl; throw "Set-Partition failed for disk $n -> ${dl}:"}
+    if(-not (Test-Path "${dl}:\\")){
+      LogPartitionVolume $n $p.PartitionNumber $dl
+      throw "Drive ${dl}: not available after assignment for disk $n"
+    }
     Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null
   } else {
     if($p.DriveLetter -ne $dl){
       EnsureLetter $n $p.PartitionNumber $dl
-      if((Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber).DriveLetter -ne $dl){LogPartitionVolume $n $p.PartitionNumber $dl; throw "Set-Partition failed for disk $n -> ${dl}:"}
+      if(-not (Test-Path "${dl}:\\")){
+        LogPartitionVolume $n $p.PartitionNumber $dl
+        throw "Drive ${dl}: not available after assignment for disk $n"
+      }
     }
     $v=Get-Volume -DriveLetter $dl -ErrorAction SilentlyContinue
     $needsFormat = (-not $v) -or [string]::IsNullOrWhiteSpace($v.FileSystem) -or ($v.Size -le 0)
@@ -175,7 +199,7 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   for($j=0;$j -lt 60;$j++){
     RefreshStorage
     $pp=Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -ErrorAction SilentlyContinue
-    if($pp -and $pp.DriveLetter -ne $dl){ EnsureLetter $n $p.PartitionNumber $dl }
+    if($pp -and -not (Test-Path "${dl}:\\")){ EnsureLetter $n $p.PartitionNumber $dl }
     if(Test-Path "${dl}:\\"){break}
     Start-Sleep -Seconds 2
   }
@@ -190,16 +214,16 @@ $spec=@{0=@{l='F';b='DATA';d='F:\Data'};1=@{l='G';b='LOG';d='G:\Log'};2=@{l='T';
 
 function GetLunMap(){
   $m=@{}
-  foreach($d in (gcim -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -ErrorAction SilentlyContinue)){
+  foreach($d in (Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -ErrorAction SilentlyContinue)){
     if($d.IsBoot -or $d.IsSystem){continue}
     $loc=$d.Location;$lun=$null
     if($loc -match 'LUN\s*(\d+)'){$lun=[int]$Matches[1]}
     elseif($loc -match 'L(\d+)\)'){$lun=[int]$Matches[1]}
-    if($lun -ne $null -and ($lun -in 0,1,2)){$m[$lun]=[int]$d.Number}
+    if($null -ne $lun -and ($lun -in 0,1,2)){$m[$lun]=[int]$d.Number}
   }
   if($m.Count -lt 3){
-    foreach($dd in (gcim Win32_DiskDrive -ErrorAction SilentlyContinue)){
-      if($dd.Index -eq $null -or $dd.SCSILogicalUnit -eq $null){continue}
+    foreach($dd in (Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue)){
+      if($null -eq $dd.Index -or $null -eq $dd.SCSILogicalUnit){continue}
       $lun=[int]$dd.SCSILogicalUnit;$num=[int]$dd.Index
       if($lun -in 0,1,2){$m[$lun]=$num}
     }
