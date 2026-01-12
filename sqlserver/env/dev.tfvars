@@ -18,7 +18,7 @@ vm_size = "Standard_D4s_v4"
 os_disk_type    = "Standard_LRS"
 os_disk_size_gb = 128
 
-data_disk_type    = "Standard_LRS"
+data_disk_type    = "Premium_LRS"
 data_disk_count   = 1
 data_disk_size_gb = 256
 
