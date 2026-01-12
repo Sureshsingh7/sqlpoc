@@ -33,9 +33,27 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
     try { cmd /c "mountvol /E" | Out-Null } catch {}
 
     function FreeLetter([string]$l){
-      try { cmd /c "mountvol ${l}: /D" | Out-Null } catch {}
+      try { cmd /c "mountvol ${l}:\\ /D" | Out-Null } catch {}
       try { cmd /c "net use ${l}: /delete /y" | Out-Null } catch {}
       try { cmd /c "subst ${l}: /D" | Out-Null } catch {}
+
+      # Clear stale mount manager mappings that can cause "access path already in use"
+      try {
+        $regPath = 'HKLM:\SYSTEM\MountedDevices'
+        $valName = "\\DosDevices\\${l}:"
+        if(Test-Path $regPath){
+          $props = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
+          if($props -and ($props.PSObject.Properties.Name -contains $valName)){
+            L ("clearing MountedDevices mapping: {0}" -f $valName)
+            Remove-ItemProperty -Path $regPath -Name $valName -ErrorAction SilentlyContinue
+          }
+        }
+      } catch {
+        L ("failed to clear MountedDevices: {0}" -f ($_.Exception.Message))
+      }
+
+      # Remove stale mount points for volumes no longer present
+      try { cmd /c "mountvol /R" | Out-Null } catch {}
     }
 
     function MountLetterToVolume([string]$l,[string]$vol){
@@ -43,12 +61,27 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
       FreeLetter $l
       try {
         L ("mountvol {0}: -> {1}" -f $l,$vol)
-        cmd /c "mountvol ${l}: \"$vol\"" | Out-Null
+        $out = cmd /c "mountvol ${l}:\\ \"$vol\"" 2>&1
+        if($out){ L ("mountvol output: {0}" -f (($out | Out-String).Trim())) }
       } catch {
         L ("mountvol failed: {0}" -f ($_.Exception.Message))
       }
       RefreshStorage
     }
+
+    function DescribeLetter([string]$l){
+      try {
+        $ld = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='${l}:'" -ErrorAction SilentlyContinue
+        if($ld){ L ("logicaldisk {0}: type={1} size={2} fs={3}" -f $l,$ld.DriveType,$ld.Size,$ld.FileSystem) }
+        else { L ("logicaldisk {0}: not present" -f $l) }
+      } catch {}
+      try {
+        $vol = Get-CimInstance Win32_Volume -Filter "DriveLetter='${l}:'" -ErrorAction SilentlyContinue
+        if($vol){ L ("win32_volume {0}: label={1} fs={2} name={3}" -f $l,$vol.Label,$vol.FileSystem,$vol.Name) }
+      } catch {}
+    }
+
+    DescribeLetter $letter
 
     # Remove any conflicting drive letter use (both other partitions holding our target letter,
     # and our target partition holding a different letter).
@@ -109,6 +142,15 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
     if($volGuid){
       MountLetterToVolume $letter $volGuid
     }
+
+    # Success criteria: the path exists (mountvol-based mounts may not set Partition.DriveLetter).
+    for($i=0;$i -lt 15 -and -not (Test-Path "${letter}:\\");$i++){
+      RefreshStorage
+      Start-Sleep -Seconds 1
+    }
+    if(Test-Path "${letter}:\\"){ return }
+
+    DescribeLetter $letter
   }
 
   if(-not $p){
