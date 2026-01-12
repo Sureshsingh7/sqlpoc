@@ -59,6 +59,93 @@ resource "azurerm_linux_virtual_machine" "runner" {
   }
 }
 
+# -----------------------------------------------------------------------------
+# Windows jumpbox (reachable via Azure Bastion)
+# -----------------------------------------------------------------------------
+
+resource "random_password" "jumpbox" {
+  count   = var.enable_jumpbox ? 1 : 0
+  length  = 32
+  special = true
+}
+
+resource "azurerm_network_interface" "jumpbox" {
+  count               = var.enable_jumpbox ? 1 : 0
+  name                = "nic-jumpbox"
+  location            = data.azurerm_resource_group.ops.location
+  resource_group_name = data.azurerm_resource_group.ops.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
+    private_ip_address_allocation = "Dynamic"
+  }
+
+  tags = local.tags
+}
+
+resource "azurerm_windows_virtual_machine" "jumpbox" {
+  count               = var.enable_jumpbox ? 1 : 0
+  name                = var.jumpbox_name
+  resource_group_name = data.azurerm_resource_group.ops.name
+  location            = data.azurerm_resource_group.ops.location
+  size                = var.jumpbox_size
+
+  admin_username = var.vm_admin_username
+  admin_password = random_password.jumpbox[0].result
+
+  network_interface_ids = [
+    azurerm_network_interface.jumpbox[0].id
+  ]
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "MicrosoftWindowsServer"
+    offer     = "WindowsServer"
+    sku       = "2022-datacenter-g2"
+    version   = "latest"
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  tags = local.tags
+}
+
+# Store the jumpbox local admin password in the OPS Key Vault for break-glass.
+resource "azurerm_key_vault_secret" "jumpbox_admin_password" {
+  count        = var.enable_jumpbox ? 1 : 0
+  name         = "${var.jumpbox_name}-local-admin"
+  value        = random_password.jumpbox[0].result
+  key_vault_id = azurerm_key_vault.ops.id
+  content_type = "Jumpbox local admin password (break-glass)"
+}
+
+# Enable Azure AD login on Windows so you can sign in via Bastion without needing the local password.
+resource "azurerm_virtual_machine_extension" "jumpbox_aad_login" {
+  count                      = var.enable_jumpbox ? 1 : 0
+  name                       = "AADLoginForWindows"
+  virtual_machine_id         = azurerm_windows_virtual_machine.jumpbox[0].id
+  publisher                  = "Microsoft.Azure.ActiveDirectory"
+  type                       = "AADLoginForWindows"
+  type_handler_version       = "1.0"
+  auto_upgrade_minor_version = true
+}
+
+resource "azurerm_role_assignment" "jumpbox_vm_admin_login" {
+  count                = (var.enable_jumpbox && var.manage_role_assignments) ? 1 : 0
+  scope                = azurerm_windows_virtual_machine.jumpbox[0].id
+  role_definition_name = "Virtual Machine Administrator Login"
+  principal_id         = var.suresh_principal_id
+
+  depends_on = [azurerm_virtual_machine_extension.jumpbox_aad_login]
+}
+
 resource "azurerm_key_vault" "ops" {
   name                       = "kv-fnz-poc-se"
   location                   = var.location
@@ -83,6 +170,7 @@ resource "azurerm_key_vault" "ops" {
 }
 
 resource "azurerm_role_assignment" "kv_tf_secrets_officer" {
+  count                = var.manage_role_assignments ? 1 : 0
   scope                = azurerm_key_vault.ops.id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = var.terraform_uami_principal_id
@@ -90,6 +178,7 @@ resource "azurerm_role_assignment" "kv_tf_secrets_officer" {
 
 
 resource "azurerm_role_assignment" "kv_suresh_reader" {
+  count                = var.manage_role_assignments ? 1 : 0
   scope                = azurerm_key_vault.ops.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = var.suresh_principal_id
