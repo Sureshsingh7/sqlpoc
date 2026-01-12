@@ -54,6 +54,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Microsoft.SqlVirtualMachine RP registrationState:"
+          az provider show -n Microsoft.SqlVirtualMachine --query "registrationState" -o tsv 2>/dev/null || true
+
           wait_running() {
             local vm="$1"
             echo "Ensuring VM is running: $vm"
@@ -224,7 +227,7 @@ jobs:
 
                 echo "-- $vm SQL IaaS key properties --"
                 az resource show --ids "$rid" \
-                  --query "{provisioningState:properties.provisioningState, sqlImageSku:properties.sqlImageSku, sqlManagement:properties.sqlManagement, license:properties.sqlServerLicenseType, leastPrivilegeMode:properties.leastPrivilegeMode}" \
+                  --query "{provisioningState:properties.provisioningState, sqlImageSku:properties.sqlImageSku, sqlManagement:properties.sqlManagement, license:properties.sqlServerLicenseType, leastPrivilegeMode:properties.leastPrivilegeMode, provisioningFailureDetails:properties.provisioningFailureDetails, errors:properties.errors}" \
                   -o jsonc 2>/dev/null || true
 
                 echo "-- $vm VM extensions (name: provisioningState / status) --"
