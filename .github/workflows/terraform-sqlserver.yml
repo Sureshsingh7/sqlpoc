@@ -3,6 +3,11 @@ name: terraform-sqlserver
 on:
   workflow_dispatch:
 
+# Prevent two runs from fighting over the same ARM resources (SQL IaaS create/update is not concurrency-safe).
+concurrency:
+  group: terraform-sqlserver-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   terraform-sqlserver:
     timeout-minutes: 360
