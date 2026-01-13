@@ -189,7 +189,7 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
 }
 
 # Custom script to format and configure disks
-resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
+resource "azurerm_virtual_machine_extension" "sql_disk_setup_scripts" {
   count                      = local.sql_vm_count
   name                       = "configure-sql-disks"
   virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
