@@ -45,3 +45,27 @@ variable "suresh_principal_id" {
   description = "AAD Object ID of Suresh"
   type        = string
 }
+
+variable "enable_jumpbox" {
+  description = "Whether to deploy a Windows jumpbox VM in OPS for Bastion access"
+  type        = bool
+  default     = false
+}
+
+variable "jumpbox_name" {
+  description = "Name of the Windows jumpbox VM"
+  type        = string
+  default     = "vm-jumpbox"
+}
+
+variable "jumpbox_size" {
+  description = "Azure VM size for the jumpbox"
+  type        = string
+  default     = "Standard_B2ms"
+}
+
+variable "manage_role_assignments" {
+  description = "Whether Terraform should create Azure RBAC role assignments (requires Microsoft.Authorization/roleAssignments/write)"
+  type        = bool
+  default     = false
+}

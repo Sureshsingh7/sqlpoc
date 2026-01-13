@@ -14,6 +14,26 @@ resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
   content_type = "SQL Server VM local admin password (shared for primary and secondary)"
 }
 
+# Host the disk setup script in the existing TFSTATE storage account/container.
+# Terraform itself should not manage uploads/RBAC here because the runner identity
+# typically lacks `storageAccounts/read` and `Microsoft.Authorization/roleAssignments/*`
+# on the TFSTATE resource group.
+#
+# Instead, the GitHub Actions workflow uploads the script and generates a short-lived
+# *user delegation SAS* (Azure AD) which is passed to Terraform via `TF_VAR_disk_setup_sas`.
+locals {
+  tfstate_resource_group_name  = "rg-fnz-poc-tfstate-se"
+  tfstate_storage_account_name = "stfnzpocdj522c"
+  tfstate_container_name       = "tfstate"
+
+  disk_setup_blob_name = "scripts/disk_setup.ps1"
+  disk_setup_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/${local.disk_setup_blob_name}"
+
+  # The workflow provides a user-delegation SAS without a leading '?'.
+  disk_setup_file_uri = "${local.disk_setup_blob_url}?${var.disk_setup_sas}"
+}
+
+# Locals for naming and organization
 locals {
   sql_vm_count = length(var.sql_vm_names)
 
@@ -41,61 +61,36 @@ locals {
       "component" = "SQLServerVM"
       "tier"      = "Database"
     },
-
   )
 
-  # Disk configuration for Data, Log, and TempDB volumes
-  disk_types = {
-    data = {
-      disk_count   = var.data_disk_count
-      storage_type = var.data_disk_type
-      disk_size_gb = var.data_disk_size_gb
-      lun_base     = 0
-      name_suffix  = "datadisk"
-    }
-    log = {
-      disk_count   = 1
-      storage_type = var.log_disk_type
-      disk_size_gb = var.log_disk_size_gb
-      lun_base     = var.data_disk_count
-      name_suffix  = "logdisk"
-    }
-    tempdb = {
-      disk_count   = 1
-      storage_type = var.tempdb_disk_type
-      disk_size_gb = var.tempdb_disk_size_gb
-      lun_base     = var.data_disk_count + 1
-      name_suffix  = "tempdbdisk"
-    }
-  }
+  # Disk configuration for SQL Server
+  disks_per_vm = [
+    { name_suffix = "data-01", disk_size_gb = var.data_disk_size_gb, storage_type = var.data_disk_type, lun = 0 },
+    { name_suffix = "log-01", disk_size_gb = var.log_disk_size_gb, storage_type = var.log_disk_type, lun = 1 },
+    { name_suffix = "tempdb-01", disk_size_gb = var.tempdb_disk_size_gb, storage_type = var.tempdb_disk_type, lun = 2 }
+  ]
 
-  # Flatten disk configurations for creation
+  # Flatten to create all disks across all VMs
   all_disks = flatten([
     for vm_idx in range(local.sql_vm_count) : [
-      for disk_type, disk_config in local.disk_types : [
-        for disk_idx in range(disk_config.disk_count) : {
-          key          = "${vm_idx}-${disk_type}-${disk_idx}"
-          vm_index     = vm_idx
-          disk_type    = disk_type
-          disk_index   = disk_idx
-          storage_type = disk_config.storage_type
-          disk_size_gb = disk_config.disk_size_gb
-          lun          = disk_config.lun_base + disk_idx
-          name_suffix  = disk_config.name_suffix
-        }
-      ]
+      for disk in local.disks_per_vm : {
+        key          = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
+        vm_index     = vm_idx
+        name         = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
+        disk_size_gb = disk.disk_size_gb
+        storage_type = disk.storage_type
+        lun          = disk.lun
+      }
     ]
   ])
 
-  all_disks_map = {
-    for disk in local.all_disks : disk.key => disk
-  }
+  all_disks_map = { for disk in local.all_disks : disk.key => disk }
 }
 
 # SQL Server VM network interfaces with static IPs and accelerated networking
 resource "azurerm_network_interface" "sql_vm" {
   count                          = local.sql_vm_count
-  name                           = "${var.sql_vm_names[count.index]}-nic"
+  name                           = count.index == 0 ? "sqlpoc-nic-sql-primary" : "sqlpoc-nic-sql-secondary"
   location                       = var.location
   resource_group_name            = var.sql_resource_group_name
   accelerated_networking_enabled = true
@@ -104,7 +99,7 @@ resource "azurerm_network_interface" "sql_vm" {
     name                          = "internal"
     subnet_id                     = count.index == 0 ? data.terraform_remote_state.network.outputs.sql_subnet_sql1_id : data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
     private_ip_address_allocation = "Static"
-    private_ip_address            = count.index == 0 ? local.primary_vm_ip : local.secondary_vm_ip
+    private_ip_address            = var.sql_private_ips[count.index]
   }
 
   tags = local.tags
@@ -117,7 +112,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   location            = var.location
   resource_group_name = var.sql_resource_group_name
   size                = var.vm_size
-  zone                = var.availability_zones[floor(count.index / var.data_disk_count) % length(var.availability_zones)]
+  zone                = var.availability_zones[count.index % length(var.availability_zones)]
 
   admin_username = var.sql_admin_username
   admin_password = random_password.sql_vm_admin.result
@@ -128,7 +123,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
 
   os_disk {
     caching              = "ReadWrite"
-    storage_account_type = "Premium_LRS"
+    storage_account_type = var.os_disk_type
     disk_size_gb         = var.os_disk_size_gb
   }
 
@@ -165,7 +160,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
 # Managed disks for SQL Server data, log, and tempdb volumes
 resource "azurerm_managed_disk" "sql_disk" {
   for_each             = local.all_disks_map
-  name                 = each.value.disk_type == "data" ? "${var.sql_vm_names[each.value.vm_index]}-${each.value.name_suffix}-${each.value.disk_index + 1}" : "${var.sql_vm_names[each.value.vm_index]}-${each.value.name_suffix}"
+  name                 = each.value.name
   location             = var.location
   resource_group_name  = var.sql_resource_group_name
   storage_account_type = each.value.storage_type
@@ -176,6 +171,7 @@ resource "azurerm_managed_disk" "sql_disk" {
   tags = local.tags
 }
 
+# Attach data disks to SQL Server VMs
 resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   for_each           = local.all_disks_map
   managed_disk_id    = azurerm_managed_disk.sql_disk[each.key].id
@@ -184,25 +180,81 @@ resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
   caching            = "ReadOnly"
 }
 
-# Windows Failover Cluster creation with existence check (skip if already exists)
-resource "null_resource" "sql_failover_cluster" {
-  triggers = {
-    cluster_name    = var.failover_cluster_name
-    primary_node    = "${var.sql_vm_names[0]}"
-    secondary_node  = "${var.sql_vm_names[1]}"
-    cluster_ip_1    = local.cluster_primary_ip
-    cluster_ip_2    = local.cluster_secondary_ip
-    primary_vm_id   = azurerm_windows_virtual_machine.sql_vm[0].id
-    secondary_vm_id = azurerm_windows_virtual_machine.sql_vm[1].id
-  }
+# Custom script to format and configure disks
+resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
+  count                      = local.sql_vm_count
+  name                       = "configure-sql-disks"
+  virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
+  publisher                  = "Microsoft.Compute"
+  type                       = "CustomScriptExtension"
+  type_handler_version       = "1.10"
+  auto_upgrade_minor_version = true
 
-  provisioner "local-exec" {
-    when    = create
-    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[0]} --command-id RunPowerShellScript --scripts 'Write-Host \"Waiting for secondary node to be ready...\"; Start-Sleep -Seconds 120; Write-Host \"Checking if failover cluster already exists...\"; $clusterExists = $null; try { $clusterExists = Get-Cluster -Name ${self.triggers.cluster_name} -ErrorAction Stop; } catch { Write-Host \"Cluster does not exist, will create it now...\"; }; if ($clusterExists) { Write-Host \"Failover cluster ${self.triggers.cluster_name} already exists. Skipping cluster creation.\"; } else { Write-Host \"Creating failover cluster...\"; New-Cluster -Name ${self.triggers.cluster_name} -Node ${self.triggers.primary_node}, ${self.triggers.secondary_node} -AdministrativeAccessPoint DNS -StaticAddress ${self.triggers.cluster_ip_1}, ${self.triggers.cluster_ip_2} -Force -WarningAction SilentlyContinue; Write-Host \"Failover cluster created successfully\"; }'"
-  }
+  settings = jsonencode({
+    fileUris         = [local.disk_setup_file_uri]
+    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
+  })
 
   depends_on = [
     azurerm_virtual_machine_data_disk_attachment.sql_disk_attach,
-    azurerm_windows_virtual_machine.sql_vm
   ]
 }
+
+# SQL IaaS Agent Extension - SQL Server configuration only (no storage config)
+resource "azurerm_mssql_virtual_machine" "sql_vm" {
+  count                            = local.sql_vm_count
+  virtual_machine_id               = azurerm_windows_virtual_machine.sql_vm[count.index].id
+  sql_license_type                 = "PAYG"
+  sql_connectivity_port            = 1433
+  sql_connectivity_type            = "PRIVATE"
+  sql_connectivity_update_password = random_password.sql_vm[count.index].result
+  sql_connectivity_update_username = var.sql_admin_username
+
+  # SQL Server instance configuration
+  sql_instance {
+    collation                            = "SQL_Latin1_General_CP1_CI_AS"
+    max_dop                              = 0
+    min_server_memory_mb                 = 0
+    max_server_memory_mb                 = 12288 # 12GB for D4s_v4 (16GB RAM), leaves 4GB for OS
+    adhoc_workloads_optimization_enabled = true
+    instant_file_initialization_enabled  = true
+  }
+
+  # Automated patching configuration
+  auto_patching {
+    day_of_week                            = "Sunday"
+    maintenance_window_duration_in_minutes = 60
+    maintenance_window_starting_hour       = 2
+  }
+
+  tags = local.tags
+
+  timeouts {
+    create = "240m"
+    update = "240m"
+  }
+
+  depends_on = [
+    azurerm_windows_virtual_machine.sql_vm,
+    azurerm_virtual_machine_extension.sql_disk_setup
+  ]
+}
+
+# Future: Failover Clustering Configuration
+# Uncomment and configure once VMs are domain-joined and basic SQL setup is complete
+
+# resource "azurerm_virtual_machine_extension" "sql_cluster_setup" {
+#   count                      = local.sql_vm_count
+#   name                       = "sql-cluster-setup-${count.index + 1}"
+#   virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
+#   publisher                  = "Microsoft.Compute"
+#   type                       = "CustomScriptExtension"
+#   type_handler_version       = "1.10"
+#   auto_upgrade_minor_version = true
+#
+#   protected_settings = jsonencode({
+#     commandToExecute = "powershell -Command \"$ErrorActionPreference='Stop'; Write-Host 'Installing WSFC...'; Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools; if ('${var.sql_vm_names[count.index]}' -eq '${var.sql_vm_names[0]}') { Write-Host 'Primary node: Creating failover cluster...'; Start-Sleep -Seconds 120; New-Cluster -Name sqlpoc-cluster -Node '${var.sql_vm_names[0]}','${var.sql_vm_names[1]}' -StaticAddress 10.10.0.20 -NoStorage -Force }; Write-Host 'Cluster setup complete'\""
+#   })
+#
+#   depends_on = [azurerm_mssql_virtual_machine.sql_vm]
+# }

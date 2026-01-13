@@ -8,17 +8,17 @@ sql_resource_group_name = "rg-fnz-poc-sql-se"
 
 # SQL VM configuration
 sql_vm_names       = ["sql-primary", "sql-secondary"]
-sql_private_ips    = ["10.0.2.10", "10.0.2.11"]
+sql_private_ips    = ["10.10.0.10", "10.10.0.74"]
 sql_admin_username = "sqladmin"
 
 # VM sizing
 vm_size = "Standard_D4s_v4"
 
 # Storage configuration
-os_disk_type    = "Standard_LRS"
+os_disk_type    = "Premium_LRS"
 os_disk_size_gb = 128
 
-data_disk_type    = "Standard_LRS"
+data_disk_type    = "Premium_LRS"
 data_disk_count   = 1
 data_disk_size_gb = 256
 
@@ -34,7 +34,7 @@ backup_disk_size_gb = 512
 # SQL Server image
 image_publisher = "microsoftsqlserver"
 image_offer     = "sql2025-ws2025"
-image_sku       = "stddev-gen2"
+image_sku       = "standard-gen2"
 image_version   = "latest"
 
 # Extensions

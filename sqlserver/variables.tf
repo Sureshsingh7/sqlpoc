@@ -3,6 +3,12 @@ variable "subscription_id" {
   description = "Azure Subscription ID"
 }
 
+variable "disk_setup_sas" {
+  type        = string
+  description = "User delegation SAS token (no leading '?') for downloading scripts/disk_setup.ps1 from the TFSTATE storage container"
+  sensitive   = true
+}
+
 variable "location" {
   type        = string
   description = "Azure region for SQL VM deployment"
@@ -21,6 +27,12 @@ variable "sql_vm_names" {
     condition     = alltrue([for name in var.sql_vm_names : length(name) > 0 && length(name) <= 15])
     error_message = "Each VM name must be between 1 and 15 characters."
   }
+}
+
+variable "sql_private_ips" {
+  type        = list(string)
+  description = "Static private IP addresses for SQL Server VMs"
+  default     = ["10.10.0.10", "10.10.0.74"]
 }
 
 
@@ -133,8 +145,8 @@ variable "image_sku" {
   description = "Image SKU (enterprise, standard, express, or web)"
   default     = "standard"
   validation {
-    condition     = contains(["enterprise", "standard", "express", "web", "stddev-gen2"], var.image_sku)
-    error_message = "Image SKU must be one of: enterprise, standard, express, or web."
+    condition     = contains(["enterprise", "standard", "express", "web", "stddev-gen2", "standard-gen2"], var.image_sku)
+    error_message = "Image SKU must be one of: enterprise, standard, express, web, stddev-gen2, standard-gen2."
   }
 }
 
