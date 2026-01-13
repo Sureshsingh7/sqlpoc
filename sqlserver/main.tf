@@ -145,7 +145,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
 
   provisioner "local-exec" {
     when    = create
-    command = count.index == 0 ? "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[0]} --command-id RunPowerShellScript --scripts 'Write-Host \"Waiting for secondary node to be ready...\"; Start-Sleep -Seconds 60; Write-Host \"Creating failover cluster...\"; New-Cluster -Name sqlpoc-cluster -Node ${var.sql_vm_names[0]},${var.sql_vm_names[1]} -AdministrativeAccessPoint DNS -StaticAddress ${local.cluster_primary_ip},${local.cluster_secondary_ip} -NoStorage -Force -WarningAction SilentlyContinue; Write-Host \"Validating cluster...\"; Test-Cluster -Node ${var.sql_vm_names[0]},${var.sql_vm_names[1]} -ReportName \"C:\\\\ClusterValidationReport.htm\" -WarningAction SilentlyContinue; Write-Host \"Failover cluster created successfully\"; Restart-Computer -Force'" : "echo Primary cluster creation skipped on secondary node"
+    command = count.index == 0 ? "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"$$secPassword = ConvertTo-SecureString '${random_password.sql_vm_admin.result}' -AsPlainText -Force; $$cred = New-Object System.Management.Automation.PSCredential('${var.sql_admin_username}', $$secPassword); Invoke-Command -ComputerName '${var.sql_vm_names[0]}' -Credential $$cred -ScriptBlock { Write-Host 'Waiting for secondary node to be ready...'; Start-Sleep -Seconds 60; Write-Host 'Creating failover cluster...'; New-Cluster -Name sqlpoc-cluster -Node '${var.sql_vm_names[0]}','${var.sql_vm_names[1]}' -AdministrativeAccessPoint DNS -StaticAddress '${local.cluster_primary_ip}','${local.cluster_secondary_ip}' -NoStorage -Force -WarningAction SilentlyContinue; Write-Host 'Validating cluster...'; Test-Cluster -Node '${var.sql_vm_names[0]}','${var.sql_vm_names[1]}' -ReportName 'C:\\\\ClusterValidationReport.htm' -WarningAction SilentlyContinue; Write-Host 'Failover cluster created successfully'; Restart-Computer -Force }\"" : "echo Primary cluster creation skipped on secondary node"
   }
   tags = local.tags
 
@@ -161,6 +161,9 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
     azurerm_key_vault_secret.sql_vm_admin_password
   ]
 }
+
+# Separate cluster creation resource that can run on already deployed VMs
+# REMOVED - Using local-exec provisioner instead
 
 # Managed disks for SQL Server data, log, and tempdb volumes
 resource "azurerm_managed_disk" "sql_disk" {
@@ -245,21 +248,6 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   ]
 }
 
-# Failover Clustering Configuration via VM Extension
-resource "azurerm_virtual_machine_extension" "sql_cluster_creation" {
-  name                       = "create-failover-cluster"
-  virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[0].id
-  publisher                  = "Microsoft.Compute"
-  type                       = "CustomScriptExtension"
-  type_handler_version       = "1.10"
-  auto_upgrade_minor_version = true
+# Future: Failover Clustering Configuration
+# Uncomment and configure once VMs are domain-joined and basic SQL setup is complete
 
-  settings = jsonencode({
-    commandToExecute = "powershell.exe -ExecutionPolicy Bypass -Command \"Write-Host 'Waiting for secondary node to be ready...'; Start-Sleep -Seconds 60; Write-Host 'Creating failover cluster...'; New-Cluster -Name sqlpoc-cluster -Node '${var.sql_vm_names[0]}','${var.sql_vm_names[1]}' -AdministrativeAccessPoint DNS -StaticAddress '${local.cluster_primary_ip}','${local.cluster_secondary_ip}' -NoStorage -Force -WarningAction SilentlyContinue; Write-Host 'Validating cluster...'; Test-Cluster -Node '${var.sql_vm_names[0]}','${var.sql_vm_names[1]}' -ReportName 'C:\\\\ClusterValidationReport.htm' -WarningAction SilentlyContinue; Write-Host 'Failover cluster created successfully'; Restart-Computer -Force\""
-  })
-
-  depends_on = [
-    azurerm_windows_virtual_machine.sql_vm,
-    azurerm_virtual_machine_extension.sql_disk_setup
-  ]
-}
