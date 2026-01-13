@@ -245,16 +245,21 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   ]
 }
 
-# Failover Clustering Configuration via null_resource
-resource "null_resource" "sql_cluster_creation" {
-  provisioner "local-exec" {
-    when    = create
-    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[0]} --command-id RunPowerShellScript --scripts 'Write-Host \"Waiting for secondary node to be ready...\"; Start-Sleep -Seconds 60; Write-Host \"Creating failover cluster...\"; New-Cluster -Name sqlpoc-cluster -Node ${var.sql_vm_names[0]},${var.sql_vm_names[1]} -AdministrativeAccessPoint DNS -StaticAddress ${local.cluster_primary_ip},${local.cluster_secondary_ip} -NoStorage -Force -WarningAction SilentlyContinue; Write-Host \"Validating cluster...\"; Test-Cluster -Node ${var.sql_vm_names[0]},${var.sql_vm_names[1]} -ReportName \"C:\\\\ClusterValidationReport.htm\" -WarningAction SilentlyContinue; Write-Host \"Failover cluster created successfully\"; Restart-Computer -Force'"
-  }
+# Failover Clustering Configuration via VM Extension
+resource "azurerm_virtual_machine_extension" "sql_cluster_creation" {
+  name                       = "create-failover-cluster"
+  virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[0].id
+  publisher                  = "Microsoft.Compute"
+  type                       = "CustomScriptExtension"
+  type_handler_version       = "1.10"
+  auto_upgrade_minor_version = true
+
+  settings = jsonencode({
+    commandToExecute = "powershell.exe -ExecutionPolicy Bypass -Command \"Write-Host 'Waiting for secondary node to be ready...'; Start-Sleep -Seconds 60; Write-Host 'Creating failover cluster...'; New-Cluster -Name sqlpoc-cluster -Node '${var.sql_vm_names[0]}','${var.sql_vm_names[1]}' -AdministrativeAccessPoint DNS -StaticAddress '${local.cluster_primary_ip}','${local.cluster_secondary_ip}' -NoStorage -Force -WarningAction SilentlyContinue; Write-Host 'Validating cluster...'; Test-Cluster -Node '${var.sql_vm_names[0]}','${var.sql_vm_names[1]}' -ReportName 'C:\\\\ClusterValidationReport.htm' -WarningAction SilentlyContinue; Write-Host 'Failover cluster created successfully'; Restart-Computer -Force\""
+  })
 
   depends_on = [
     azurerm_windows_virtual_machine.sql_vm,
-    azurerm_virtual_machine_extension.sql_disk_setup,
-    azurerm_mssql_virtual_machine.sql_vm
+    azurerm_virtual_machine_extension.sql_disk_setup
   ]
 }
