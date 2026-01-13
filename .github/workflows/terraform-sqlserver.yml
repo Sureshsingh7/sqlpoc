@@ -185,12 +185,6 @@ jobs:
         run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
 
       - name: Terraform Apply
-<<<<<<< HEAD
-        run: terraform apply -auto-approve tfplan
-
-      # - name: Terraform Destroy
-      #   run: terraform destroy -auto-approve -var-file=env/dev.tfvars
-=======
         id: tf_apply
         continue-on-error: true
         run: |
@@ -373,4 +367,3 @@ jobs:
         run: |
           echo "Terraform apply failed (exitcode=${{ steps.tf_apply.outputs.exitcode }})"
           exit 1
->>>>>>> d68e2f87f89e89519d0ead2c412d5563e745a790
