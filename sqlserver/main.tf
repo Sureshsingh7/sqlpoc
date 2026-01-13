@@ -207,7 +207,7 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   sql_license_type                 = "PAYG"
   sql_connectivity_port            = 1433
   sql_connectivity_type            = "PRIVATE"
-  sql_connectivity_update_password = random_password.sql_vm[count.index].result
+  sql_connectivity_update_password = random_password.sql_vm_admin.result
   sql_connectivity_update_username = var.sql_admin_username
 
   # SQL Server instance configuration
