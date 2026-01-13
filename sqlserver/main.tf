@@ -245,21 +245,16 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   ]
 }
 
-# Future: Failover Clustering Configuration
-# Uncomment and configure once VMs are domain-joined and basic SQL setup is complete
+# Failover Clustering Configuration via null_resource
+resource "null_resource" "sql_cluster_creation" {
+  provisioner "local-exec" {
+    when    = create
+    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[0]} --command-id RunPowerShellScript --scripts 'Write-Host \"Waiting for secondary node to be ready...\"; Start-Sleep -Seconds 60; Write-Host \"Creating failover cluster...\"; New-Cluster -Name sqlpoc-cluster -Node ${var.sql_vm_names[0]},${var.sql_vm_names[1]} -AdministrativeAccessPoint DNS -StaticAddress ${local.cluster_primary_ip},${local.cluster_secondary_ip} -NoStorage -Force -WarningAction SilentlyContinue; Write-Host \"Validating cluster...\"; Test-Cluster -Node ${var.sql_vm_names[0]},${var.sql_vm_names[1]} -ReportName \"C:\\\\ClusterValidationReport.htm\" -WarningAction SilentlyContinue; Write-Host \"Failover cluster created successfully\"; Restart-Computer -Force'"
+  }
 
-# resource "azurerm_virtual_machine_extension" "sql_cluster_setup" {
-#   count                      = local.sql_vm_count
-#   name                       = "sql-cluster-setup-${count.index + 1}"
-#   virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
-#   publisher                  = "Microsoft.Compute"
-#   type                       = "CustomScriptExtension"
-#   type_handler_version       = "1.10"
-#   auto_upgrade_minor_version = true
-#
-#   protected_settings = jsonencode({
-#     commandToExecute = "powershell -Command \"$ErrorActionPreference='Stop'; Write-Host 'Installing WSFC...'; Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools; if ('${var.sql_vm_names[count.index]}' -eq '${var.sql_vm_names[0]}') { Write-Host 'Primary node: Creating failover cluster...'; Start-Sleep -Seconds 120; New-Cluster -Name sqlpoc-cluster -Node '${var.sql_vm_names[0]}','${var.sql_vm_names[1]}' -StaticAddress 10.10.0.20 -NoStorage -Force }; Write-Host 'Cluster setup complete'\""
-#   })
-#
-#   depends_on = [azurerm_mssql_virtual_machine.sql_vm]
-# }
+  depends_on = [
+    azurerm_windows_virtual_machine.sql_vm,
+    azurerm_virtual_machine_extension.sql_disk_setup,
+    azurerm_mssql_virtual_machine.sql_vm
+  ]
+}
