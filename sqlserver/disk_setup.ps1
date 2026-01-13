@@ -34,8 +34,8 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
 
     function FreeLetter([string]$l){
       try { cmd /c "mountvol ${l}:\\ /D" 2>$null | Out-Null } catch {}
-      try { cmd /c "net use ${l}: /delete /y 2>$null" | Out-Null } catch { }
-      try { cmd /c "subst ${l}: /D 2>$null" | Out-Null } catch {}
+      try { cmd /c "net use ${l}: /delete /y" 2>$null | Out-Null } catch {}
+      try { cmd /c "subst ${l}: /D" 2>$null | Out-Null } catch {}
 
       # Clear stale mount manager mappings that can cause "access path already in use"
       try {
