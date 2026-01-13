@@ -155,13 +155,39 @@ jobs:
           # Export for Terraform (sensitive; avoid echoing the SAS)
           echo "TF_VAR_disk_setup_sas=${sas}" >> "$GITHUB_ENV"
 
-      - name: Import existing SQL IaaS resources (if any)
-        continue-on-error: true
+      - name: List all resources in state file
         run: |
-          set +e
-          echo "Skipping import step - resources will be created fresh after destroy"
-          echo "If you need to import specific resources, add them manually here"
-          set -e
+          echo "=== Current State File Resources ==="
+          terraform state list || echo "No resources in state (new deployment)"
+          echo ""
+          echo "=== Detailed State Information ==="
+          terraform show || echo "State file is empty"
+
+      - name: Import existing SQL IaaS resources (if any)
+        run: |
+          set -euo pipefail
+          for idx in 0 1; do
+            if [ "$idx" = "0" ]; then
+              vm="$SQL_VM_PRIMARY"
+            else
+              vm="$SQL_VM_SECONDARY"
+            fi
+
+            addr="azurerm_mssql_virtual_machine.sql_vm[${idx}]"
+            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+
+            echo "Checking SQL IaaS resource: $rid"
+            if az resource show --ids "$rid" -o none 2>/dev/null; then
+              if terraform state list | grep -Fxq "$addr"; then
+                echo "$addr already in state"
+              else
+                echo "Importing $addr"
+                terraform import -var-file=env/dev.tfvars "$addr" "$rid"
+              fi
+            else
+              echo "Not found in Azure, skipping import"
+            fi
+          done
 
       - name: Terraform Plan
         run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
