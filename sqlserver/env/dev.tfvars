@@ -4,10 +4,10 @@
 # Azure context
 subscription_id         = "51595cc9-4191-4785-a757-15e45165d2a4"
 location                = "swedencentral"
-sql_resource_group_name = "rg-fnz-poc-sql-se"
+sql_resource_group_name = "rg-fnz-poc-mirror-env-sql-se"
 
 # SQL VM configuration
-sql_vm_names       = ["sql-primary", "sql-secondary"]
+sql_vm_names       = ["sql-mirror-primary", "sql-mirror-secondary"]
 sql_private_ips    = ["10.10.0.10", "10.10.0.74"]
 sql_admin_username = "sqladmin"
 
@@ -29,7 +29,7 @@ tempdb_disk_type    = "Premium_LRS"
 tempdb_disk_size_gb = 256
 
 backup_disk_type    = "Standard_LRS"
-backup_disk_size_gb = 512
+backup_disk_size_gb = 256
 
 # SQL Server image
 image_publisher = "microsoftsqlserver"
