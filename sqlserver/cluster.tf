@@ -2,7 +2,7 @@
 # This runs independently after VMs and disks are ready
 # Execute with: terraform apply -target=null_resource.sql_cluster_creation
 
-resource "null_resource" "sql_cluster_creation" {
+resource "null_resource" "sql_cluster_creation_script" {
   triggers = {
     primary_vm_id   = azurerm_windows_virtual_machine.sql_vm[0].id
     secondary_vm_id = azurerm_windows_virtual_machine.sql_vm[1].id
