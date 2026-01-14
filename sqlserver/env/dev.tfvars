@@ -8,7 +8,7 @@ sql_resource_group_name = "rg-fnz-poc-mirror-env-sql-se"
 
 # SQL VM configuration
 sql_vm_names       = ["sql-mirror-primary", "sql-mirror-secondary"]
-sql_private_ips    = ["10.10.0.10", "10.10.0.74"]
+sql_private_ips    = ["10.10.0.193", "10.10.0.161"]
 sql_admin_username = "sqladmin"
 
 # VM sizing
