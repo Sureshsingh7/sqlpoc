@@ -246,4 +246,3 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
 
 # Future: Failover Clustering Configuration
 # Uncomment and configure once VMs are domain-joined and basic SQL setup is complete
-
