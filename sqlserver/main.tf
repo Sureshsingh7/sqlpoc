@@ -7,7 +7,7 @@ resource "random_password" "sql_vm_admin" {
 
 # Store SQL VM admin password in Key Vault
 resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
-  name         = "sql-vm-admin-password"
+  name         = "sql-vm-mirror-env-admin-password"
   value        = random_password.sql_vm_admin.result
   key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
 
@@ -90,7 +90,7 @@ locals {
 # SQL Server VM network interfaces with static IPs and accelerated networking
 resource "azurerm_network_interface" "sql_vm" {
   count                          = local.sql_vm_count
-  name                           = count.index == 0 ? "sqlpoc-nic-sql-primary" : "sqlpoc-nic-sql-secondary"
+  name                           = "${var.sql_vm_names[count.index]}-nic"
   location                       = var.location
   resource_group_name            = var.sql_resource_group_name
   accelerated_networking_enabled = true
@@ -107,15 +107,15 @@ resource "azurerm_network_interface" "sql_vm" {
 
 # Windows Server VMs configured for SQL Server failover clustering
 resource "azurerm_windows_virtual_machine" "sql_vm" {
-  count               = local.sql_vm_count
-  name                = var.sql_vm_names[count.index]
-  location            = var.location
-  resource_group_name = var.sql_resource_group_name
-  size                = var.vm_size
-  zone                = var.availability_zones[count.index % length(var.availability_zones)]
-
-  admin_username = var.sql_admin_username
-  admin_password = random_password.sql_vm_admin.result
+  count                                                  = local.sql_vm_count
+  name                                                   = var.sql_vm_names[count.index]
+  location                                               = var.location
+  resource_group_name                                    = var.sql_resource_group_name
+  size                                                   = var.vm_size
+  zone                                                   = var.availability_zones[count.index % length(var.availability_zones)]
+  bypass_platform_safety_checks_on_user_schedule_enabled = true
+  admin_username                                         = var.sql_admin_username
+  admin_password                                         = random_password.sql_vm_admin.result
 
   network_interface_ids = [
     azurerm_network_interface.sql_vm[count.index].id
