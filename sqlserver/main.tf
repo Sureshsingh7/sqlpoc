@@ -1,18 +1,17 @@
-# Generate random passwords for SQL VM admin accounts
-resource "random_password" "sql_vm" {
-  count   = length(var.sql_vm_names)
+
+# Generate single password for both SQL VM admin accounts
+resource "random_password" "sql_vm_admin" {
   length  = 32
   special = true
 }
 
-# Store SQL VM admin passwords in Key Vault
+# Store SQL VM admin password in Key Vault
 resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
-  count        = length(var.sql_vm_names)
-  name         = "${var.sql_vm_names[count.index]}-local-admin"
-  value        = random_password.sql_vm[count.index].result
+  name         = "sql-vm-admin-password"
+  value        = random_password.sql_vm_admin.result
   key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
 
-  content_type = "SQL Server VM local admin password"
+  content_type = "SQL Server VM local admin password (shared for primary and secondary)"
 }
 
 # Host the disk setup script in the existing TFSTATE storage account/container.
@@ -37,6 +36,25 @@ locals {
 # Locals for naming and organization
 locals {
   sql_vm_count = length(var.sql_vm_names)
+
+  # Calculate subnet parameters for dynamic IP allocation
+  sql1_prefix_length    = tonumber(split("/", data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix)[1])
+  sql2_prefix_length    = tonumber(split("/", data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix)[1])
+  sql1_max_usable_index = pow(2, 32 - local.sql1_prefix_length) - 5
+  sql2_max_usable_index = pow(2, 32 - local.sql2_prefix_length) - 5
+
+  # Dynamic host index allocation (percentage-based for subnet size flexibility)
+  primary_vm_host_index        = max(10, floor(local.sql1_max_usable_index * 0.15))
+  secondary_vm_host_index      = max(10, floor(local.sql2_max_usable_index * 0.15))
+  cluster_primary_host_index   = max(20, floor(local.sql1_max_usable_index * 0.30))
+  cluster_secondary_host_index = max(20, floor(local.sql2_max_usable_index * 0.45))
+
+  # Compute VM and cluster IPs from subnet CIDR blocks
+  primary_vm_ip        = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, local.primary_vm_host_index)
+  secondary_vm_ip      = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, local.secondary_vm_host_index)
+  cluster_primary_ip   = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, local.cluster_primary_host_index)
+  cluster_secondary_ip = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, local.cluster_secondary_host_index)
+
   tags = merge(
     {
       "project"   = "SQLPOC"
@@ -69,7 +87,7 @@ locals {
   all_disks_map = { for disk in local.all_disks : disk.key => disk }
 }
 
-# Network interfaces for SQL VMs
+# SQL Server VM network interfaces with static IPs and accelerated networking
 resource "azurerm_network_interface" "sql_vm" {
   count                          = local.sql_vm_count
   name                           = count.index == 0 ? "sqlpoc-nic-sql-primary" : "sqlpoc-nic-sql-secondary"
@@ -87,7 +105,7 @@ resource "azurerm_network_interface" "sql_vm" {
   tags = local.tags
 }
 
-# SQL Server VMs
+# Windows Server VMs configured for SQL Server failover clustering
 resource "azurerm_windows_virtual_machine" "sql_vm" {
   count               = local.sql_vm_count
   name                = var.sql_vm_names[count.index]
@@ -97,7 +115,7 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   zone                = var.availability_zones[count.index % length(var.availability_zones)]
 
   admin_username = var.sql_admin_username
-  admin_password = random_password.sql_vm[count.index].result
+  admin_password = random_password.sql_vm_admin.result
 
   network_interface_ids = [
     azurerm_network_interface.sql_vm[count.index].id
@@ -120,6 +138,11 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
     type = "SystemAssigned"
   }
 
+  provisioner "local-exec" {
+    when    = create
+    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts 'if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[0]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"${local.primary_vm_ip} `t${var.sql_vm_names[0]}.sqlpoc.local `t${var.sql_vm_names[0]}\" }; if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[1]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"${local.secondary_vm_ip} `t${var.sql_vm_names[1]}.sqlpoc.local `t${var.sql_vm_names[1]}\" }; Set-ItemProperty -Path \"HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\services\\\\Tcpip\\\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force; New-ItemProperty -Path \"HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\System\" -Name \"LocalAccountTokenFilterPolicy\" -Value 1 -PropertyType DWord -Force; Write-Host \"Enabling ICMP in Windows Firewall...\"; netsh advfirewall firewall add rule name=\"Allow ICMPv4\" protocol=icmpv4 dir=in action=allow; Write-Host \"ICMP enabled successfully\"; Write-Host \"Installing Failover Clustering...\"; Import-Module ServerManager; Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools; Write-Host \"Failover Clustering installed successfully\"'"
+  }
+
   tags = local.tags
 
   lifecycle {
@@ -129,10 +152,16 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
     ]
   }
 
-  depends_on = [azurerm_network_interface.sql_vm]
+  depends_on = [
+    azurerm_network_interface.sql_vm,
+    azurerm_key_vault_secret.sql_vm_admin_password
+  ]
 }
 
-# Create data disks for SQL Server
+# Separate cluster creation resource that can run on already deployed VMs
+# REMOVED - Using local-exec provisioner instead
+
+# Managed disks for SQL Server data, log, and tempdb volumes
 resource "azurerm_managed_disk" "sql_disk" {
   for_each             = local.all_disks_map
   name                 = each.value.name
@@ -182,7 +211,7 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   sql_license_type                 = "PAYG"
   sql_connectivity_port            = 1433
   sql_connectivity_type            = "PRIVATE"
-  sql_connectivity_update_password = random_password.sql_vm[count.index].result
+  sql_connectivity_update_password = random_password.sql_vm_admin.result
   sql_connectivity_update_username = var.sql_admin_username
 
   # SQL Server instance configuration
@@ -217,19 +246,3 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
 
 # Future: Failover Clustering Configuration
 # Uncomment and configure once VMs are domain-joined and basic SQL setup is complete
-
-# resource "azurerm_virtual_machine_extension" "sql_cluster_setup" {
-#   count                      = local.sql_vm_count
-#   name                       = "sql-cluster-setup-${count.index + 1}"
-#   virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
-#   publisher                  = "Microsoft.Compute"
-#   type                       = "CustomScriptExtension"
-#   type_handler_version       = "1.10"
-#   auto_upgrade_minor_version = true
-#
-#   protected_settings = jsonencode({
-#     commandToExecute = "powershell -Command \"$ErrorActionPreference='Stop'; Write-Host 'Installing WSFC...'; Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools; if ('${var.sql_vm_names[count.index]}' -eq '${var.sql_vm_names[0]}') { Write-Host 'Primary node: Creating failover cluster...'; Start-Sleep -Seconds 120; New-Cluster -Name sqlpoc-cluster -Node '${var.sql_vm_names[0]}','${var.sql_vm_names[1]}' -StaticAddress 10.10.0.20 -NoStorage -Force }; Write-Host 'Cluster setup complete'\""
-#   })
-#
-#   depends_on = [azurerm_mssql_virtual_machine.sql_vm]
-# }

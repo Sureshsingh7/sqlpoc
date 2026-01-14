@@ -211,3 +211,10 @@ variable "tags" {
   description = "Additional tags to apply to all resources"
   default     = {}
 }
+
+# Cluster configuration variables
+variable "failover_cluster_name" {
+  type        = string
+  description = "Name of the SQL Server Failover Cluster"
+  default     = "sqlpoc-cluster"
+}
