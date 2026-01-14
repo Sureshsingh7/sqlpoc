@@ -7,7 +7,7 @@ resource "random_password" "sql_vm_admin" {
 
 # Store SQL VM admin password in Key Vault
 resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
-  name         = "sql-vm-mirror-env-admin-password"
+  name         = "sql-vm-admin-password"
   value        = random_password.sql_vm_admin.result
   key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
 
@@ -90,7 +90,7 @@ locals {
 # SQL Server VM network interfaces with static IPs and accelerated networking
 resource "azurerm_network_interface" "sql_vm" {
   count                          = local.sql_vm_count
-  name                           = "${var.sql_vm_names[count.index]}-nic"
+  name                           = count.index == 0 ? "sqlpoc-nic-sql-primary" : "sqlpoc-nic-sql-secondary"
   location                       = var.location
   resource_group_name            = var.sql_resource_group_name
   accelerated_networking_enabled = true
