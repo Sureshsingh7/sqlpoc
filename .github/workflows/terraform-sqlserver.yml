@@ -30,6 +30,10 @@ jobs:
       SQL_RG: rg-fnz-poc-sql-se
       SQL_VM_PRIMARY: sql-primary
       SQL_VM_SECONDARY: sql-secondary
+
+      # Provider downloads (esp. azapi) sometimes hit slow GitHub release endpoints.
+      TF_REGISTRY_CLIENT_TIMEOUT: "300"
+      TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
     steps:
       # 1️⃣ Checkout FIRST
       - name: Checkout repository
@@ -49,6 +53,12 @@ jobs:
       - name: Set Az Login with UAMI
         run: |
           az login --identity --username "$ARM_CLIENT_ID"
+
+      - name: Prepare Terraform plugin cache
+        run: |
+          set -euo pipefail
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+          echo "TF_PLUGIN_CACHE_DIR=${TF_PLUGIN_CACHE_DIR}"
 
       - name: Ensure SQL VMs are running (best-effort)
         run: |
@@ -107,11 +117,22 @@ jobs:
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
           TFSTATE_KEY: "sqlpoc.sqlserver.tfstate"
         run: |
-          terraform init -reconfigure -upgrade \
-            -backend-config="resource_group_name=${TFSTATE_RG}" \
-            -backend-config="storage_account_name=${TFSTATE_SA}" \
-            -backend-config="container_name=${TFSTATE_CONTAINER}" \
-            -backend-config="key=${TFSTATE_KEY}"
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            echo "terraform init attempt ${attempt}/3"
+            if terraform init -reconfigure -upgrade \
+              -backend-config="resource_group_name=${TFSTATE_RG}" \
+              -backend-config="storage_account_name=${TFSTATE_SA}" \
+              -backend-config="container_name=${TFSTATE_CONTAINER}" \
+              -backend-config="key=${TFSTATE_KEY}"; then
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "terraform init failed after retries"
+          exit 1
 
       - name: Terraform Validate
         run: terraform validate
