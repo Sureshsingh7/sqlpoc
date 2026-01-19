@@ -55,18 +55,18 @@ jobs:
           set -euo pipefail
 
           echo "Microsoft.SqlVirtualMachine RP registrationState:"
-          az provider show -n Microsoft.SqlVirtualMachine --query "registrationState" -o tsv 2>/dev/null || true
+          timeout 20s az provider show -n Microsoft.SqlVirtualMachine --query "registrationState" -o tsv 2>/dev/null || true
 
           wait_running() {
             local vm="$1"
             echo "Ensuring VM is running: $vm"
 
             # VM may not exist yet on first deploy; ignore start errors.
-            az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
+            timeout 20s az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
 
             # If it exists, wait until PowerState/running.
             for i in $(seq 1 12); do
-              state="$(az vm get-instance-view -g "$SQL_RG" -n "$vm" \
+              state="$(timeout 20s az vm get-instance-view -g "$SQL_RG" -n "$vm" \
                 --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
 
               if [ -z "$state" ]; then
