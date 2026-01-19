@@ -170,7 +170,7 @@ jobs:
 
             echo "Checking SQL IaaS resource: $rid"
             if az resource show --ids "$rid" -o none 2>/dev/null; then
-              if terraform state list | grep -Fxq "$addr"; then
+              if terraform state show "$addr" >/dev/null 2>&1; then
                 echo "$addr already in state"
               else
                 echo "Importing $addr"
@@ -196,7 +196,7 @@ jobs:
 
             echo "Checking VM extension: $rid"
             if az vm extension show --ids "$rid" -o none 2>/dev/null; then
-              if terraform state list | grep -Fxq "$addr"; then
+              if terraform state show "$addr" >/dev/null 2>&1; then
                 echo "$addr already in state"
               else
                 echo "Importing $addr"
