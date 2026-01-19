@@ -259,6 +259,82 @@ resource "azurerm_network_security_rule" "rdp_to_sql1_from_bastion" {
   network_security_group_name = azurerm_network_security_group.sql1.name
 }
 
+# -----------------------------------------------------------------------------
+# SQL1 <-> SQL2 (WSFC + Always On AG)
+# NOTE: NSG default rules already allow VNet-to-VNet traffic. These explicit
+# allows are here so you can safely tighten NSGs later (e.g., deny-all inbound)
+# without breaking clustering/AG.
+
+resource "azurerm_network_security_rule" "sql1_inbound_wsfc_heartbeat_from_sql2" {
+  name                        = "Allow-WSFC-Heartbeat"
+  priority                    = 110
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "3343"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql1.name
+}
+
+resource "azurerm_network_security_rule" "sql1_inbound_ag_endpoint_from_sql2" {
+  name                        = "Allow-AG-Endpoint"
+  priority                    = 120
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "5022"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql1.name
+}
+
+resource "azurerm_network_security_rule" "sql1_inbound_rpc_smb_from_sql2" {
+  name                        = "Allow-RPC-SMB"
+  priority                    = 130
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_ranges     = ["135", "445"]
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql1.name
+}
+
+resource "azurerm_network_security_rule" "sql1_inbound_dnn_from_sql2" {
+  name                        = "Allow-DNN"
+  priority                    = 140
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "7002"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql1.name
+}
+
+resource "azurerm_network_security_rule" "sql1_inbound_rpc_dynamic_from_sql2" {
+  name                        = "Allow-RPC-Dynamic"
+  priority                    = 150
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "49152-65535"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql1.name
+}
+
 # Outbound KMS activation for SQL1
 resource "azurerm_network_security_rule" "sql1_outbound_kms" {
   name                        = "Allow-Outbound-KMS"
@@ -298,6 +374,76 @@ resource "azurerm_network_security_rule" "rdp_to_sql2_from_bastion" {
   source_port_range           = "*"
   destination_port_range      = "3389"
   source_address_prefix       = var.subnet_bastion_prefix
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql2.name
+}
+
+resource "azurerm_network_security_rule" "sql2_inbound_wsfc_heartbeat_from_sql1" {
+  name                        = "Allow-WSFC-Heartbeat"
+  priority                    = 110
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "3343"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql2.name
+}
+
+resource "azurerm_network_security_rule" "sql2_inbound_ag_endpoint_from_sql1" {
+  name                        = "Allow-AG-Endpoint"
+  priority                    = 120
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "5022"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql2.name
+}
+
+resource "azurerm_network_security_rule" "sql2_inbound_rpc_smb_from_sql1" {
+  name                        = "Allow-RPC-SMB"
+  priority                    = 130
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_ranges     = ["135", "445"]
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql2.name
+}
+
+resource "azurerm_network_security_rule" "sql2_inbound_dnn_from_sql1" {
+  name                        = "Allow-DNN"
+  priority                    = 140
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "7002"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.sql2.name
+}
+
+resource "azurerm_network_security_rule" "sql2_inbound_rpc_dynamic_from_sql1" {
+  name                        = "Allow-RPC-Dynamic"
+  priority                    = 150
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "49152-65535"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
   destination_address_prefix  = var.sql_subnet_sql2_prefix
   resource_group_name         = var.sql_resource_group_name
   network_security_group_name = azurerm_network_security_group.sql2.name

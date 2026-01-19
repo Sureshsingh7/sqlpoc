@@ -333,6 +333,19 @@ jobs:
               "SecondaryName=$SQL_VM_SECONDARY" \
             --query "value[0].message" -o tsv
 
+      - name: Enable SQL Always On AG (both nodes)
+        if: steps.tf_apply.outputs.exitcode == '0'
+        run: |
+          set -euo pipefail
+
+          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+            echo "== Enabling Always On on $vm =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts @enable_alwayson.ps1 \
+              --parameters "SqlInstance=$vm" \
+              --query "value[0].message" -o tsv
+          done
+
       - name: Install SSMS (best-effort)
         if: steps.tf_apply.outputs.exitcode == '0'
         run: |
