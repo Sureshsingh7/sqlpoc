@@ -208,7 +208,38 @@ jobs:
           done
 
       - name: Terraform Plan
-        run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
+        id: tf_plan
+        run: |
+          set +e
+
+          log_file="terraform-plan.log"
+          rm -f "$log_file"
+
+          on_term() {
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform plan received termination signal"
+            echo "Last 50 lines of $log_file:"
+            tail -n 50 "$log_file" 2>/dev/null || true
+          }
+          trap on_term SIGINT SIGTERM
+
+          ( terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan 2>&1 | tee "$log_file" ) &
+          pid=$!
+
+          # Heartbeat every 60s so slow AzureRM refresh doesn't look hung.
+          while kill -0 "$pid" 2>/dev/null; do
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform plan still running..."
+            tail -n 5 "$log_file" 2>/dev/null || true
+            sleep 60
+          done
+
+          wait "$pid"
+          code=$?
+          echo "Last 30 lines of $log_file:"
+          tail -n 30 "$log_file" 2>/dev/null || true
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
 
       - name: Terraform Apply
         id: tf_apply
@@ -277,6 +308,18 @@ jobs:
           tail -n 30 "$log_file" 2>/dev/null || true
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           exit 0
+
+      - name: Upload Terraform logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-sqlserver-logs
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            sqlserver/terraform-plan.log
+            sqlserver/terraform-apply.log
+            sqlserver/tfplan
 
       - name: Prep WSFC nodes (local user + hosts + cluster feature)
         if: steps.tf_apply.outputs.exitcode == '0'

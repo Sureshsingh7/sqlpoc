@@ -162,6 +162,12 @@ module "sql_vm" {
   os_type  = "Windows"
   sku_size = var.vm_size
 
+  # Azure Compute can reject updates on some images unless this flag is enabled.
+  # See error: BypassPlatformSafetyChecksOnUserSchedule cannot be set to false.
+  patch_assessment_mode                                  = "AutomaticByPlatform"
+  patch_mode                                             = "AutomaticByPlatform"
+  bypass_platform_safety_checks_on_user_schedule_enabled = true
+
   encryption_at_host_enabled = false
 
   network_interfaces = {
