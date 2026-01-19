@@ -8,7 +8,7 @@ data "terraform_remote_state" "network" {
     container_name       = "tfstate"
     key                  = "sqlpoc.network.tfstate"
     use_azuread_auth     = true
-    use_msi              = true
+    use_msi              = var.use_msi
   }
 }
 
@@ -22,6 +22,6 @@ data "terraform_remote_state" "ops" {
     container_name       = "tfstate"
     key                  = "sqlpoc.ops.tfstate"
     use_azuread_auth     = true
-    use_msi              = true
+    use_msi              = var.use_msi
   }
 }

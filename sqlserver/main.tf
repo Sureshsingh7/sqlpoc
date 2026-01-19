@@ -9,8 +9,16 @@ data "azurerm_resource_group" "sql" {
   name = var.sql_resource_group_name
 }
 
+data "azurerm_key_vault_secret" "sql_vm_admin" {
+  name         = "sql-vm-admin-password"
+  key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
+}
+
 locals {
-  sql_vm_admin_password = data.terraform_remote_state.ops.outputs.sql_vm_admin_password
+  sql_vm_admin_password = try(
+    data.terraform_remote_state.ops.outputs.sql_vm_admin_password,
+    data.azurerm_key_vault_secret.sql_vm_admin.value
+  )
   sql_vm_map            = { for idx, name in var.sql_vm_names : name => idx }
   sql_vm_nic_names       = ["sqlpoc-nic-sql-primary", "sqlpoc-nic-sql-secondary"]
 }

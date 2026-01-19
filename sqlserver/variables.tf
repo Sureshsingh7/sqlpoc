@@ -3,6 +3,12 @@ variable "subscription_id" {
   description = "Azure Subscription ID"
 }
 
+variable "use_msi" {
+  type        = bool
+  description = "Use managed identity to access remote Terraform state. Set false for local runs."
+  default     = true
+}
+
 variable "disk_setup_sas" {
   type        = string
   description = "User delegation SAS token (no leading '?') for downloading scripts/disk_setup.ps1 from the TFSTATE storage container"
