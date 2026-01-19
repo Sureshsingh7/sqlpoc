@@ -167,6 +167,9 @@ jobs:
             --https-only \
             -o tsv)"
 
+          # Mask the SAS so it doesn't appear in later step env dumps.
+          echo "::add-mask::${sas}"
+
           if [ -z "${sas}" ]; then
             echo "Failed to generate user-delegation SAS (empty output)."
             echo "Ensure the runner identity can generate SAS via AAD (often requires Storage Blob Data Contributor + Blob Delegator on the storage account)."
@@ -372,15 +375,15 @@ jobs:
 
       - name: Upload Terraform logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: terraform-sqlserver-logs
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 3
           path: |
             sqlserver/terraform-plan.log
             sqlserver/terraform-apply.log
-            sqlserver/tfplan
 
       - name: Prep WSFC nodes (local user + hosts + cluster feature)
         if: steps.tf_apply.outputs.exitcode == '0'
