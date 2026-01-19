@@ -174,24 +174,29 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   if(-not $p){
     $p=New-Partition -DiskNumber $n -UseMaximumSize -AssignDriveLetter:$false
     EnsureLetter $n $p.PartitionNumber $dl
-    if(-not (Test-Path "${dl}:\\")){
-      LogPartitionVolume $n $p.PartitionNumber $dl
-      throw "Drive ${dl}: not available after assignment for disk $n"
+    # A newly-assigned drive letter on a RAW volume may not be browseable yet (Test-Path can fail)
+    # until after formatting. Use the partition object to format and then validate availability.
+    LogPartitionVolume $n $p.PartitionNumber $dl
+    $part = Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -ErrorAction SilentlyContinue
+    if($part){
+      Format-Volume -Partition $part -FileSystem NTFS -NewFileSystemLabel $lbl -Force | Out-Null
+    } else {
+      Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force | Out-Null
     }
-    Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null
   } else {
     if($p.DriveLetter -ne $dl){
       EnsureLetter $n $p.PartitionNumber $dl
-      if(-not (Test-Path "${dl}:\\")){
-        LogPartitionVolume $n $p.PartitionNumber $dl
-        throw "Drive ${dl}: not available after assignment for disk $n"
-      }
     }
     $v=Get-Volume -DriveLetter $dl -ErrorAction SilentlyContinue
     $needsFormat = (-not $v) -or [string]::IsNullOrWhiteSpace($v.FileSystem) -or ($v.Size -le 0)
     if($needsFormat){
       L ("format {0}: (fs='{1}' size={2})" -f $dl, ($v.FileSystem), ($v.Size))
-      Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force|Out-Null
+      $part = Get-Partition -DiskNumber $n -PartitionNumber $p.PartitionNumber -ErrorAction SilentlyContinue
+      if($part){
+        Format-Volume -Partition $part -FileSystem NTFS -NewFileSystemLabel $lbl -Force | Out-Null
+      } else {
+        Format-Volume -DriveLetter $dl -FileSystem NTFS -NewFileSystemLabel $lbl -Force | Out-Null
+      }
     }
   }
 
