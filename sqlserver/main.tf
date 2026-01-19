@@ -162,6 +162,7 @@ module "sql_vm" {
   os_type  = "Windows"
   sku_size = var.vm_size
 
+  encryption_at_host_enabled = false
   bypass_platform_safety_checks_on_user_schedule_enabled = true
   patch_mode                                             = "AutomaticByPlatform"
   patch_assessment_mode                                  = "AutomaticByPlatform"
