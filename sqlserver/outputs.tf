@@ -40,7 +40,7 @@ output "ops_key_vault_id" {
 }
 
 output "witness_storage_account_name" {
-	value       = azurerm_storage_account.witness.name
+	value       = module.witness_storage.name
 	description = "Storage account name used for WSFC Cloud Witness"
 }
 

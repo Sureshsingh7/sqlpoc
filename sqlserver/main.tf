@@ -1,82 +1,66 @@
 
-# Generate single password for both SQL VM admin accounts
-resource "random_password" "sql_vm_admin" {
-  length  = 32
-  special = true
-}
-
 resource "random_string" "witness_suffix" {
   length  = 6
   upper   = false
   special = false
 }
 
-# Store SQL VM admin password in Key Vault
-resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
-  name         = "sql-vm-admin-password"
-  value        = random_password.sql_vm_admin.result
-  key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
+data "azurerm_resource_group" "sql" {
+  name = var.sql_resource_group_name
+}
 
-  content_type = "SQL Server VM local admin password (shared for primary and secondary)"
+locals {
+  sql_vm_admin_password = data.terraform_remote_state.ops.outputs.sql_vm_admin_password
+  sql_vm_map            = { for idx, name in var.sql_vm_names : name => idx }
+  sql_vm_nic_names       = ["sqlpoc-nic-sql-primary", "sqlpoc-nic-sql-secondary"]
 }
 
 # Cloud Witness storage account (used for WSFC quorum in a workgroup cluster).
 # Org policy disables Shared Key access by default; the SecurityControl=ignore tag
 # is used to bypass that policy in this PoC.
-resource "azurerm_storage_account" "witness" {
-  name                     = "stsqlw${random_string.witness_suffix.result}"
-  resource_group_name      = var.sql_resource_group_name
-  location                 = var.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
-  account_kind             = "StorageV2"
+module "witness_blob_dns" {
+  source  = "Azure/avm-res-network-privatednszone/azurerm"
+  version = "0.4.4"
 
-  shared_access_key_enabled     = true
+  domain_name = "privatelink.blob.core.windows.net"
+  parent_id   = data.azurerm_resource_group.sql.id
+  tags        = local.tags
+
+  virtual_network_links = {
+    sql_vnet = {
+      name               = "link-blob-sql-vnet"
+      virtual_network_id = data.terraform_remote_state.network.outputs.sql_vnet_id
+      autoregistration   = false
+    }
+  }
+}
+
+module "witness_storage" {
+  source  = "Azure/avm-res-storage-storageaccount/azurerm"
+  version = "0.6.7"
+
+  name                = "stsqlw${random_string.witness_suffix.result}"
+  resource_group_name = var.sql_resource_group_name
+  location            = var.location
+  account_tier        = "Standard"
+  account_replication_type = "LRS"
+  account_kind        = "StorageV2"
+  shared_access_key_enabled      = true
   allow_nested_items_to_be_public = false
-  min_tls_version               = "TLS1_2"
+  min_tls_version                = "TLS1_2"
+  public_network_access_enabled  = true
 
   tags = merge(local.tags, {
     SecurityControl = var.witness_storage_security_control_tag_value
   })
-}
 
-# Private DNS zone for Storage Blob (Cloud Witness)
-resource "azurerm_private_dns_zone" "witness_blob" {
-  name                = "privatelink.blob.core.windows.net"
-  resource_group_name = var.sql_resource_group_name
-
-  tags = local.tags
-}
-
-# Link private DNS zone to SQL VNet
-resource "azurerm_private_dns_zone_virtual_network_link" "witness_blob_sql_vnet" {
-  name                  = "link-blob-sql-vnet"
-  resource_group_name   = var.sql_resource_group_name
-  private_dns_zone_name = azurerm_private_dns_zone.witness_blob.name
-  virtual_network_id    = data.terraform_remote_state.network.outputs.sql_vnet_id
-
-  tags = local.tags
-}
-
-# Private Endpoint for witness storage account (Blob)
-resource "azurerm_private_endpoint" "witness_blob" {
-  name                = "pep-witness-blob"
-  location            = var.location
-  resource_group_name = var.sql_resource_group_name
-  subnet_id           = data.terraform_remote_state.network.outputs.pep_subnet_id
-
-  private_service_connection {
-    name                           = "psc-witness-blob"
-    private_connection_resource_id = azurerm_storage_account.witness.id
-    is_manual_connection           = false
-    subresource_names              = ["blob"]
-  }
-
-  tags = local.tags
-
-  private_dns_zone_group {
-    name                 = "blob-dns-zone-group"
-    private_dns_zone_ids = [azurerm_private_dns_zone.witness_blob.id]
+  private_endpoints = {
+    witness_blob = {
+      name                       = "pep-witness-blob"
+      subnet_resource_id         = data.terraform_remote_state.network.outputs.pep_subnet_id
+      subresource_name           = "blob"
+      private_dns_zone_resource_ids = [module.witness_blob_dns.resource_id]
+    }
   }
 }
 
@@ -156,128 +140,101 @@ locals {
   all_disks_map = { for disk in local.all_disks : disk.key => disk }
 }
 
-# SQL Server VM network interfaces with static IPs and accelerated networking
-resource "azurerm_network_interface" "sql_vm" {
-  count                          = local.sql_vm_count
-  name                           = count.index == 0 ? "sqlpoc-nic-sql-primary" : "sqlpoc-nic-sql-secondary"
-  location                       = var.location
-  resource_group_name            = var.sql_resource_group_name
-  accelerated_networking_enabled = true
+# SQL Server VMs configured for SQL Server failover clustering
+module "sql_vm" {
+  for_each = local.sql_vm_map
+  source   = "Azure/avm-res-compute-virtualmachine/azurerm"
+  version  = "0.20.0"
 
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = count.index == 0 ? data.terraform_remote_state.network.outputs.sql_subnet_sql1_id : data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
-    private_ip_address_allocation = "Static"
-    private_ip_address            = var.sql_private_ips[count.index]
-  }
+  name                = each.key
+  location            = var.location
+  resource_group_name = var.sql_resource_group_name
+  zone                = var.availability_zones[each.value % length(var.availability_zones)]
 
-  tags = local.tags
-}
+  os_type  = "Windows"
+  sku_size = var.vm_size
 
-# Windows Server VMs configured for SQL Server failover clustering
-resource "azurerm_windows_virtual_machine" "sql_vm" {
-  count                                                  = local.sql_vm_count
-  name                                                   = var.sql_vm_names[count.index]
-  location                                               = var.location
-  resource_group_name                                    = var.sql_resource_group_name
-  size                                                   = var.vm_size
-  zone                                                   = var.availability_zones[count.index % length(var.availability_zones)]
   bypass_platform_safety_checks_on_user_schedule_enabled = true
   patch_mode                                             = "AutomaticByPlatform"
   patch_assessment_mode                                  = "AutomaticByPlatform"
-  admin_username                                         = var.sql_admin_username
-  admin_password                                         = random_password.sql_vm_admin.result
 
-  network_interface_ids = [
-    azurerm_network_interface.sql_vm[count.index].id
-  ]
+  network_interfaces = {
+    sql_nic = {
+      name                           = local.sql_vm_nic_names[each.value]
+      accelerated_networking_enabled = true
+      ip_configurations = {
+        primary = {
+          name                          = "internal"
+          private_ip_address_allocation = "Static"
+          private_ip_address            = var.sql_private_ips[each.value]
+          private_ip_subnet_resource_id = each.value == 0 ? data.terraform_remote_state.network.outputs.sql_subnet_sql1_id : data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
+          is_primary_ipconfiguration    = true
+        }
+      }
+    }
+  }
 
-  os_disk {
+  account_credentials = {
+    admin_credentials = {
+      username = var.sql_admin_username
+      password = local.sql_vm_admin_password
+      generate_admin_password_or_ssh_key = false
+    }
+  }
+
+  os_disk = {
     caching              = "ReadWrite"
     storage_account_type = var.os_disk_type
     disk_size_gb         = var.os_disk_size_gb
   }
 
-  source_image_reference {
+  source_image_reference = {
     publisher = var.image_publisher
     offer     = var.image_offer
     sku       = var.image_sku
     version   = var.image_version
   }
 
-  identity {
-    type = "SystemAssigned"
+  managed_identities = {
+    system_assigned = true
+  }
+
+  data_disk_managed_disks = {
+    for disk_key, disk in local.all_disks_map : disk_key => {
+      name                 = disk.name
+      storage_account_type = disk.storage_type
+      create_option        = "Empty"
+      disk_size_gb         = disk.disk_size_gb
+      lun                  = disk.lun
+      caching              = "ReadOnly"
+    } if disk.vm_index == each.value
+  }
+
+  extensions = {
+    configure_sql_disks = {
+      name                       = "configure-sql-disks"
+      publisher                  = "Microsoft.Compute"
+      type                       = "CustomScriptExtension"
+      type_handler_version       = "1.10"
+      auto_upgrade_minor_version = true
+      settings = jsonencode({
+        fileUris         = [local.disk_setup_file_uri]
+        commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $diskSetupSha='${local.disk_setup_sha}'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
+      })
+    }
   }
 
   tags = local.tags
-
-  lifecycle {
-    ignore_changes = [
-      os_disk[0].name,
-      admin_password
-    ]
-  }
-
-  depends_on = [
-    azurerm_network_interface.sql_vm,
-    azurerm_key_vault_secret.sql_vm_admin_password
-  ]
-}
-
-# Separate cluster creation resource that can run on already deployed VMs
-# REMOVED - Using local-exec provisioner instead
-
-# Managed disks for SQL Server data, log, and tempdb volumes
-resource "azurerm_managed_disk" "sql_disk" {
-  for_each             = local.all_disks_map
-  name                 = each.value.name
-  location             = var.location
-  resource_group_name  = var.sql_resource_group_name
-  storage_account_type = each.value.storage_type
-  create_option        = "Empty"
-  disk_size_gb         = each.value.disk_size_gb
-  zone                 = var.availability_zones[each.value.vm_index % length(var.availability_zones)]
-
-  tags = local.tags
-}
-
-# Attach data disks to SQL Server VMs
-resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
-  for_each           = local.all_disks_map
-  managed_disk_id    = azurerm_managed_disk.sql_disk[each.key].id
-  virtual_machine_id = azurerm_windows_virtual_machine.sql_vm[each.value.vm_index].id
-  lun                = each.value.lun
-  caching            = "ReadOnly"
-}
-
-# Custom script to format and configure disks
-resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
-  count                      = local.sql_vm_count
-  name                       = "configure-sql-disks"
-  virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
-  publisher                  = "Microsoft.Compute"
-  type                       = "CustomScriptExtension"
-  type_handler_version       = "1.10"
-  auto_upgrade_minor_version = true
-
-  settings = jsonencode({
-    fileUris         = [local.disk_setup_file_uri]
-    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $diskSetupSha='${local.disk_setup_sha}'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
-  })
-
-  depends_on = [
-    azurerm_virtual_machine_data_disk_attachment.sql_disk_attach,
-  ]
 }
 
 # SQL IaaS Agent Extension - SQL Server configuration only (no storage config)
 resource "azurerm_mssql_virtual_machine" "sql_vm" {
-  count                            = local.sql_vm_count
-  virtual_machine_id               = azurerm_windows_virtual_machine.sql_vm[count.index].id
+  for_each                         = local.sql_vm_map
+  virtual_machine_id               = module.sql_vm[each.key].resource_id
   sql_license_type                 = "PAYG"
   sql_connectivity_port            = 1433
   sql_connectivity_type            = "PRIVATE"
-  sql_connectivity_update_password = random_password.sql_vm_admin.result
+  sql_connectivity_update_password = local.sql_vm_admin_password
   sql_connectivity_update_username = var.sql_admin_username
 
   # SQL Server instance configuration
@@ -304,10 +261,7 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
     update = "240m"
   }
 
-  depends_on = [
-    azurerm_windows_virtual_machine.sql_vm,
-    azurerm_virtual_machine_extension.sql_disk_setup
-  ]
+  depends_on = [module.sql_vm]
 }
 
 # Future: Failover Clustering Configuration
