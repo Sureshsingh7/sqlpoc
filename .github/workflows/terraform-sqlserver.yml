@@ -181,6 +181,32 @@ jobs:
             fi
           done
 
+      - name: Import existing disk setup extensions (if any)
+        run: |
+          set -euo pipefail
+          for idx in 0 1; do
+            if [ "$idx" = "0" ]; then
+              vm="$SQL_VM_PRIMARY"
+            else
+              vm="$SQL_VM_SECONDARY"
+            fi
+
+            addr="azurerm_virtual_machine_extension.sql_disk_setup[${idx}]"
+            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.Compute/virtualMachines/${vm}/extensions/configure-sql-disks"
+
+            echo "Checking VM extension: $rid"
+            if az vm extension show --ids "$rid" -o none 2>/dev/null; then
+              if terraform state list | grep -Fxq "$addr"; then
+                echo "$addr already in state"
+              else
+                echo "Importing $addr"
+                terraform import -var-file=env/dev.tfvars "$addr" "$rid"
+              fi
+            else
+              echo "Not found in Azure, skipping import"
+            fi
+          done
+
       - name: Terraform Plan
         run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
 
