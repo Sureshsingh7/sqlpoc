@@ -40,6 +40,46 @@ resource "azurerm_storage_account" "witness" {
   })
 }
 
+# Private DNS zone for Storage Blob (Cloud Witness)
+resource "azurerm_private_dns_zone" "witness_blob" {
+  name                = "privatelink.blob.core.windows.net"
+  resource_group_name = var.sql_resource_group_name
+
+  tags = local.tags
+}
+
+# Link private DNS zone to SQL VNet
+resource "azurerm_private_dns_zone_virtual_network_link" "witness_blob_sql_vnet" {
+  name                  = "link-blob-sql-vnet"
+  resource_group_name   = var.sql_resource_group_name
+  private_dns_zone_name = azurerm_private_dns_zone.witness_blob.name
+  virtual_network_id    = data.terraform_remote_state.network.outputs.sql_vnet_id
+
+  tags = local.tags
+}
+
+# Private Endpoint for witness storage account (Blob)
+resource "azurerm_private_endpoint" "witness_blob" {
+  name                = "pep-witness-blob"
+  location            = var.location
+  resource_group_name = var.sql_resource_group_name
+  subnet_id           = data.terraform_remote_state.network.outputs.pep_subnet_id
+
+  private_service_connection {
+    name                           = "psc-witness-blob"
+    private_connection_resource_id = azurerm_storage_account.witness.id
+    is_manual_connection           = false
+    subresource_names              = ["blob"]
+  }
+
+  tags = local.tags
+
+  private_dns_zone_group {
+    name                 = "blob-dns-zone-group"
+    private_dns_zone_ids = [azurerm_private_dns_zone.witness_blob.id]
+  }
+}
+
 # Host the disk setup script in the existing TFSTATE storage account/container.
 # Terraform itself should not manage uploads/RBAC here because the runner identity
 # typically lacks `storageAccounts/read` and `Microsoft.Authorization/roleAssignments/*`

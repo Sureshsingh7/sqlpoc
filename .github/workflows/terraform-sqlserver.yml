@@ -366,10 +366,13 @@ jobs:
 
           for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
             echo "== Enabling Always On on $vm =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            timeout 20m az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
               --scripts @enable_alwayson.ps1 \
               --parameters "SqlInstance=$vm" \
-              --query "value[0].message" -o tsv
+              --query "value[0].message" -o tsv || {
+                echo "Always On enablement timed out or failed on $vm"
+                exit 1
+              }
           done
 
       - name: Install SSMS (best-effort)
