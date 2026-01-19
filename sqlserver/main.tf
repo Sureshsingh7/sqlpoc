@@ -140,6 +140,8 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
   size                                                   = var.vm_size
   zone                                                   = var.availability_zones[count.index % length(var.availability_zones)]
   bypass_platform_safety_checks_on_user_schedule_enabled = true
+  patch_mode                                             = "AutomaticByPlatform"
+  patch_assessment_mode                                  = "AutomaticByPlatform"
   admin_username                                         = var.sql_admin_username
   admin_password                                         = random_password.sql_vm_admin.result
 
