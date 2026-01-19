@@ -252,6 +252,87 @@ jobs:
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
+      - name: Prep WSFC nodes (local user + hosts + cluster feature)
+        if: steps.tf_apply.outputs.exitcode == '0'
+        run: |
+          set -euo pipefail
+
+          kv_id="$(terraform output -raw ops_key_vault_id)"
+          kv_name="$(az resource show --ids "$kv_id" --query name -o tsv)"
+
+          # Reuse the existing shared local admin password as the cluster-local admin password.
+          # Mask secrets in logs.
+          sql_admin_pwd="$(az keyvault secret show --vault-name "$kv_name" --name sql-vm-admin-password --query value -o tsv)"
+          echo "::add-mask::$sql_admin_pwd"
+          sql_admin_pwd_b64="$(printf '%s' "$sql_admin_pwd" | base64 -w0)"
+          echo "::add-mask::$sql_admin_pwd_b64"
+
+          cluster_user="$(terraform output -raw cluster_local_admin_username)"
+          echo "Using local cluster admin user: $cluster_user"
+
+          dns_suffix="sqlpoc.local"
+
+          ip_primary="$(az vm show -g "$SQL_RG" -n "$SQL_VM_PRIMARY" -d --query privateIps -o tsv)"
+          ip_secondary="$(az vm show -g "$SQL_RG" -n "$SQL_VM_SECONDARY" -d --query privateIps -o tsv)"
+
+          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+            echo "== WSFC prep on $vm =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts @cluster_prep.ps1 \
+              --parameters \
+                "PrimaryName=$SQL_VM_PRIMARY" \
+                "PrimaryIp=$ip_primary" \
+                "SecondaryName=$SQL_VM_SECONDARY" \
+                "SecondaryIp=$ip_secondary" \
+                "DnsSuffix=$dns_suffix" \
+                "LocalAdminUser=$cluster_user" \
+                "LocalAdminPasswordB64=$sql_admin_pwd_b64" \
+              --query "value[0].message" -o tsv || true
+          done
+
+      - name: Create WSFC + configure Cloud Witness
+        if: steps.tf_apply.outputs.exitcode == '0'
+        run: |
+          set -euo pipefail
+
+          witness_sa="$(terraform output -raw witness_storage_account_name)"
+          echo "Witness storage account: $witness_sa"
+
+          # Cloud Witness needs a storage account access key.
+          witness_key="$(az storage account keys list -g "$SQL_RG" -n "$witness_sa" --query "[0].value" -o tsv)"
+          echo "::add-mask::$witness_key"
+          witness_key_b64="$(printf '%s' "$witness_key" | base64 -w0)"
+          echo "::add-mask::$witness_key_b64"
+
+          cluster_name="$(terraform output -raw failover_cluster_name)"
+
+          echo "== Creating/validating WSFC on $SQL_VM_PRIMARY =="
+          az vm run-command invoke -g "$SQL_RG" -n "$SQL_VM_PRIMARY" --command-id RunPowerShellScript \
+            --scripts @cluster_create.ps1 \
+            --parameters \
+              "ClusterName=$cluster_name" \
+              "PrimaryName=$SQL_VM_PRIMARY" \
+              "SecondaryName=$SQL_VM_SECONDARY" \
+              "WitnessStorageAccountName=$witness_sa" \
+              "WitnessStorageAccountKeyB64=$witness_key_b64" \
+            --query "value[0].message" -o tsv || true
+
+      - name: Validate WSFC (cluster + quorum)
+        if: steps.tf_apply.outputs.exitcode == '0'
+        run: |
+          set -euo pipefail
+
+          cluster_name="$(terraform output -raw failover_cluster_name)"
+          echo "== Validating WSFC for cluster: $cluster_name =="
+
+          az vm run-command invoke -g "$SQL_RG" -n "$SQL_VM_PRIMARY" --command-id RunPowerShellScript \
+            --scripts @cluster_validate.ps1 \
+            --parameters \
+              "ClusterName=$cluster_name" \
+              "PrimaryName=$SQL_VM_PRIMARY" \
+              "SecondaryName=$SQL_VM_SECONDARY" \
+            --query "value[0].message" -o tsv
+
       - name: Install SSMS (best-effort)
         if: steps.tf_apply.outputs.exitcode == '0'
         run: |

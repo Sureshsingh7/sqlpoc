@@ -33,3 +33,23 @@
 #   description = "Network Security Group ID for SQL1 subnet"
 #   value       = data.terraform_remote_state.network.outputs.nsg_sql1_id
 # }
+
+output "ops_key_vault_id" {
+	value       = data.terraform_remote_state.ops.outputs.ops_key_vault_id
+	description = "Key Vault resource ID from ops remote state (used by workflows to fetch secrets)"
+}
+
+output "witness_storage_account_name" {
+	value       = azurerm_storage_account.witness.name
+	description = "Storage account name used for WSFC Cloud Witness"
+}
+
+output "cluster_local_admin_username" {
+	value       = var.cluster_local_admin_username
+	description = "Local user that workflows will create on both SQL VMs"
+}
+
+output "failover_cluster_name" {
+	value       = var.failover_cluster_name
+	description = "Name of the workgroup failover cluster"
+}

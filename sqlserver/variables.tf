@@ -56,6 +56,18 @@ variable "vm_size" {
   }
 }
 
+variable "cluster_local_admin_username" {
+  type        = string
+  description = "Local user to create on both SQL VMs for workgroup WSFC administration"
+  default     = "clusteradmin"
+}
+
+variable "witness_storage_security_control_tag_value" {
+  type        = string
+  description = "Value for the SecurityControl tag to bypass the org policy that disables Shared Key access on storage accounts"
+  default     = "ignore"
+}
+
 # Storage configuration
 variable "os_disk_type" {
   type        = string

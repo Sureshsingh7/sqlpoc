@@ -5,6 +5,12 @@ resource "random_password" "sql_vm_admin" {
   special = true
 }
 
+resource "random_string" "witness_suffix" {
+  length  = 6
+  upper   = false
+  special = false
+}
+
 # Store SQL VM admin password in Key Vault
 resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
   name         = "sql-vm-admin-password"
@@ -12,6 +18,26 @@ resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
   key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
 
   content_type = "SQL Server VM local admin password (shared for primary and secondary)"
+}
+
+# Cloud Witness storage account (used for WSFC quorum in a workgroup cluster).
+# Org policy disables Shared Key access by default; the SecurityControl=ignore tag
+# is used to bypass that policy in this PoC.
+resource "azurerm_storage_account" "witness" {
+  name                     = "stsqlw${random_string.witness_suffix.result}"
+  resource_group_name      = var.sql_resource_group_name
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  account_kind             = "StorageV2"
+
+  shared_access_key_enabled     = true
+  allow_nested_items_to_be_public = false
+  min_tls_version               = "TLS1_2"
+
+  tags = merge(local.tags, {
+    SecurityControl = var.witness_storage_security_control_tag_value
+  })
 }
 
 # Host the disk setup script in the existing TFSTATE storage account/container.
@@ -136,11 +162,6 @@ resource "azurerm_windows_virtual_machine" "sql_vm" {
 
   identity {
     type = "SystemAssigned"
-  }
-
-  provisioner "local-exec" {
-    when    = create
-    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts 'if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[0]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"${local.primary_vm_ip} `t${var.sql_vm_names[0]}.sqlpoc.local `t${var.sql_vm_names[0]}\" }; if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[1]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"${local.secondary_vm_ip} `t${var.sql_vm_names[1]}.sqlpoc.local `t${var.sql_vm_names[1]}\" }; Set-ItemProperty -Path \"HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\services\\\\Tcpip\\\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force; New-ItemProperty -Path \"HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\System\" -Name \"LocalAccountTokenFilterPolicy\" -Value 1 -PropertyType DWord -Force; Write-Host \"Enabling ICMP in Windows Firewall...\"; netsh advfirewall firewall add rule name=\"Allow ICMPv4\" protocol=icmpv4 dir=in action=allow; Write-Host \"ICMP enabled successfully\"; Write-Host \"Installing Failover Clustering...\"; Import-Module ServerManager; Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools; Write-Host \"Failover Clustering installed successfully\"'"
   }
 
   tags = local.tags
