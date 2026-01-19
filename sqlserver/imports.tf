@@ -9,10 +9,10 @@
 
 import {
 	to = azurerm_virtual_machine_extension.sql_disk_setup[0]
-	id = "${azurerm_windows_virtual_machine.sql_vm[0].id}/extensions/configure-sql-disks"
+	id = "/subscriptions/${var.subscription_id}/resourceGroups/${var.sql_resource_group_name}/providers/Microsoft.Compute/virtualMachines/${var.sql_vm_names[0]}/extensions/configure-sql-disks"
 }
 
 import {
 	to = azurerm_virtual_machine_extension.sql_disk_setup[1]
-	id = "${azurerm_windows_virtual_machine.sql_vm[1].id}/extensions/configure-sql-disks"
+	id = "/subscriptions/${var.subscription_id}/resourceGroups/${var.sql_resource_group_name}/providers/Microsoft.Compute/virtualMachines/${var.sql_vm_names[1]}/extensions/configure-sql-disks"
 }
