@@ -25,7 +25,7 @@ jobs:
 
     env:
       ARM_USE_MSI: true
-      ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
+      ARM_CLIENT_ID: ${{ secrets['TERRAFORM_UAMI_CLIENT_ID'] }}
       ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
       ARM_SKIP_AZURECLI_AUTH: "true"
@@ -33,7 +33,7 @@ jobs:
       # Provider downloads (esp. azapi) sometimes hit slow GitHub release endpoints.
       # Make init more resilient and cache plugins between steps/jobs.
       TF_REGISTRY_CLIENT_TIMEOUT: "300"
-      TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
+      TF_PLUGIN_CACHE_DIR: /tmp/terraform-plugin-cache
 
     defaults:
       run:
