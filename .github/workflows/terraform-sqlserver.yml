@@ -65,7 +65,7 @@ jobs:
             az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
 
             # If it exists, wait until PowerState/running.
-            for i in $(seq 1 30); do
+            for i in $(seq 1 12); do
               state="$(az vm get-instance-view -g "$SQL_RG" -n "$vm" \
                 --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
 
@@ -77,7 +77,7 @@ jobs:
                   return 0
                 fi
               fi
-              sleep 20
+              sleep 10
             done
             # Don't hard-fail here; Terraform can still be creating the VM.
             echo "$vm did not reach PowerState/running within wait window (continuing)"
