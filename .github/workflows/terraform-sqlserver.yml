@@ -330,6 +330,46 @@ jobs:
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
+      - name: Wait for disk setup extension to finish
+        if: steps.tf_apply.outputs.exitcode == '0'
+        run: |
+          set -euo pipefail
+
+          wait_extension() {
+            local vm="$1"
+            local ext="$2"
+            echo "Waiting for extension '$ext' on VM '$vm' to reach Succeeded..."
+
+            for i in $(seq 1 60); do
+              state="$(timeout 20s az vm extension show -g "$SQL_RG" --vm-name "$vm" -n "$ext" --query "provisioningState" -o tsv 2>/dev/null || true)"
+              ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo "[$ts] [$i/60] $vm/$ext provisioningState=${state:-<unknown>}"
+
+              if [ -z "$state" ]; then
+                # Extension may not be created in some scenarios; don't block forever.
+                sleep 30
+                continue
+              fi
+
+              if [ "$state" = "Succeeded" ]; then
+                return 0
+              fi
+              if [ "$state" = "Failed" ]; then
+                echo "Extension $ext on $vm is Failed"
+                timeout 20s az vm extension show -g "$SQL_RG" --vm-name "$vm" -n "$ext" --instance-view -o jsonc || true
+                return 1
+              fi
+              sleep 30
+            done
+
+            echo "Timed out waiting for extension '$ext' on '$vm'"
+            timeout 20s az vm extension show -g "$SQL_RG" --vm-name "$vm" -n "$ext" --instance-view -o jsonc || true
+            return 1
+          }
+
+          wait_extension "$SQL_VM_PRIMARY" "configure-sql-disks"
+          wait_extension "$SQL_VM_SECONDARY" "configure-sql-disks"
+
       - name: Upload Terraform logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -346,6 +386,28 @@ jobs:
         if: steps.tf_apply.outputs.exitcode == '0'
         run: |
           set -euo pipefail
+
+          run_cmd_retry() {
+            local vm="$1"; shift
+            local tries=12
+            local delay=30
+            for i in $(seq 1 "$tries"); do
+              echo "RunCommand on $vm (attempt $i/$tries)"
+              out="$(az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
+              code=$?
+              echo "$out"
+              if [ $code -eq 0 ]; then
+                return 0
+              fi
+              if echo "$out" | grep -qi "Run command extension execution is in progress"; then
+                sleep "$delay"
+                continue
+              fi
+              return $code
+            done
+            echo "RunCommand on $vm failed after retries"
+            return 1
+          }
 
           kv_id="$(terraform output -raw ops_key_vault_id)"
           kv_name="$(az resource show --ids "$kv_id" --query name -o tsv)"
@@ -367,7 +429,7 @@ jobs:
 
           for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
             echo "== WSFC prep on $vm =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            run_cmd_retry "$vm" \
               --scripts @cluster_prep.ps1 \
               --parameters \
                 "PrimaryName=$SQL_VM_PRIMARY" \
@@ -376,14 +438,35 @@ jobs:
                 "SecondaryIp=$ip_secondary" \
                 "DnsSuffix=$dns_suffix" \
                 "LocalAdminUser=$cluster_user" \
-                "LocalAdminPasswordB64=$sql_admin_pwd_b64" \
-              --query "value[0].message" -o tsv || true
+                "LocalAdminPasswordB64=$sql_admin_pwd_b64" || true
           done
 
       - name: Create WSFC + configure Cloud Witness
         if: steps.tf_apply.outputs.exitcode == '0'
         run: |
           set -euo pipefail
+
+          run_cmd_retry() {
+            local vm="$1"; shift
+            local tries=12
+            local delay=30
+            for i in $(seq 1 "$tries"); do
+              echo "RunCommand on $vm (attempt $i/$tries)"
+              out="$(az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
+              code=$?
+              echo "$out"
+              if [ $code -eq 0 ]; then
+                return 0
+              fi
+              if echo "$out" | grep -qi "Run command extension execution is in progress"; then
+                sleep "$delay"
+                continue
+              fi
+              return $code
+            done
+            echo "RunCommand on $vm failed after retries"
+            return 1
+          }
 
           witness_sa="$(terraform output -raw witness_storage_account_name)"
           echo "Witness storage account: $witness_sa"
@@ -397,43 +480,84 @@ jobs:
           cluster_name="$(terraform output -raw failover_cluster_name)"
 
           echo "== Creating/validating WSFC on $SQL_VM_PRIMARY =="
-          az vm run-command invoke -g "$SQL_RG" -n "$SQL_VM_PRIMARY" --command-id RunPowerShellScript \
+          run_cmd_retry "$SQL_VM_PRIMARY" \
             --scripts @cluster_create.ps1 \
             --parameters \
               "ClusterName=$cluster_name" \
               "PrimaryName=$SQL_VM_PRIMARY" \
               "SecondaryName=$SQL_VM_SECONDARY" \
               "WitnessStorageAccountName=$witness_sa" \
-              "WitnessStorageAccountKeyB64=$witness_key_b64" \
-            --query "value[0].message" -o tsv || true
+              "WitnessStorageAccountKeyB64=$witness_key_b64" || true
 
       - name: Validate WSFC (cluster + quorum)
         if: steps.tf_apply.outputs.exitcode == '0'
         run: |
           set -euo pipefail
 
+          run_cmd_retry() {
+            local vm="$1"; shift
+            local tries=12
+            local delay=30
+            for i in $(seq 1 "$tries"); do
+              echo "RunCommand on $vm (attempt $i/$tries)"
+              out="$(az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
+              code=$?
+              echo "$out"
+              if [ $code -eq 0 ]; then
+                return 0
+              fi
+              if echo "$out" | grep -qi "Run command extension execution is in progress"; then
+                sleep "$delay"
+                continue
+              fi
+              return $code
+            done
+            echo "RunCommand on $vm failed after retries"
+            return 1
+          }
+
           cluster_name="$(terraform output -raw failover_cluster_name)"
           echo "== Validating WSFC for cluster: $cluster_name =="
 
-          az vm run-command invoke -g "$SQL_RG" -n "$SQL_VM_PRIMARY" --command-id RunPowerShellScript \
+          run_cmd_retry "$SQL_VM_PRIMARY" \
             --scripts @cluster_validate.ps1 \
             --parameters \
               "ClusterName=$cluster_name" \
               "PrimaryName=$SQL_VM_PRIMARY" \
-              "SecondaryName=$SQL_VM_SECONDARY" \
-            --query "value[0].message" -o tsv
+              "SecondaryName=$SQL_VM_SECONDARY"
 
       - name: Enable SQL Always On AG (both nodes)
         if: steps.tf_apply.outputs.exitcode == '0'
         run: |
           set -euo pipefail
 
+          run_cmd_retry() {
+            local vm="$1"; shift
+            local tries=12
+            local delay=30
+            for i in $(seq 1 "$tries"); do
+              echo "RunCommand on $vm (attempt $i/$tries)"
+              out="$(timeout 20m az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
+              code=$?
+              echo "$out"
+              if [ $code -eq 0 ]; then
+                return 0
+              fi
+              if echo "$out" | grep -qi "Run command extension execution is in progress"; then
+                sleep "$delay"
+                continue
+              fi
+              return $code
+            done
+            echo "RunCommand on $vm failed after retries"
+            return 1
+          }
+
           for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
             echo "== Enabling Always On on $vm =="
-            timeout 20m az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            run_cmd_retry "$vm" \
               --scripts @enable_alwayson.ps1 \
-              --parameters "SqlInstance=$vm" \
-              --query "value[0].message" -o tsv || {
+              --parameters "SqlInstance=$vm" || {
                 echo "Always On enablement timed out or failed on $vm"
                 exit 1
               }
