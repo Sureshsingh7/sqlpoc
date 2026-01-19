@@ -57,6 +57,9 @@ locals {
 
   # The workflow provides a user-delegation SAS without a leading '?'.
   disk_setup_file_uri = "${local.disk_setup_blob_url}?${var.disk_setup_sas}"
+
+  # Used to force a settings diff so CustomScriptExtension re-runs when the script changes.
+  disk_setup_sha = filesha256("${path.module}/disk_setup.ps1")
 }
 
 # Locals for naming and organization
@@ -217,12 +220,9 @@ resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
   type_handler_version       = "1.10"
   auto_upgrade_minor_version = true
 
-  # Changes to the disk setup script should force the extension to re-run.
-  force_update_tag = filesha256("${path.module}/disk_setup.ps1")
-
   settings = jsonencode({
     fileUris         = [local.disk_setup_file_uri]
-    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
+    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $diskSetupSha='${local.disk_setup_sha}'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
   })
 
   depends_on = [
