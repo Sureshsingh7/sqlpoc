@@ -165,7 +165,7 @@ jobs:
               vm="$SQL_VM_SECONDARY"
             fi
 
-            addr="azurerm_mssql_virtual_machine.sql_vm[${idx}]"
+            addr="azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
             echo "Checking SQL IaaS resource: $rid"
@@ -191,7 +191,7 @@ jobs:
               vm="$SQL_VM_SECONDARY"
             fi
 
-            addr="azurerm_virtual_machine_extension.sql_disk_setup[${idx}]"
+            addr="module.sql_vm[\"${vm}\"].module.extension[\"configure_sql_disks\"].azurerm_virtual_machine_extension.this"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.Compute/virtualMachines/${vm}/extensions/configure-sql-disks"
 
             echo "Checking VM extension: $rid"
