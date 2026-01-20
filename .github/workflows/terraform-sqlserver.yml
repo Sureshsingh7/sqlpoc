@@ -608,8 +608,47 @@ jobs:
             sqlserver/terraform-plan.log
             sqlserver/terraform-apply.log
 
-      - name: Prep WSFC nodes (local user + hosts + cluster feature)
+      - name: Detect existing WSFC
         if: steps.tf_apply.outputs.exitcode == '0'
+        id: wsfc_check
+        run: |
+          set -euo pipefail
+
+          run_cmd_retry() {
+            local vm="$1"; shift
+            local tries=6
+            local delay=15
+            for i in $(seq 1 "$tries"); do
+              echo "RunCommand on $vm (attempt $i/$tries)"
+              out="$(az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
+              code=$?
+              echo "$out"
+              if [ $code -eq 0 ]; then
+                echo "$out"
+                return 0
+              fi
+              if echo "$out" | grep -qi "Run command extension execution is in progress"; then
+                sleep "$delay"
+                continue
+              fi
+              return $code
+            done
+            return 1
+          }
+
+          cluster_name="$(terraform output -raw failover_cluster_name)"
+          echo "Checking for existing WSFC: $cluster_name"
+
+          out="$(run_cmd_retry "$SQL_VM_PRIMARY" --scripts "try { Get-Cluster -Name '$cluster_name' -ErrorAction Stop | Out-String; Write-Host 'CLUSTER_EXISTS=1' } catch { Write-Host 'CLUSTER_EXISTS=0' }")" || out="CLUSTER_EXISTS=0"
+
+          if echo "$out" | grep -q "CLUSTER_EXISTS=1"; then
+            echo "cluster_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "cluster_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prep WSFC nodes (local user + hosts + cluster feature)
+        if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists != 'true'
         run: |
           set -euo pipefail
 
@@ -668,7 +707,7 @@ jobs:
           done
 
       - name: Create WSFC + configure Cloud Witness
-        if: steps.tf_apply.outputs.exitcode == '0'
+        if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists != 'true'
         run: |
           set -euo pipefail
 
@@ -714,6 +753,41 @@ jobs:
               "SecondaryName=$SQL_VM_SECONDARY" \
               "WitnessStorageAccountName=$witness_sa" \
               "WitnessStorageAccountKeyB64=$witness_key_b64" || true
+
+      - name: Validate existing WSFC (no prep/create)
+        if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists == 'true'
+        run: |
+          set -euo pipefail
+
+          run_cmd_retry() {
+            local vm="$1"; shift
+            local tries=6
+            local delay=15
+            for i in $(seq 1 "$tries"); do
+              echo "RunCommand on $vm (attempt $i/$tries)"
+              out="$(az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
+              code=$?
+              echo "$out"
+              if [ $code -eq 0 ]; then
+                return 0
+              fi
+              if echo "$out" | grep -qi "Run command extension execution is in progress"; then
+                sleep "$delay"
+                continue
+              fi
+              return $code
+            done
+            return 1
+          }
+
+          cluster_name="$(terraform output -raw failover_cluster_name)"
+          echo "== Validating existing WSFC for cluster: $cluster_name =="
+          run_cmd_retry "$SQL_VM_PRIMARY" \
+            --scripts @cluster_validate.ps1 \
+            --parameters \
+              "ClusterName=$cluster_name" \
+              "PrimaryName=$SQL_VM_PRIMARY" \
+              "SecondaryName=$SQL_VM_SECONDARY"
 
       - name: Validate WSFC (cluster + quorum)
         if: steps.tf_apply.outputs.exitcode == '0'
