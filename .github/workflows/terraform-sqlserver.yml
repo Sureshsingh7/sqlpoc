@@ -852,6 +852,43 @@ jobs:
               "PrimaryName=$SQL_VM_PRIMARY" \
               "SecondaryName=$SQL_VM_SECONDARY"
 
+      - name: WSFC status (PowerShell output)
+        if: steps.tf_apply.outputs.exitcode == '0'
+        run: |
+          set -euo pipefail
+
+          run_cmd_retry() {
+            local vm="$1"; shift
+            local tries=6
+            local delay=15
+            for i in $(seq 1 "$tries"); do
+              echo "RunCommand on $vm (attempt $i/$tries)"
+              out="$(az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
+              code=$?
+              echo "$out"
+              if [ $code -eq 0 ]; then
+                return 0
+              fi
+              if echo "$out" | grep -qi "Run command extension execution is in progress"; then
+                sleep "$delay"
+                continue
+              fi
+              return $code
+            done
+            return 1
+          }
+
+          cluster_name="$(terraform output -raw failover_cluster_name)"
+          echo "== WSFC status on $SQL_VM_PRIMARY for $cluster_name =="
+          run_cmd_retry "$SQL_VM_PRIMARY" \
+            --scripts "Get-Cluster -Name '$cluster_name' -ErrorAction Stop | Format-List * | Out-String" || true
+          run_cmd_retry "$SQL_VM_PRIMARY" \
+            --scripts "Get-ClusterNode -Cluster '$cluster_name' | Format-Table -AutoSize | Out-String" || true
+          run_cmd_retry "$SQL_VM_PRIMARY" \
+            --scripts "Get-ClusterGroup -Cluster '$cluster_name' | Format-Table -AutoSize | Out-String" || true
+          run_cmd_retry "$SQL_VM_PRIMARY" \
+            --scripts "Get-ClusterResource -Cluster '$cluster_name' | Format-Table -AutoSize | Out-String" || true
+
       - name: Enable SQL Always On AG (both nodes)
         if: steps.tf_apply.outputs.exitcode == '0'
         run: |
