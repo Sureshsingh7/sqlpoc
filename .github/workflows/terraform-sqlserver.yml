@@ -254,6 +254,13 @@ jobs:
       - name: Import existing disk setup extensions (if any)
         run: |
           set -euo pipefail
+
+          manage_ext="$(terraform console -var-file=env/dev.tfvars <<< 'var.manage_disk_setup_extension' | tr -d '\r' | tr -d '"')"
+          if [ "${manage_ext}" = "false" ]; then
+            echo "manage_disk_setup_extension=false; skipping import of configure-sql-disks"
+            exit 0
+          fi
+
           for idx in 0 1; do
             if [ "$idx" = "0" ]; then
               vm="$SQL_VM_PRIMARY"
