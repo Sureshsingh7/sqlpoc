@@ -24,12 +24,42 @@ try {
 }
 
 function Ensure-SqlServerModule {
+  function Invoke-WithTimeout {
+    param(
+      [scriptblock]$Script,
+      [int]$TimeoutSeconds = 300,
+      [string]$Description = "operation"
+    )
+
+    $job = Start-Job -ScriptBlock $Script
+    $completed = Wait-Job -Job $job -Timeout $TimeoutSeconds
+    if (-not $completed) {
+      Stop-Job -Job $job -Force | Out-Null
+      Remove-Job -Job $job -Force | Out-Null
+      throw "Timed out during $Description after ${TimeoutSeconds}s."
+    }
+    $result = Receive-Job -Job $job -ErrorAction Stop
+    Remove-Job -Job $job -Force | Out-Null
+    return $result
+  }
+
   try {
-    Import-Module SqlServer -ErrorAction Stop
+    Write-Log "Trying Import-Module SqlServer"
+    Invoke-WithTimeout -TimeoutSeconds 120 -Description "Import-Module SqlServer" -Script { Import-Module SqlServer -ErrorAction Stop }
     Write-Log "SqlServer module already available"
     return
   } catch {
     # try install if missing
+  }
+
+  # Fallback to legacy SQLPS if present (often installed with SQL Server)
+  try {
+    Write-Log "SqlServer module not available; trying SQLPS"
+    Invoke-WithTimeout -TimeoutSeconds 120 -Description "Import-Module SQLPS" -Script { Import-Module SQLPS -DisableNameChecking -ErrorAction Stop }
+    Write-Log "SQLPS module imported"
+    return
+  } catch {
+    # continue to install SqlServer module
   }
 
   try {
@@ -49,8 +79,8 @@ function Ensure-SqlServerModule {
   }
 
   Write-Log "Installing SqlServer module from PSGallery..."
-  Install-Module -Name SqlServer -Force -AllowClobber -Scope AllUsers -ErrorAction Stop
-  Import-Module SqlServer -ErrorAction Stop
+  Invoke-WithTimeout -TimeoutSeconds 600 -Description "Install-Module SqlServer" -Script { Install-Module -Name SqlServer -Force -AllowClobber -Scope AllUsers -ErrorAction Stop }
+  Invoke-WithTimeout -TimeoutSeconds 120 -Description "Import-Module SqlServer" -Script { Import-Module SqlServer -ErrorAction Stop }
   Write-Log "SqlServer module installed and imported"
 }
 
