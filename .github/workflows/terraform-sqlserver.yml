@@ -475,6 +475,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          manage_ext="$(terraform console -var-file=env/dev.tfvars <<< 'var.manage_disk_setup_extension' | tr -d '\r' | tr -d '"')"
+          if [ "${manage_ext}" = "false" ]; then
+            echo "manage_disk_setup_extension=false; skipping wait for configure-sql-disks"
+            exit 0
+          fi
+
           wait_extension() {
             local vm="$1"
             local ext="$2"
