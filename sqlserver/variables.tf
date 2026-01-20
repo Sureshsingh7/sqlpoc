@@ -52,6 +52,12 @@ variable "sql_admin_username" {
   }
 }
 
+variable "sql_vm_user_assigned_identity_ids" {
+  type        = set(string)
+  description = "User-assigned managed identity resource IDs to attach to each SQL VM (keeps UAMIs from being removed)."
+  default     = []
+}
+
 variable "vm_size" {
   type        = string
   description = "VM size for SQL Server (recommended: Standard_D4s_v4 or larger for production)"

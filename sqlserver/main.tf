@@ -209,7 +209,8 @@ module "sql_vm" {
   }
 
   managed_identities = {
-    system_assigned = true
+    system_assigned            = true
+    user_assigned_resource_ids = var.sql_vm_user_assigned_identity_ids
   }
 
   data_disk_managed_disks = {

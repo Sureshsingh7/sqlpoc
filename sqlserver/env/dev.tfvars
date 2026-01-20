@@ -40,6 +40,11 @@ image_version   = "latest"
 # Extensions
 enable_sql_extension = true
 
+# Keep the built-in UAMI attached to SQL VMs
+sql_vm_user_assigned_identity_ids = [
+  "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/Built-In-Identity-RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/Built-In-Identity-swedencentral"
+]
+
 # Tags
 tags = {
   environment = "dev"
