@@ -36,6 +36,9 @@ jobs:
       TF_REGISTRY_CLIENT_TIMEOUT: "300"
       TF_PLUGIN_CACHE_DIR: /tmp/terraform-plugin-cache
 
+      # Default WSFC detection state; updated by wsfc_check step.
+      CLUSTER_EXISTS: "unknown"
+
       # If shared-key/SAS auth is disabled, use managed identity for disk_setup.ps1.
       DISK_SETUP_USE_SAS: "false"
 
