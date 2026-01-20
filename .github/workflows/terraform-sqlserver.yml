@@ -344,7 +344,8 @@ jobs:
           }
           trap on_term SIGINT SIGTERM
 
-          ( terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan 2>&1 | tee "$log_file" ) &
+          # Plan is informational; apply runs in two phases for stability.
+          ( terraform plan -input=false -var-file=env/dev.tfvars 2>&1 | tee "$log_file" ) &
           pid=$!
 
           # Heartbeat every 60s so slow AzureRM refresh doesn't look hung.
@@ -362,8 +363,8 @@ jobs:
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           exit "$code"
 
-      - name: Terraform Apply
-        id: tf_apply
+      - name: Terraform Apply (Phase 1: VMs + extensions)
+        id: tf_apply_vms
         continue-on-error: true
         run: |
           set +e
@@ -379,8 +380,9 @@ jobs:
           }
           trap on_term SIGINT SIGTERM
 
-          # SQL IaaS create/update is not concurrency-safe; serialize resource operations.
-          ( terraform apply -parallelism=1 -auto-approve tfplan 2>&1 | tee "$log_file" ) &
+          # Phase 1 applies only the VM module. This avoids racing SQL IaaS registration
+          # against transient VM restarts/deallocations.
+          ( terraform apply -parallelism=1 -auto-approve -var-file=env/dev.tfvars -target=module.sql_vm 2>&1 | tee "$log_file" ) &
           pid=$!
 
           azure_watch_counter=0
@@ -431,8 +433,14 @@ jobs:
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
+      - name: Fail fast if VM phase failed
+        if: ${{ steps.tf_apply_vms.outputs.exitcode != '0' }}
+        run: |
+          echo "Terraform apply phase 1 (VMs/extensions) failed (exitcode=${{ steps.tf_apply_vms.outputs.exitcode }})"
+          exit 1
+
       - name: Wait for disk setup extension to finish
-        if: steps.tf_apply.outputs.exitcode == '0'
+        if: steps.tf_apply_vms.outputs.exitcode == '0'
         run: |
           set -euo pipefail
 
@@ -471,8 +479,90 @@ jobs:
           wait_extension "$SQL_VM_PRIMARY" "configure-sql-disks"
           wait_extension "$SQL_VM_SECONDARY" "configure-sql-disks"
 
+      - name: Ensure SQL VMs are running (required for SQL IaaS)
+        if: steps.tf_apply_vms.outputs.exitcode == '0'
+        run: |
+          set -euo pipefail
+
+          wait_running_strict() {
+            local vm="$1"
+            echo "Ensuring VM is running (strict): $vm"
+
+            # Try to start (ignore errors if currently provisioning)
+            timeout 30s az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
+
+            for i in $(seq 1 60); do
+              state="$(timeout 30s az vm get-instance-view -g "$SQL_RG" -n "$vm" \
+                --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
+              ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo "[$ts] [$i/60] $vm powerState=${state:-<unknown>}"
+              if [ "$state" = "PowerState/running" ]; then
+                return 0
+              fi
+              sleep 10
+            done
+
+            echo "$vm did not reach PowerState/running in time"
+            timeout 30s az vm get-instance-view -g "$SQL_RG" -n "$vm" -o jsonc 2>/dev/null || true
+            return 1
+          }
+
+          wait_running_strict "$SQL_VM_PRIMARY"
+          wait_running_strict "$SQL_VM_SECONDARY"
+
+      - name: Terraform Apply (Phase 2: SQL IaaS + remaining resources)
+        id: tf_apply
+        continue-on-error: true
+        if: steps.tf_apply_vms.outputs.exitcode == '0'
+        run: |
+          set +e
+
+          log_file="terraform-apply.log"
+          # Append to the same log for a single artifact/console stream.
+
+          on_term() {
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform apply (phase 2) received termination signal"
+            echo "Last 50 lines of $log_file:"
+            tail -n 50 "$log_file" 2>/dev/null || true
+          }
+          trap on_term SIGINT SIGTERM
+
+          # SQL IaaS create/update is not concurrency-safe; serialize resource operations.
+          ( terraform apply -parallelism=1 -auto-approve -var-file=env/dev.tfvars 2>&1 | tee -a "$log_file" ) &
+          pid=$!
+
+          azure_watch_counter=0
+          while kill -0 "$pid" 2>/dev/null; do
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform apply (phase 2) still running..."
+            tail -n 5 "$log_file" 2>/dev/null || true
+
+            azure_watch_counter=$((azure_watch_counter + 1))
+            if [ $((azure_watch_counter % 5)) -eq 0 ]; then
+              echo "[$ts] Azure status snapshot (every ~10 minutes)"
+              for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+                echo "-- $vm power state --"
+                az vm get-instance-view -g "$SQL_RG" -n "$vm" \
+                  --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
+
+                echo "-- $vm SQL IaaS provisioningState --"
+                rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+                az resource show --ids "$rid" --query "properties.provisioningState" -o tsv 2>/dev/null || true
+              done
+            fi
+            sleep 120
+          done
+
+          wait "$pid"
+          code=$?
+          echo "Last 30 lines of $log_file:"
+          tail -n 30 "$log_file" 2>/dev/null || true
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: Upload Terraform logs
-        if: always() && env.UPLOAD_ARTIFACTS == 'true'
+        if: ${{ env.UPLOAD_ARTIFACTS == 'true' }}
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
