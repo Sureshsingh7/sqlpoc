@@ -87,11 +87,22 @@ locals {
   disk_setup_blob_name = "scripts/disk_setup.ps1"
   disk_setup_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/${local.disk_setup_blob_name}"
 
-  # The workflow provides a user-delegation SAS without a leading '?'.
-  disk_setup_file_uri = "${local.disk_setup_blob_url}?${var.disk_setup_sas}"
+  # If SAS is empty, use managed identity to access the blob.
+  disk_setup_file_uri = var.disk_setup_sas != "" ? "${local.disk_setup_blob_url}?${var.disk_setup_sas}" : local.disk_setup_blob_url
 
   # Used to force a settings diff so CustomScriptExtension re-runs when the script changes.
   disk_setup_sha = filesha256("${path.module}/disk_setup.ps1")
+
+  # Optional UAMI info (use first identity if provided)
+  sql_vm_uami_id   = length(var.sql_vm_user_assigned_identity_ids) > 0 ? tolist(var.sql_vm_user_assigned_identity_ids)[0] : null
+  sql_vm_uami_rg   = local.sql_vm_uami_id != null ? element(split("/", local.sql_vm_uami_id), index(split("/", local.sql_vm_uami_id), "resourceGroups") + 1) : null
+  sql_vm_uami_name = local.sql_vm_uami_id != null ? element(split("/", local.sql_vm_uami_id), index(split("/", local.sql_vm_uami_id), "userAssignedIdentities") + 1) : null
+}
+
+data "azurerm_user_assigned_identity" "sql_vm_uami" {
+  count               = local.sql_vm_uami_id != null ? 1 : 0
+  name                = local.sql_vm_uami_name
+  resource_group_name = local.sql_vm_uami_rg
 }
 
 # Locals for naming and organization
@@ -232,9 +243,12 @@ module "sql_vm" {
       type_handler_version       = "1.10"
       auto_upgrade_minor_version = true
       settings = jsonencode({
+        diskSetupToken = local.disk_setup_sha
+      })
+      protected_settings = jsonencode({
         fileUris         = [local.disk_setup_file_uri]
-        diskSetupToken   = local.disk_setup_sha
         commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
+        managedIdentity  = local.sql_vm_uami_id != null ? { clientId = data.azurerm_user_assigned_identity.sql_vm_uami[0].client_id } : {}
       })
     }
   }

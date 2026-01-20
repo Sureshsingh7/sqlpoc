@@ -11,8 +11,9 @@ variable "use_msi" {
 
 variable "disk_setup_sas" {
   type        = string
-  description = "User delegation SAS token (no leading '?') for downloading scripts/disk_setup.ps1 from the TFSTATE storage container"
+  description = "Optional SAS token (no leading '?') for downloading scripts/disk_setup.ps1 from the TFSTATE storage container. Leave empty to use managed identity."
   sensitive   = true
+  default     = ""
 }
 
 variable "location" {
