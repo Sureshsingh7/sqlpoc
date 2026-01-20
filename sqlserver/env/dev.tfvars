@@ -28,7 +28,7 @@ log_disk_size_gb = 256
 tempdb_disk_type    = "Premium_LRS"
 tempdb_disk_size_gb = 256
 
-backup_disk_type    = "Standard_LRS"
+backup_disk_type    = "Premium_LRS"
 backup_disk_size_gb = 512
 
 # SQL Server image
