@@ -705,7 +705,10 @@ jobs:
           fi
 
           if [ -z "$out" ]; then
-            echo "WSFC detection result: unknown"
+            echo "WSFC detection returned no output; assuming cluster does not exist"
+            echo "cluster_exists=false" >> "$GITHUB_OUTPUT"
+            echo "CLUSTER_EXISTS=false" >> "$GITHUB_ENV"
+            echo "WSFC detection result: false"
             exit 0
           fi
 
@@ -870,6 +873,9 @@ jobs:
               "SecondaryName=$SQL_VM_SECONDARY" \
               "WitnessStorageAccountName=$witness_sa" \
               "WitnessStorageAccountKeyB64=$witness_key_b64" || true
+
+          # Mark cluster as created for subsequent steps in this job.
+          echo "CLUSTER_EXISTS=true" >> "$GITHUB_ENV"
 
       - name: Validate WSFC (cluster + quorum)
         if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' }}
