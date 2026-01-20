@@ -31,6 +31,8 @@ tempdb_disk_size_gb = 256
 backup_disk_type    = "Premium_LRS"
 backup_disk_size_gb = 512
 
+manage_disk_setup_extension = false
+
 # SQL Server image
 image_publisher = "microsoftsqlserver"
 image_offer     = "sql2025-ws2025"
