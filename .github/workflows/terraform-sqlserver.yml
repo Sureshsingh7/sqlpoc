@@ -661,6 +661,8 @@ jobs:
             echo "CLUSTER_EXISTS=false" >> "$GITHUB_ENV"
           fi
 
+          echo "WSFC detection result: ${CLUSTER_EXISTS:-unknown}"
+
       - name: Skip WSFC prep/create when detection is unknown
         if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS == 'unknown' }}
         run: |
