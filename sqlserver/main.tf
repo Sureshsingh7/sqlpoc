@@ -19,8 +19,8 @@ locals {
     data.terraform_remote_state.ops.outputs.sql_vm_admin_password,
     data.azurerm_key_vault_secret.sql_vm_admin.value
   )
-  sql_vm_map            = { for idx, name in var.sql_vm_names : name => idx }
-  sql_vm_nic_names       = ["sqlpoc-nic-sql-primary", "sqlpoc-nic-sql-secondary"]
+  sql_vm_map       = { for idx, name in var.sql_vm_names : name => idx }
+  sql_vm_nic_names = ["sqlpoc-nic-sql-primary", "sqlpoc-nic-sql-secondary"]
 }
 
 # Cloud Witness storage account (used for WSFC quorum in a workgroup cluster).
@@ -47,16 +47,16 @@ module "witness_storage" {
   source  = "Azure/avm-res-storage-storageaccount/azurerm"
   version = "0.6.7"
 
-  name                = "stsqlw${random_string.witness_suffix.result}"
-  resource_group_name = var.sql_resource_group_name
-  location            = var.location
-  account_tier        = "Standard"
-  account_replication_type = "LRS"
-  account_kind        = "StorageV2"
-  shared_access_key_enabled      = true
+  name                            = "stsqlw${random_string.witness_suffix.result}"
+  resource_group_name             = var.sql_resource_group_name
+  location                        = var.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  account_kind                    = "StorageV2"
+  shared_access_key_enabled       = true
   allow_nested_items_to_be_public = false
-  min_tls_version                = "TLS1_2"
-  public_network_access_enabled  = true
+  min_tls_version                 = "TLS1_2"
+  public_network_access_enabled   = true
 
   tags = merge(local.tags, {
     SecurityControl = var.witness_storage_security_control_tag_value
@@ -64,9 +64,9 @@ module "witness_storage" {
 
   private_endpoints = {
     witness_blob = {
-      name                       = "pep-witness-blob"
-      subnet_resource_id         = data.terraform_remote_state.network.outputs.pep_subnet_id
-      subresource_name           = "blob"
+      name                          = "pep-witness-blob"
+      subnet_resource_id            = data.terraform_remote_state.network.outputs.pep_subnet_id
+      subresource_name              = "blob"
       private_dns_zone_resource_ids = [module.witness_blob_dns.resource_id]
     }
   }
@@ -188,8 +188,8 @@ module "sql_vm" {
 
   account_credentials = {
     admin_credentials = {
-      username = var.sql_admin_username
-      password = local.sql_vm_admin_password
+      username                           = var.sql_admin_username
+      password                           = local.sql_vm_admin_password
       generate_admin_password_or_ssh_key = false
     }
   }
@@ -241,7 +241,7 @@ module "sql_vm" {
 
 # SQL IaaS Agent Extension - SQL Server configuration only (no storage config)
 resource "azurerm_mssql_virtual_machine" "sql_vm" {
-  for_each                         = local.sql_vm_map
+  for_each                         = var.enable_sql_extension ? local.sql_vm_map : {}
   virtual_machine_id               = module.sql_vm[each.key].resource_id
   sql_license_type                 = "PAYG"
   sql_connectivity_port            = 1433
@@ -273,6 +273,8 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
     update = "240m"
   }
 
+  # Terraform requires static references in depends_on. Depending on the module map
+  # ensures VMs and their extensions are created before SQL IaaS registration.
   depends_on = [module.sql_vm]
 }
 

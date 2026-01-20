@@ -282,7 +282,8 @@ jobs:
           }
           trap on_term SIGINT SIGTERM
 
-          ( terraform apply -auto-approve tfplan 2>&1 | tee "$log_file" ) &
+          # SQL IaaS create/update is not concurrency-safe; serialize resource operations.
+          ( terraform apply -parallelism=1 -auto-approve tfplan 2>&1 | tee "$log_file" ) &
           pid=$!
 
           azure_watch_counter=0
