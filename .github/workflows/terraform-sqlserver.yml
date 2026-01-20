@@ -614,6 +614,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Default if detection cannot run.
+          echo "cluster_exists=unknown" >> "$GITHUB_OUTPUT"
+
           run_cmd_retry() {
             local vm="$1"; shift
             local tries=20
@@ -646,7 +649,6 @@ jobs:
           fi
 
           if [ -z "$out" ]; then
-            echo "cluster_exists=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -665,6 +667,11 @@ jobs:
         if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists == 'false'
         run: |
           set -euo pipefail
+
+          if [ "${{ steps.wsfc_check.outputs.cluster_exists }}" != "false" ]; then
+            echo "WSFC detection not false (value: ${{ steps.wsfc_check.outputs.cluster_exists }}); skipping prep."
+            exit 0
+          fi
 
           run_cmd_retry() {
             local vm="$1"; shift
