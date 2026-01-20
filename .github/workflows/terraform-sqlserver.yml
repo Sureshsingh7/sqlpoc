@@ -890,7 +890,7 @@ jobs:
             --scripts "Get-ClusterResource -Cluster '$cluster_name' | Format-Table -AutoSize | Out-String" || true
 
       - name: Enable SQL Always On AG (both nodes)
-        if: steps.tf_apply.outputs.exitcode == '0'
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS == 'true' }}
         run: |
           set -euo pipefail
 
@@ -900,7 +900,7 @@ jobs:
             local delay=30
             for i in $(seq 1 "$tries"); do
               echo "RunCommand on $vm (attempt $i/$tries)"
-              out="$(timeout 20m az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
+              out="$(timeout 40m az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
               code=$?
               echo "$out"
               if [ $code -eq 0 ]; then
@@ -922,6 +922,10 @@ jobs:
               --scripts @enable_alwayson.ps1 \
               --parameters "SqlInstance=$vm" || {
                 echo "Always On enablement timed out or failed on $vm"
+                echo "== $vm enable-alwayson.log (tail) =="
+                az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+                  --scripts "Get-Content 'C:\\Windows\\Temp\\enable-alwayson.log' -ErrorAction SilentlyContinue | Select-Object -Last 200 | Out-String" \
+                  --query "value[0].message" -o tsv || true
                 exit 1
               }
           done
