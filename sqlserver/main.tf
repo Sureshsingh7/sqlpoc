@@ -233,7 +233,8 @@ module "sql_vm" {
       auto_upgrade_minor_version = true
       settings = jsonencode({
         fileUris         = [local.disk_setup_file_uri]
-        commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $diskSetupSha='${local.disk_setup_sha}'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
+        diskSetupToken   = local.disk_setup_sha
+        commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
       })
     }
   }
