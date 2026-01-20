@@ -59,6 +59,12 @@ variable "sql_vm_user_assigned_identity_ids" {
   default     = []
 }
 
+variable "sql_vm_user_assigned_identity_client_id" {
+  type        = string
+  description = "Client ID of the user-assigned identity to use for CustomScriptExtension managedIdentity (avoids needing read on the UAMI resource)."
+  default     = ""
+}
+
 variable "vm_size" {
   type        = string
   description = "VM size for SQL Server (recommended: Standard_D4s_v4 or larger for production)"
