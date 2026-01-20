@@ -16,6 +16,12 @@ variable "disk_setup_sas" {
   default     = ""
 }
 
+variable "manage_disk_setup_extension" {
+  type        = bool
+  description = "Whether Terraform should manage the disk setup CustomScriptExtension. Set to false after disks are configured to avoid repeated extension updates."
+  default     = true
+}
+
 variable "location" {
   type        = string
   description = "Azure region for SQL VM deployment"

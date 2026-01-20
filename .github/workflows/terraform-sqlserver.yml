@@ -277,6 +277,25 @@ jobs:
             fi
           done
 
+      - name: Skip disk setup extension management (optional)
+        run: |
+          set -euo pipefail
+
+          manage_ext="$(terraform console -var-file=env/dev.tfvars <<< 'var.manage_disk_setup_extension' | tr -d '\r' | tr -d '"')"
+          if [ "${manage_ext}" = "false" ]; then
+            echo "manage_disk_setup_extension=false; removing disk setup extension from state"
+            for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+              addr="module.sql_vm[\"${vm}\"].module.extension[\"configure_sql_disks\"].azurerm_virtual_machine_extension.this"
+              if terraform state show "$addr" >/dev/null 2>&1; then
+                terraform state rm "$addr" || true
+              else
+                echo "not in state: $addr"
+              fi
+            done
+          else
+            echo "manage_disk_setup_extension=true; keeping extension managed"
+          fi
+
       - name: "Preflight: fail fast on disk SKU drift (prevents VM replacement)"
         run: |
           set -euo pipefail

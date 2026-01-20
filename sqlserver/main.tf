@@ -225,7 +225,7 @@ module "sql_vm" {
     } if disk.vm_index == each.value
   }
 
-  extensions = {
+  extensions = var.manage_disk_setup_extension ? {
     configure_sql_disks = {
       name                       = "configure-sql-disks"
       publisher                  = "Microsoft.Compute"
@@ -241,7 +241,7 @@ module "sql_vm" {
         managedIdentity  = var.sql_vm_user_assigned_identity_client_id != "" ? { clientId = var.sql_vm_user_assigned_identity_client_id } : {}
       })
     }
-  }
+  } : {}
 
   tags = local.tags
 }
