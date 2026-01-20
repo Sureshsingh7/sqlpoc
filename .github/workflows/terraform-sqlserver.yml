@@ -150,6 +150,7 @@ jobs:
         env:
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
+          DISK_SETUP_SAS: ${{ secrets.DISK_SETUP_SAS }}
         run: |
           set -euo pipefail
 
@@ -163,18 +164,23 @@ jobs:
             --overwrite true \
             --only-show-errors
 
-          # Short-lived user delegation SAS (AAD-based, no account keys)
-          expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
-          sas="$(az storage blob generate-sas \
-            --auth-mode login \
-            --as-user \
-            --account-name "${TFSTATE_SA}" \
-            --container-name "${TFSTATE_CONTAINER}" \
-            --name "scripts/disk_setup.ps1" \
-            --permissions r \
-            --expiry "${expiry}" \
-            --https-only \
-            -o tsv)"
+          if [ -n "${DISK_SETUP_SAS:-}" ]; then
+            echo "Using pre-provided DISK_SETUP_SAS from secrets (stable; avoids extension churn)"
+            sas="${DISK_SETUP_SAS}"
+          else
+            # Short-lived user delegation SAS (AAD-based, no account keys)
+            expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
+            sas="$(az storage blob generate-sas \
+              --auth-mode login \
+              --as-user \
+              --account-name "${TFSTATE_SA}" \
+              --container-name "${TFSTATE_CONTAINER}" \
+              --name "scripts/disk_setup.ps1" \
+              --permissions r \
+              --expiry "${expiry}" \
+              --https-only \
+              -o tsv)"
+          fi
 
           # Mask the SAS so it doesn't appear in later step env dumps.
           echo "::add-mask::${sas}"
