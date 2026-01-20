@@ -616,8 +616,8 @@ jobs:
 
           run_cmd_retry() {
             local vm="$1"; shift
-            local tries=6
-            local delay=15
+            local tries=20
+            local delay=20
             for i in $(seq 1 "$tries"); do
               echo "RunCommand on $vm (attempt $i/$tries)"
               out="$(az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript "$@" --query "value[0].message" -o tsv 2>&1)"
@@ -639,7 +639,16 @@ jobs:
           cluster_name="$(terraform output -raw failover_cluster_name)"
           echo "Checking for existing WSFC: $cluster_name"
 
-          out="$(run_cmd_retry "$SQL_VM_PRIMARY" --scripts "try { Get-Cluster -Name '$cluster_name' -ErrorAction Stop | Out-String; Write-Host 'CLUSTER_EXISTS=1' } catch { Write-Host 'CLUSTER_EXISTS=0' }")" || out="CLUSTER_EXISTS=0"
+          out="$(run_cmd_retry "$SQL_VM_PRIMARY" --scripts "try { Get-Cluster -Name '$cluster_name' -ErrorAction Stop | Out-String; Write-Host 'CLUSTER_EXISTS=1' } catch { Write-Host 'CLUSTER_EXISTS=0' }")" || out=""
+          if [ -z "$out" ]; then
+            echo "Primary check failed; trying secondary"
+            out="$(run_cmd_retry "$SQL_VM_SECONDARY" --scripts "try { Get-Cluster -Name '$cluster_name' -ErrorAction Stop | Out-String; Write-Host 'CLUSTER_EXISTS=1' } catch { Write-Host 'CLUSTER_EXISTS=0' }")" || out=""
+          fi
+
+          if [ -z "$out" ]; then
+            echo "cluster_exists=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if echo "$out" | grep -q "CLUSTER_EXISTS=1"; then
             echo "cluster_exists=true" >> "$GITHUB_OUTPUT"
@@ -647,8 +656,13 @@ jobs:
             echo "cluster_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Skip WSFC prep/create when detection is unknown
+        if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists == 'unknown'
+        run: |
+          echo "WSFC detection could not run due to RunCommand conflicts; skipping prep/create in this run."
+
       - name: Prep WSFC nodes (local user + hosts + cluster feature)
-        if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists != 'true'
+        if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists == 'false'
         run: |
           set -euo pipefail
 
