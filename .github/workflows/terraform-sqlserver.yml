@@ -635,6 +635,10 @@ jobs:
                 sleep "$delay"
                 continue
               fi
+              if echo "$out" | grep -qi "The operation was canceled"; then
+                sleep "$delay"
+                continue
+              fi
               return $code
             done
             return 1
