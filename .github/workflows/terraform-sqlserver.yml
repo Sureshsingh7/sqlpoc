@@ -10,7 +10,8 @@ concurrency:
 
 jobs:
   terraform-sqlserver:
-    timeout-minutes: 360
+    # SQL IaaS registration/unregistration can legitimately take a long time.
+    timeout-minutes: 600
     runs-on:
       - self-hosted
       - linux
@@ -34,6 +35,14 @@ jobs:
       # Provider downloads (esp. azapi) sometimes hit slow GitHub release endpoints.
       TF_REGISTRY_CLIENT_TIMEOUT: "300"
       TF_PLUGIN_CACHE_DIR: /tmp/terraform-plugin-cache
+
+      # GitHub Actions artifact storage is frequently quota-limited in this org.
+      # Default to no uploads; logs are already tailed to the console.
+      UPLOAD_ARTIFACTS: "false"
+
+      # Changing managed disk SKUs via the AVM VM module often forces VM replacement.
+      # That in turn triggers long SQL IaaS deletes. Fail fast unless explicitly allowed.
+      ALLOW_DISK_SKU_DRIFT: "false"
     steps:
       # 1️⃣ Checkout FIRST
       - name: Checkout repository
@@ -205,6 +214,31 @@ jobs:
             fi
           done
 
+      - name: Prune missing SQL IaaS resources from state (best-effort)
+        run: |
+          set -euo pipefail
+          for idx in 0 1; do
+            if [ "$idx" = "0" ]; then
+              vm="$SQL_VM_PRIMARY"
+            else
+              vm="$SQL_VM_SECONDARY"
+            fi
+
+            addr="azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+
+            if terraform state show "$addr" >/dev/null 2>&1; then
+              if az resource show --ids "$rid" -o none 2>/dev/null; then
+                echo "$addr exists in Azure; keeping in state"
+              else
+                echo "Azure resource missing; removing from state: $addr"
+                terraform state rm "$addr"
+              fi
+            else
+              echo "$addr not in state; nothing to prune"
+            fi
+          done
+
       - name: Import existing disk setup extensions (if any)
         run: |
           set -euo pipefail
@@ -230,6 +264,69 @@ jobs:
               echo "Not found in Azure, skipping import"
             fi
           done
+
+      - name: Preflight: fail fast on disk SKU drift (prevents VM replacement)
+        run: |
+          set -euo pipefail
+
+          if [ "${ALLOW_DISK_SKU_DRIFT}" = "true" ]; then
+            echo "ALLOW_DISK_SKU_DRIFT=true; skipping disk SKU drift preflight"
+            exit 0
+          fi
+
+          desired_os="$(terraform console -var-file=env/dev.tfvars <<< 'var.os_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_data="$(terraform console -var-file=env/dev.tfvars <<< 'var.data_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_log="$(terraform console -var-file=env/dev.tfvars <<< 'var.log_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_tempdb="$(terraform console -var-file=env/dev.tfvars <<< 'var.tempdb_disk_type' | tr -d '\r' | tr -d '"')"
+
+          echo "Desired disk SKUs: os=${desired_os}, data=${desired_data}, log=${desired_log}, tempdb=${desired_tempdb}"
+
+          check_vm() {
+            local vm="$1"
+            echo "== Disk SKU preflight for ${vm} =="
+
+            if ! az vm show -g "$SQL_RG" -n "$vm" -o none 2>/dev/null; then
+              echo "VM ${vm} not found (ok on first deploy)"
+              return 0
+            fi
+
+            os_sku="$(az vm show -g "$SQL_RG" -n "$vm" --query "storageProfile.osDisk.managedDisk.storageAccountType" -o tsv)"
+            data_skus="$(az vm show -g "$SQL_RG" -n "$vm" --query "storageProfile.dataDisks[].managedDisk.storageAccountType" -o tsv | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
+
+            echo "Azure osDisk SKU: ${os_sku}"
+            echo "Azure dataDisks SKUs: ${data_skus:-<none>}"
+
+            mismatched="false"
+
+            if [ -n "${desired_os}" ] && [ "${os_sku}" != "${desired_os}" ]; then
+              echo "Mismatch: osDisk is ${os_sku} but desired is ${desired_os}"
+              mismatched="true"
+            fi
+
+            # If any data disk SKU differs from the desired SKU, treat as drift.
+            if [ -n "${data_skus}" ] && [ -n "${desired_data}" ]; then
+              for s in ${data_skus}; do
+                if [ "${s}" != "${desired_data}" ]; then
+                  echo "Mismatch: dataDisk is ${s} but desired is ${desired_data}"
+                  mismatched="true"
+                fi
+              done
+            fi
+
+            if [ "${mismatched}" = "true" ]; then
+              echo ""
+              echo "Disk SKU drift detected on ${vm}."
+              echo "This commonly forces VM replacement in the AVM VM module, which triggers long SQL IaaS deletes (and can time out)."
+              echo "Fix by converting the existing managed disks to the desired SKU in Azure first, THEN rerun Terraform."
+              echo "(Or re-run the workflow with ALLOW_DISK_SKU_DRIFT=true to proceed anyway.)"
+              return 1
+            fi
+
+            return 0
+          }
+
+          check_vm "$SQL_VM_PRIMARY"
+          check_vm "$SQL_VM_SECONDARY"
 
       - name: Terraform Plan
         id: tf_plan
@@ -375,7 +472,7 @@ jobs:
           wait_extension "$SQL_VM_SECONDARY" "configure-sql-disks"
 
       - name: Upload Terraform logs
-        if: always()
+        if: always() && env.UPLOAD_ARTIFACTS == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:

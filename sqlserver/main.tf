@@ -271,6 +271,7 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   timeouts {
     create = "240m"
     update = "240m"
+    delete = "480m"
   }
 
   # Terraform requires static references in depends_on. Depending on the module map
