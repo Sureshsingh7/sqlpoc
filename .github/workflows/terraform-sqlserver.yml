@@ -928,6 +928,11 @@ jobs:
                   --query "value[0].message" -o tsv || true
                 exit 1
               }
+
+            echo "== $vm enable-alwayson.log (tail) =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "Get-Content 'C:\\Windows\\Temp\\enable-alwayson.log' -ErrorAction SilentlyContinue | Select-Object -Last 200 | Out-String" \
+              --query "value[0].message" -o tsv || true
           done
 
       - name: Install SSMS (best-effort)
