@@ -83,4 +83,8 @@ Ensure-FirewallIcmp
 # 6) Install WSFC feature + tools
 Ensure-ClusterFeature
 
+Set-Service ClusSvc -StartupType Automatic
+Start-Service ClusSvc
+Get-Service ClusSvc | Format-List Status,StartType | Write-Host
+
 Write-Host 'Cluster prep complete.'

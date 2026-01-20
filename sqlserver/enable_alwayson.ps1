@@ -1,3 +1,7 @@
+Write-Host "Computer: $env:COMPUTERNAME"
+Write-Host "SqlInstance: $SqlInstance"
+Get-Service *MSSQL* | Select Name,Status | Format-Table -Auto
+
 param(
   [Parameter(Mandatory=$false)][string]$SqlInstance = $env:COMPUTERNAME
 )
@@ -90,7 +94,8 @@ function Get-IsHadrEnabled {
     $r = Invoke-Sqlcmd -ServerInstance $Instance -Query "SELECT CAST(SERVERPROPERTY('IsHadrEnabled') AS int) AS IsHadrEnabled" -QueryTimeout 30
     return [int]$r.IsHadrEnabled
   } catch {
-    return -1
+      Write-Host "Invoke-Sqlcmd failed: $($_.Exception.Message)"
+      throw
   }
 }
 

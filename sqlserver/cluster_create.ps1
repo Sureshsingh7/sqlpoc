@@ -23,14 +23,18 @@ function Cluster-Exists {
 if (-not (Cluster-Exists -Name $ClusterName)) {
   Write-Host "Creating workgroup cluster '$ClusterName'..."
   # AD-less cluster; no computer object / cluster DNS name required.
-  New-Cluster -Name $ClusterName -Node $PrimaryName,$SecondaryName -NoStorage -Force -AdministrativeAccessPoint None | Out-Null
+  Get-Service ClusSvc | Where-Object Status -ne 'Running' | Start-Service
+  New-Cluster -Name $ClusterName -Node $PrimaryName,$SecondaryName -NoStorage -Force -AdministrativeAccessPoint DNS | Out-Null
 
   # Give the cluster a moment to settle
-  Start-Sleep -Seconds 20
+  Start-Sleep -Seconds 10
+  Get-Cluster -Name $ClusterName -ErrorAction Stop | Out-Null
+
 }
 
 Write-Host 'Configuring Cloud Witness quorum...'
 $witnessKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($WitnessStorageAccountKeyB64))
+if (Get-Cluster -Name $ClusterName -ErrorAction Stop) {
 Set-ClusterQuorum -CloudWitness -AccountName $WitnessStorageAccountName -AccessKey $witnessKey
-
+}
 Write-Host 'Cluster create/quorum complete.'

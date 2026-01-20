@@ -823,7 +823,7 @@ jobs:
                 "SecondaryIp=$ip_secondary" \
                 "DnsSuffix=$dns_suffix" \
                 "LocalAdminUser=$cluster_user" \
-                "LocalAdminPasswordB64=$sql_admin_pwd_b64" || true
+                "LocalAdminPasswordB64=$sql_admin_pwd_b64"
           done
 
       - name: Create WSFC + configure Cloud Witness
@@ -872,13 +872,21 @@ jobs:
               "PrimaryName=$SQL_VM_PRIMARY" \
               "SecondaryName=$SQL_VM_SECONDARY" \
               "WitnessStorageAccountName=$witness_sa" \
-              "WitnessStorageAccountKeyB64=$witness_key_b64" || true
+              "WitnessStorageAccountKeyB64=$witness_key_b64"
 
           # Mark cluster as created for subsequent steps in this job.
+          cluster_name="$(terraform output -raw failover_cluster_name)"
+
+          echo "Re-checking cluster existence after create..."
+          out="$(az vm run-command invoke -g "$SQL_RG" -n "$SQL_VM_PRIMARY" \
+            --command-id RunPowerShellScript \
+            --scripts "try { Get-Cluster -Name '$cluster_name' -ErrorAction Stop | Out-String; Write-Host 'CLUSTER_EXISTS=1' } catch { Write-Host 'CLUSTER_EXISTS=0'; exit 1 }" \
+            --query "value[0].message" -o tsv)"
+          echo "$out"
           echo "CLUSTER_EXISTS=true" >> "$GITHUB_ENV"
 
       - name: Validate WSFC (cluster + quorum)
-        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' }}
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' && env.CLUSTER_EXISTS == 'true' }}
         run: |
           set -euo pipefail
 
@@ -982,7 +990,7 @@ jobs:
             echo "== Enabling Always On on $vm =="
             run_cmd_retry "$vm" \
               --scripts @enable_alwayson.ps1 \
-              --parameters "SqlInstance=$vm" || {
+              --parameters "SqlInstance=localhost" || {
                 echo "Always On enablement timed out or failed on $vm"
                 echo "== $vm enable-alwayson.log (tail) =="
                 az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
