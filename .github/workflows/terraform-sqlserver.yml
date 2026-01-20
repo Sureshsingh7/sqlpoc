@@ -49,6 +49,9 @@ jobs:
       # Changing managed disk SKUs via the AVM VM module often forces VM replacement.
       # That in turn triggers long SQL IaaS deletes. Fail fast unless explicitly allowed.
       ALLOW_DISK_SKU_DRIFT: "false"
+
+      # Default RunCommand readiness; updated by wait step.
+      RUNCOMMAND_READY: "unknown"
     steps:
       # 1️⃣ Checkout FIRST
       - name: Checkout repository
@@ -611,8 +614,53 @@ jobs:
             sqlserver/terraform-plan.log
             sqlserver/terraform-apply.log
 
-      - name: Detect existing WSFC
+      - name: Wait for RunCommand to be idle
         if: steps.tf_apply.outputs.exitcode == '0'
+        run: |
+          set -euo pipefail
+
+          wait_runcommand() {
+            local vm="$1"
+            local tries=30
+            local delay=20
+            for i in $(seq 1 "$tries"); do
+              echo "RunCommand probe on $vm (attempt $i/$tries)"
+              out="$(az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript --scripts "Write-Host 'runcommand-ready'" --query "value[0].message" -o tsv 2>&1)"
+              code=$?
+              echo "$out"
+              if [ $code -eq 0 ]; then
+                return 0
+              fi
+              if echo "$out" | grep -qi "Run command extension execution is in progress"; then
+                sleep "$delay"
+                continue
+              fi
+              if echo "$out" | grep -qi "The operation was canceled"; then
+                sleep "$delay"
+                continue
+              fi
+              return $code
+            done
+            return 1
+          }
+
+          ready=true
+          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+            if ! wait_runcommand "$vm"; then
+              ready=false
+            fi
+          done
+
+          if [ "$ready" = "true" ]; then
+            echo "RUNCOMMAND_READY=true" >> "$GITHUB_ENV"
+            echo "RunCommand is idle on all VMs."
+          else
+            echo "RUNCOMMAND_READY=false" >> "$GITHUB_ENV"
+            echo "RunCommand still busy; skipping WSFC/AlwaysOn steps this run."
+          fi
+
+      - name: Detect existing WSFC
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' }}
         id: wsfc_check
         run: |
           set -euo pipefail
@@ -672,12 +720,12 @@ jobs:
           echo "WSFC detection result: ${CLUSTER_EXISTS:-unknown}"
 
       - name: Skip WSFC prep/create when detection is unknown
-        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS == 'unknown' }}
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' && env.CLUSTER_EXISTS == 'unknown' }}
         run: |
           echo "WSFC detection could not run due to RunCommand conflicts; skipping prep/create in this run."
 
       - name: Validate existing WSFC (no prep/create)
-        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS == 'true' }}
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' && env.CLUSTER_EXISTS == 'true' }}
         run: |
           set -euo pipefail
 
@@ -712,7 +760,7 @@ jobs:
               "SecondaryName=$SQL_VM_SECONDARY"
 
       - name: Prep WSFC nodes (local user + hosts + cluster feature)
-        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS == 'false' }}
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' && env.CLUSTER_EXISTS == 'false' }}
         run: |
           set -euo pipefail
 
@@ -776,7 +824,7 @@ jobs:
           done
 
       - name: Create WSFC + configure Cloud Witness
-        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS == 'false' }}
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' && env.CLUSTER_EXISTS == 'false' }}
         run: |
           set -euo pipefail
 
@@ -824,7 +872,7 @@ jobs:
               "WitnessStorageAccountKeyB64=$witness_key_b64" || true
 
       - name: Validate WSFC (cluster + quorum)
-        if: steps.tf_apply.outputs.exitcode == '0'
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' }}
         run: |
           set -euo pipefail
 
@@ -861,7 +909,7 @@ jobs:
               "SecondaryName=$SQL_VM_SECONDARY"
 
       - name: WSFC status (PowerShell output)
-        if: steps.tf_apply.outputs.exitcode == '0'
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' }}
         run: |
           set -euo pipefail
 
@@ -898,7 +946,7 @@ jobs:
             --scripts "Get-ClusterResource -Cluster '$cluster_name' | Format-Table -AutoSize | Out-String" || true
 
       - name: Enable SQL Always On AG (both nodes)
-        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS == 'true' }}
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.RUNCOMMAND_READY == 'true' && env.CLUSTER_EXISTS == 'true' }}
         run: |
           set -euo pipefail
 
