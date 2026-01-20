@@ -616,6 +616,7 @@ jobs:
 
           # Default if detection cannot run.
           echo "cluster_exists=unknown" >> "$GITHUB_OUTPUT"
+          echo "CLUSTER_EXISTS=unknown" >> "$GITHUB_ENV"
 
           run_cmd_retry() {
             local vm="$1"; shift
@@ -654,22 +655,24 @@ jobs:
 
           if echo "$out" | grep -q "CLUSTER_EXISTS=1"; then
             echo "cluster_exists=true" >> "$GITHUB_OUTPUT"
+            echo "CLUSTER_EXISTS=true" >> "$GITHUB_ENV"
           else
             echo "cluster_exists=false" >> "$GITHUB_OUTPUT"
+            echo "CLUSTER_EXISTS=false" >> "$GITHUB_ENV"
           fi
 
       - name: Skip WSFC prep/create when detection is unknown
-        if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists == 'unknown'
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS == 'unknown' }}
         run: |
           echo "WSFC detection could not run due to RunCommand conflicts; skipping prep/create in this run."
 
       - name: Prep WSFC nodes (local user + hosts + cluster feature)
-        if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists == 'false'
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS == 'false' }}
         run: |
           set -euo pipefail
 
-          if [ "${{ steps.wsfc_check.outputs.cluster_exists }}" != "false" ]; then
-            echo "WSFC detection not false (value: ${{ steps.wsfc_check.outputs.cluster_exists }}); skipping prep."
+          if [ "${CLUSTER_EXISTS:-unknown}" != "false" ]; then
+            echo "WSFC detection not false (value: ${CLUSTER_EXISTS:-unknown}); skipping prep."
             exit 0
           fi
 
@@ -728,7 +731,7 @@ jobs:
           done
 
       - name: Create WSFC + configure Cloud Witness
-        if: steps.tf_apply.outputs.exitcode == '0' && steps.wsfc_check.outputs.cluster_exists != 'true'
+        if: ${{ steps.tf_apply.outputs.exitcode == '0' && env.CLUSTER_EXISTS != 'true' }}
         run: |
           set -euo pipefail
 
