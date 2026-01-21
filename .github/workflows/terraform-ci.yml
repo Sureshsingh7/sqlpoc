@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dir: [ "network", "sqlserver", "ops" ]
+        dir: [ "network", "sqlserver", "ops", "wsfc" ]
 
     env:
       ARM_USE_MSI: true
