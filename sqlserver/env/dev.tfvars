@@ -36,7 +36,7 @@ manage_disk_setup_extension = false
 # SQL Server image
 image_publisher = "microsoftsqlserver"
 image_offer     = "sql2025-ws2025"
-image_sku       = "standard-gen2"
+image_sku       = "enterprise-gen2"
 image_version   = "latest"
 
 # Extensions
