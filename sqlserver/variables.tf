@@ -182,8 +182,8 @@ variable "image_sku" {
   description = "Image SKU (enterprise, standard, express, or web)"
   default     = "standard"
   validation {
-    condition     = contains(["enterprise", "standard", "express", "web", "stddev-gen2", "standard-gen2"], var.image_sku)
-    error_message = "Image SKU must be one of: enterprise, standard, express, web, stddev-gen2, standard-gen2."
+    condition     = contains(["enterprise", "standard", "express", "web", "stddev-gen2", "standard-gen2", "enterprise-gen2"], var.image_sku)
+    error_message = "Image SKU must be one of: enterprise, standard, express, web, stddev-gen2, standard-gen2, enterprise-gen2."
   }
 }
 
