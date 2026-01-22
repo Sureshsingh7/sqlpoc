@@ -300,11 +300,11 @@ module "sql_vnet" {
   source  = "Azure/avm-res-network-virtualnetwork/azurerm"
   version = "0.17.1"
 
-  parent_id      = data.azurerm_resource_group.sql.id
-  name           = local.sql_vnet_name
-  location       = var.location
-  address_spaces = toset(var.sql_vnet_address_space)
-  tags           = local.tags
+  parent_id     = data.azurerm_resource_group.sql.id
+  name          = local.sql_vnet_name
+  location      = var.location
+  address_space = var.sql_vnet_address_space
+  tags          = local.tags
 
   subnets = {
     sql1 = {
@@ -335,11 +335,11 @@ module "ops_vnet" {
   source  = "Azure/avm-res-network-virtualnetwork/azurerm"
   version = "0.17.1"
 
-  parent_id      = data.azurerm_resource_group.ops.id
-  name           = local.ops_vnet_name
-  location       = var.location
-  address_spaces = toset(var.ops_vnet_address_space)
-  tags           = local.tags
+  parent_id     = data.azurerm_resource_group.ops.id
+  name          = local.ops_vnet_name
+  location      = var.location
+  address_space = var.ops_vnet_address_space
+  tags          = local.tags
 
   subnets = {
     runner = {
