@@ -308,21 +308,21 @@ module "sql_vnet" {
 
   subnets = {
     sql1 = {
-      name                           = local.sql_snet_sql1_name
-      address_prefix                 = var.sql_subnet_sql1_prefix
+      name                            = local.sql_snet_sql1_name
+      address_prefix                  = var.sql_subnet_sql1_prefix
       default_outbound_access_enabled = false
-      network_security_group         = { id = module.nsg_sql1.resource_id }
+      network_security_group          = { id = module.nsg_sql1.resource_id }
     }
     sql2 = {
-      name                           = local.sql_snet_sql2_name
-      address_prefix                 = var.sql_subnet_sql2_prefix
+      name                            = local.sql_snet_sql2_name
+      address_prefix                  = var.sql_subnet_sql2_prefix
       default_outbound_access_enabled = false
-      network_security_group         = { id = module.nsg_sql2.resource_id }
+      network_security_group          = { id = module.nsg_sql2.resource_id }
     }
     pep = {
-      name                           = local.sql_snet_pep_name
-      address_prefix                 = var.sql_subnet_pep_prefix
-      default_outbound_access_enabled = false
+      name                              = local.sql_snet_pep_name
+      address_prefix                    = var.sql_subnet_pep_prefix
+      default_outbound_access_enabled   = false
       private_endpoint_network_policies = "Enabled"
     }
   }
@@ -343,10 +343,10 @@ module "ops_vnet" {
 
   subnets = {
     runner = {
-      name                           = local.ops_snet_runner_name
-      address_prefix                 = var.ops_subnet_runner_prefix
+      name                            = local.ops_snet_runner_name
+      address_prefix                  = var.ops_subnet_runner_prefix
       default_outbound_access_enabled = false
-      network_security_group         = { id = module.nsg_runner.resource_id }
+      network_security_group          = { id = module.nsg_runner.resource_id }
     }
     bastion = {
       name                            = local.ops_snet_bastion_name
@@ -357,14 +357,14 @@ module "ops_vnet" {
 
   peerings = {
     ops_to_sql = {
-      name                            = "${local.ops_vnet_name}-to-${local.sql_vnet_name}"
-      remote_virtual_network_resource_id = module.sql_vnet.resource_id
-      allow_virtual_network_access    = true
-      allow_forwarded_traffic         = true
-      create_reverse_peering          = true
-      reverse_name                    = "${local.sql_vnet_name}-to-${local.ops_vnet_name}"
+      name                                 = "${local.ops_vnet_name}-to-${local.sql_vnet_name}"
+      remote_virtual_network_resource_id   = module.sql_vnet.resource_id
+      allow_virtual_network_access         = true
+      allow_forwarded_traffic              = true
+      create_reverse_peering               = true
+      reverse_name                         = "${local.sql_vnet_name}-to-${local.ops_vnet_name}"
       reverse_allow_virtual_network_access = true
-      reverse_allow_forwarded_traffic = true
+      reverse_allow_forwarded_traffic      = true
     }
   }
 }

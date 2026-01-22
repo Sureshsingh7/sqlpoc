@@ -95,16 +95,16 @@ module "ops_kv" {
   source  = "Azure/avm-res-keyvault-vault/azurerm"
   version = "0.10.2"
 
-  name                = "kv-fnz-poc-se"
-  location            = var.location
-  resource_group_name = var.ops_resource_group_name
-  tenant_id           = var.tenant_id
-  sku_name            = "standard"
-  purge_protection_enabled   = true
-  soft_delete_retention_days = 30
+  name                          = "kv-fnz-poc-se"
+  location                      = var.location
+  resource_group_name           = var.ops_resource_group_name
+  tenant_id                     = var.tenant_id
+  sku_name                      = "standard"
+  purge_protection_enabled      = true
+  soft_delete_retention_days    = 30
   public_network_access_enabled = true
-  network_acls               = null
-  tags                        = local.tags
+  network_acls                  = null
+  tags                          = local.tags
 
   role_assignments = var.manage_role_assignments ? {
     terraform_secrets_officer = {
@@ -122,9 +122,9 @@ module "ops_kv" {
 
   private_endpoints = {
     kv_pep = {
-      name                       = "pep-kv-fnz-poc"
-      subnet_resource_id         = data.terraform_remote_state.network.outputs.pep_subnet_id
-      subresource_name           = "vault"
+      name                          = "pep-kv-fnz-poc"
+      subnet_resource_id            = data.terraform_remote_state.network.outputs.pep_subnet_id
+      subresource_name              = "vault"
       private_dns_zone_resource_ids = [module.kv_private_dns.resource_id]
     }
   }
@@ -150,10 +150,10 @@ module "runner_vm" {
       name = "nic-gh-runner"
       ip_configurations = {
         primary = {
-          name                           = "internal"
-          private_ip_address_allocation  = "Dynamic"
-          private_ip_subnet_resource_id  = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
-          is_primary_ipconfiguration     = true
+          name                          = "internal"
+          private_ip_address_allocation = "Dynamic"
+          private_ip_subnet_resource_id = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
+          is_primary_ipconfiguration    = true
         }
       }
     }
@@ -161,8 +161,8 @@ module "runner_vm" {
 
   account_credentials = {
     admin_credentials = {
-      username = var.vm_admin_username
-      ssh_keys = [var.ssh_public_key]
+      username                           = var.vm_admin_username
+      ssh_keys                           = [var.ssh_public_key]
       generate_admin_password_or_ssh_key = false
     }
     password_authentication_disabled = true
@@ -191,8 +191,8 @@ module "runner_vm" {
 # Jumpbox VM (Windows)
 # -----------------------------------------------------------------------------
 module "jumpbox_vm" {
-  count  = var.enable_jumpbox ? 1 : 0
-  source = "Azure/avm-res-compute-virtualmachine/azurerm"
+  count   = var.enable_jumpbox ? 1 : 0
+  source  = "Azure/avm-res-compute-virtualmachine/azurerm"
   version = "0.20.0"
 
   name                = var.jumpbox_name
@@ -208,10 +208,10 @@ module "jumpbox_vm" {
       name = "nic-jumpbox"
       ip_configurations = {
         primary = {
-          name                           = "internal"
-          private_ip_address_allocation  = "Dynamic"
-          private_ip_subnet_resource_id  = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
-          is_primary_ipconfiguration     = true
+          name                          = "internal"
+          private_ip_address_allocation = "Dynamic"
+          private_ip_subnet_resource_id = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
+          is_primary_ipconfiguration    = true
         }
       }
     }
@@ -219,8 +219,8 @@ module "jumpbox_vm" {
 
   account_credentials = {
     admin_credentials = {
-      username = var.vm_admin_username
-      password = random_password.jumpbox[0].result
+      username                           = var.vm_admin_username
+      password                           = random_password.jumpbox[0].result
       generate_admin_password_or_ssh_key = false
     }
   }
@@ -236,7 +236,7 @@ module "jumpbox_vm" {
     system_assigned = true
   }
 
-  extensions = local.jumpbox_extensions
+  extensions       = local.jumpbox_extensions
   role_assignments = local.jumpbox_role_assignments
 
   os_disk = {
