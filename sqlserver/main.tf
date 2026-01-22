@@ -1,17 +1,75 @@
 
-# Generate single password for both SQL VM admin accounts
-resource "random_password" "sql_vm_admin" {
-  length  = 32
-  special = true
+resource "random_string" "witness_suffix" {
+  length  = 6
+  upper   = false
+  special = false
 }
 
-# Store SQL VM admin password in Key Vault
-resource "azurerm_key_vault_secret" "sql_vm_admin_password" {
-  name         = "sql-vm-admin-password"
-  value        = random_password.sql_vm_admin.result
-  key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
+data "azurerm_resource_group" "sql" {
+  name = var.sql_resource_group_name
+}
 
-  content_type = "SQL Server VM local admin password (shared for primary and secondary)"
+data "azurerm_key_vault_secret" "sql_vm_admin" {
+  name         = "sql-vm-admin-password"
+  key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id
+}
+
+locals {
+  sql_vm_admin_password = try(
+    data.terraform_remote_state.ops.outputs.sql_vm_admin_password,
+    data.azurerm_key_vault_secret.sql_vm_admin.value
+  )
+  sql_vm_map       = { for idx, name in var.sql_vm_names : name => idx }
+  sql_vm_nic_names = ["sqlpoc-nic-sql-primary", "sqlpoc-nic-sql-secondary"]
+}
+
+# Cloud Witness storage account (used for WSFC quorum in a workgroup cluster).
+# Org policy disables Shared Key access by default; the SecurityControl=ignore tag
+# is used to bypass that policy in this PoC.
+module "witness_blob_dns" {
+  source  = "Azure/avm-res-network-privatednszone/azurerm"
+  version = "0.4.4"
+
+  domain_name = "privatelink.blob.core.windows.net"
+  parent_id   = data.azurerm_resource_group.sql.id
+  tags        = local.tags
+
+  virtual_network_links = {
+    sql_vnet = {
+      name               = "link-blob-sql-vnet"
+      virtual_network_id = data.terraform_remote_state.network.outputs.sql_vnet_id
+      autoregistration   = false
+    }
+  }
+}
+
+module "witness_storage" {
+  source  = "Azure/avm-res-storage-storageaccount/azurerm"
+  version = "0.6.7"
+
+  name                            = "stsqlw${random_string.witness_suffix.result}"
+  resource_group_name             = var.sql_resource_group_name
+  location                        = var.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  account_kind                    = "StorageV2"
+  shared_access_key_enabled       = true
+  allow_nested_items_to_be_public = false
+  min_tls_version                 = "TLS1_2"
+  public_network_access_enabled   = true
+
+  tags = merge(local.tags, {
+    SecurityControl = var.witness_storage_security_control_tag_value
+  })
+
+  private_endpoints = {
+    witness_blob = {
+      name                          = "pep-witness-blob"
+      subnet_resource_id            = data.terraform_remote_state.network.outputs.pep_subnet_id
+      subresource_name              = "blob"
+      private_dns_zone_resource_ids = [module.witness_blob_dns.resource_id]
+    }
+  }
 }
 
 # Host the disk setup script in the existing TFSTATE storage account/container.
@@ -29,8 +87,12 @@ locals {
   disk_setup_blob_name = "scripts/disk_setup.ps1"
   disk_setup_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/${local.disk_setup_blob_name}"
 
-  # The workflow provides a user-delegation SAS without a leading '?'.
-  disk_setup_file_uri = "${local.disk_setup_blob_url}?${var.disk_setup_sas}"
+  # If SAS is empty, use managed identity to access the blob.
+  disk_setup_file_uri = var.disk_setup_sas != "" ? "${local.disk_setup_blob_url}?${var.disk_setup_sas}" : local.disk_setup_blob_url
+
+  # Used to force a settings diff so CustomScriptExtension re-runs when the script changes.
+  disk_setup_sha = filesha256("${path.module}/disk_setup.ps1")
+
 }
 
 # Locals for naming and organization
@@ -87,131 +149,111 @@ locals {
   all_disks_map = { for disk in local.all_disks : disk.key => disk }
 }
 
-# SQL Server VM network interfaces with static IPs and accelerated networking
-resource "azurerm_network_interface" "sql_vm" {
-  count                          = local.sql_vm_count
-  name                           = count.index == 0 ? "sqlpoc-nic-sql-primary" : "sqlpoc-nic-sql-secondary"
-  location                       = var.location
-  resource_group_name            = var.sql_resource_group_name
-  accelerated_networking_enabled = true
+# SQL Server VMs configured for SQL Server failover clustering
+module "sql_vm" {
+  for_each = local.sql_vm_map
+  source   = "Azure/avm-res-compute-virtualmachine/azurerm"
+  version  = "0.20.0"
 
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = count.index == 0 ? data.terraform_remote_state.network.outputs.sql_subnet_sql1_id : data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
-    private_ip_address_allocation = "Static"
-    private_ip_address            = var.sql_private_ips[count.index]
+  name                = each.key
+  location            = var.location
+  resource_group_name = var.sql_resource_group_name
+  zone                = var.availability_zones[each.value % length(var.availability_zones)]
+
+  os_type  = "Windows"
+  sku_size = var.vm_size
+
+  # Azure Compute can reject updates on some images unless this flag is enabled.
+  # See error: BypassPlatformSafetyChecksOnUserSchedule cannot be set to false.
+  patch_assessment_mode                                  = "AutomaticByPlatform"
+  patch_mode                                             = "AutomaticByPlatform"
+  bypass_platform_safety_checks_on_user_schedule_enabled = true
+
+  encryption_at_host_enabled = false
+
+  network_interfaces = {
+    sql_nic = {
+      name                           = local.sql_vm_nic_names[each.value]
+      accelerated_networking_enabled = true
+      ip_configurations = {
+        primary = {
+          name                          = "internal"
+          private_ip_address_allocation = "Static"
+          private_ip_address            = var.sql_private_ips[each.value]
+          private_ip_subnet_resource_id = each.value == 0 ? data.terraform_remote_state.network.outputs.sql_subnet_sql1_id : data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
+          is_primary_ipconfiguration    = true
+        }
+      }
+    }
   }
 
-  tags = local.tags
-}
+  account_credentials = {
+    admin_credentials = {
+      username                           = var.sql_admin_username
+      password                           = local.sql_vm_admin_password
+      generate_admin_password_or_ssh_key = false
+    }
+  }
 
-# Windows Server VMs configured for SQL Server failover clustering
-resource "azurerm_windows_virtual_machine" "sql_vm" {
-  count                                                  = local.sql_vm_count
-  name                                                   = var.sql_vm_names[count.index]
-  location                                               = var.location
-  resource_group_name                                    = var.sql_resource_group_name
-  size                                                   = var.vm_size
-  zone                                                   = var.availability_zones[count.index % length(var.availability_zones)]
-  bypass_platform_safety_checks_on_user_schedule_enabled = true
-  admin_username                                         = var.sql_admin_username
-  admin_password                                         = random_password.sql_vm_admin.result
-
-  network_interface_ids = [
-    azurerm_network_interface.sql_vm[count.index].id
-  ]
-
-  os_disk {
+  os_disk = {
+    name                 = "${each.key}-Os-disk"
     caching              = "ReadWrite"
     storage_account_type = var.os_disk_type
     disk_size_gb         = var.os_disk_size_gb
   }
 
-  source_image_reference {
+  source_image_reference = {
     publisher = var.image_publisher
     offer     = var.image_offer
     sku       = var.image_sku
     version   = var.image_version
   }
 
-  identity {
-    type = "SystemAssigned"
+  managed_identities = {
+    system_assigned            = true
+    user_assigned_resource_ids = var.sql_vm_user_assigned_identity_ids
   }
 
-  provisioner "local-exec" {
-    when    = create
-    command = "az vm run-command invoke --resource-group ${var.sql_resource_group_name} --name ${var.sql_vm_names[count.index]} --command-id RunPowerShellScript --scripts 'if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[0]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"${local.primary_vm_ip} `t${var.sql_vm_names[0]}.sqlpoc.local `t${var.sql_vm_names[0]}\" }; if (-not (Select-String -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Pattern ${var.sql_vm_names[1]} -Quiet)) { Add-Content -Path C:\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts -Value \"${local.secondary_vm_ip} `t${var.sql_vm_names[1]}.sqlpoc.local `t${var.sql_vm_names[1]}\" }; Set-ItemProperty -Path \"HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\services\\\\Tcpip\\\\Parameters\" -Name \"NV Domain\" -Value \"sqlpoc.local\" -Force; New-ItemProperty -Path \"HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\System\" -Name \"LocalAccountTokenFilterPolicy\" -Value 1 -PropertyType DWord -Force; Write-Host \"Enabling ICMP in Windows Firewall...\"; netsh advfirewall firewall add rule name=\"Allow ICMPv4\" protocol=icmpv4 dir=in action=allow; Write-Host \"ICMP enabled successfully\"; Write-Host \"Installing Failover Clustering...\"; Import-Module ServerManager; Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools; Write-Host \"Failover Clustering installed successfully\"'"
+  data_disk_managed_disks = {
+    for disk_key, disk in local.all_disks_map : disk_key => {
+      name                 = disk.name
+      storage_account_type = disk.storage_type
+      create_option        = "Empty"
+      disk_size_gb         = disk.disk_size_gb
+      lun                  = disk.lun
+      caching              = "ReadOnly"
+    } if disk.vm_index == each.value
   }
+
+  extensions = var.manage_disk_setup_extension ? {
+    configure_sql_disks = {
+      name                       = "configure-sql-disks"
+      publisher                  = "Microsoft.Compute"
+      type                       = "CustomScriptExtension"
+      type_handler_version       = "1.10"
+      auto_upgrade_minor_version = true
+      settings = jsonencode({
+        diskSetupToken = local.disk_setup_sha
+      })
+      protected_settings = jsonencode({
+        fileUris         = [local.disk_setup_file_uri]
+        commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
+        managedIdentity  = var.sql_vm_user_assigned_identity_client_id != "" ? { clientId = var.sql_vm_user_assigned_identity_client_id } : {}
+      })
+    }
+  } : {}
 
   tags = local.tags
-
-  lifecycle {
-    ignore_changes = [
-      os_disk[0].name,
-      admin_password
-    ]
-  }
-
-  depends_on = [
-    azurerm_network_interface.sql_vm,
-    azurerm_key_vault_secret.sql_vm_admin_password
-  ]
-}
-
-# Separate cluster creation resource that can run on already deployed VMs
-# REMOVED - Using local-exec provisioner instead
-
-# Managed disks for SQL Server data, log, and tempdb volumes
-resource "azurerm_managed_disk" "sql_disk" {
-  for_each             = local.all_disks_map
-  name                 = each.value.name
-  location             = var.location
-  resource_group_name  = var.sql_resource_group_name
-  storage_account_type = each.value.storage_type
-  create_option        = "Empty"
-  disk_size_gb         = each.value.disk_size_gb
-  zone                 = var.availability_zones[each.value.vm_index % length(var.availability_zones)]
-
-  tags = local.tags
-}
-
-# Attach data disks to SQL Server VMs
-resource "azurerm_virtual_machine_data_disk_attachment" "sql_disk_attach" {
-  for_each           = local.all_disks_map
-  managed_disk_id    = azurerm_managed_disk.sql_disk[each.key].id
-  virtual_machine_id = azurerm_windows_virtual_machine.sql_vm[each.value.vm_index].id
-  lun                = each.value.lun
-  caching            = "ReadOnly"
-}
-
-# Custom script to format and configure disks
-resource "azurerm_virtual_machine_extension" "sql_disk_setup" {
-  count                      = local.sql_vm_count
-  name                       = "configure-sql-disks"
-  virtual_machine_id         = azurerm_windows_virtual_machine.sql_vm[count.index].id
-  publisher                  = "Microsoft.Compute"
-  type                       = "CustomScriptExtension"
-  type_handler_version       = "1.10"
-  auto_upgrade_minor_version = true
-
-  settings = jsonencode({
-    fileUris         = [local.disk_setup_file_uri]
-    commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
-  })
-
-  depends_on = [
-    azurerm_virtual_machine_data_disk_attachment.sql_disk_attach,
-  ]
 }
 
 # SQL IaaS Agent Extension - SQL Server configuration only (no storage config)
 resource "azurerm_mssql_virtual_machine" "sql_vm" {
-  count                            = local.sql_vm_count
-  virtual_machine_id               = azurerm_windows_virtual_machine.sql_vm[count.index].id
+  for_each                         = var.enable_sql_extension ? local.sql_vm_map : {}
+  virtual_machine_id               = module.sql_vm[each.key].resource_id
   sql_license_type                 = "PAYG"
   sql_connectivity_port            = 1433
   sql_connectivity_type            = "PRIVATE"
-  sql_connectivity_update_password = random_password.sql_vm_admin.result
+  sql_connectivity_update_password = local.sql_vm_admin_password
   sql_connectivity_update_username = var.sql_admin_username
 
   # SQL Server instance configuration
@@ -236,12 +278,12 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
   timeouts {
     create = "240m"
     update = "240m"
+    delete = "480m"
   }
 
-  depends_on = [
-    azurerm_windows_virtual_machine.sql_vm,
-    azurerm_virtual_machine_extension.sql_disk_setup
-  ]
+  # Terraform requires static references in depends_on. Depending on the module map
+  # ensures VMs and their extensions are created before SQL IaaS registration.
+  depends_on = [module.sql_vm]
 }
 
 # Future: Failover Clustering Configuration

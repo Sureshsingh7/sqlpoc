@@ -1,4 +1,4 @@
-name: terraform-sqlserver
+name: terraform-sql-iaas
 
 on:
   workflow_dispatch:
@@ -10,7 +10,8 @@ concurrency:
 
 jobs:
   terraform-sqlserver:
-    timeout-minutes: 360
+    # SQL IaaS registration/unregistration can legitimately take a long time.
+    timeout-minutes: 600
     runs-on:
       - self-hosted
       - linux
@@ -23,13 +24,30 @@ jobs:
 
     env:
       ARM_USE_MSI: true
-      ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
+      ARM_CLIENT_ID: ${{ secrets['TERRAFORM_UAMI_CLIENT_ID'] }}
       ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
       ARM_SKIP_AZURECLI_AUTH: "true"
       SQL_RG: rg-fnz-poc-sql-se
       SQL_VM_PRIMARY: sql-primary
       SQL_VM_SECONDARY: sql-secondary
+
+      # Provider downloads (esp. azapi) sometimes hit slow GitHub release endpoints.
+      TF_REGISTRY_CLIENT_TIMEOUT: "300"
+      TF_PLUGIN_CACHE_DIR: /tmp/terraform-plugin-cache
+
+
+      # If shared-key/SAS auth is disabled, use managed identity for disk_setup.ps1.
+      DISK_SETUP_USE_SAS: "false"
+
+      # GitHub Actions artifact storage is frequently quota-limited in this org.
+      # Default to no uploads; logs are already tailed to the console.
+      UPLOAD_ARTIFACTS: "false"
+
+      # Changing managed disk SKUs via the AVM VM module often forces VM replacement.
+      # That in turn triggers long SQL IaaS deletes. Fail fast unless explicitly allowed.
+      ALLOW_DISK_SKU_DRIFT: "false"
+
     steps:
       # 1️⃣ Checkout FIRST
       - name: Checkout repository
@@ -50,23 +68,29 @@ jobs:
         run: |
           az login --identity --username "$ARM_CLIENT_ID"
 
+      - name: Prepare Terraform plugin cache
+        run: |
+          set -euo pipefail
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+          echo "TF_PLUGIN_CACHE_DIR=${TF_PLUGIN_CACHE_DIR}"
+
       - name: Ensure SQL VMs are running (best-effort)
         run: |
           set -euo pipefail
 
           echo "Microsoft.SqlVirtualMachine RP registrationState:"
-          az provider show -n Microsoft.SqlVirtualMachine --query "registrationState" -o tsv 2>/dev/null || true
+          timeout 20s az provider show -n Microsoft.SqlVirtualMachine --query "registrationState" -o tsv 2>/dev/null || true
 
           wait_running() {
             local vm="$1"
             echo "Ensuring VM is running: $vm"
 
             # VM may not exist yet on first deploy; ignore start errors.
-            az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
+            timeout 20s az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
 
             # If it exists, wait until PowerState/running.
-            for i in $(seq 1 30); do
-              state="$(az vm get-instance-view -g "$SQL_RG" -n "$vm" \
+            for i in $(seq 1 12); do
+              state="$(timeout 20s az vm get-instance-view -g "$SQL_RG" -n "$vm" \
                 --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
 
               if [ -z "$state" ]; then
@@ -77,7 +101,7 @@ jobs:
                   return 0
                 fi
               fi
-              sleep 20
+              sleep 10
             done
             # Don't hard-fail here; Terraform can still be creating the VM.
             echo "$vm did not reach PowerState/running within wait window (continuing)"
@@ -107,11 +131,22 @@ jobs:
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
           TFSTATE_KEY: "sqlpoc.sqlserver.tfstate"
         run: |
-          terraform init -reconfigure -upgrade \
-            -backend-config="resource_group_name=${TFSTATE_RG}" \
-            -backend-config="storage_account_name=${TFSTATE_SA}" \
-            -backend-config="container_name=${TFSTATE_CONTAINER}" \
-            -backend-config="key=${TFSTATE_KEY}"
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            echo "terraform init attempt ${attempt}/3"
+            if terraform init -reconfigure -upgrade \
+              -backend-config="resource_group_name=${TFSTATE_RG}" \
+              -backend-config="storage_account_name=${TFSTATE_SA}" \
+              -backend-config="container_name=${TFSTATE_CONTAINER}" \
+              -backend-config="key=${TFSTATE_KEY}"; then
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "terraform init failed after retries"
+          exit 1
 
       - name: Terraform Validate
         run: terraform validate
@@ -120,6 +155,7 @@ jobs:
         env:
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
+          DISK_SETUP_SAS: ${{ secrets.DISK_SETUP_SAS }}
         run: |
           set -euo pipefail
 
@@ -133,20 +169,31 @@ jobs:
             --overwrite true \
             --only-show-errors
 
-          # Short-lived user delegation SAS (AAD-based, no account keys)
-          expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
-          sas="$(az storage blob generate-sas \
-            --auth-mode login \
-            --as-user \
-            --account-name "${TFSTATE_SA}" \
-            --container-name "${TFSTATE_CONTAINER}" \
-            --name "scripts/disk_setup.ps1" \
-            --permissions r \
-            --expiry "${expiry}" \
-            --https-only \
-            -o tsv)"
+          if [ "${DISK_SETUP_USE_SAS}" != "true" ]; then
+            echo "DISK_SETUP_USE_SAS=false; using managed identity (no SAS)"
+            sas=""
+          elif [ -n "${DISK_SETUP_SAS:-}" ]; then
+            echo "Using pre-provided DISK_SETUP_SAS from secrets (stable; avoids extension churn)"
+            sas="${DISK_SETUP_SAS}"
+          else
+            # Short-lived user delegation SAS (AAD-based, no account keys)
+            expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
+            sas="$(az storage blob generate-sas \
+              --auth-mode login \
+              --as-user \
+              --account-name "${TFSTATE_SA}" \
+              --container-name "${TFSTATE_CONTAINER}" \
+              --name "scripts/disk_setup.ps1" \
+              --permissions r \
+              --expiry "${expiry}" \
+              --https-only \
+              -o tsv)"
+          fi
 
-          if [ -z "${sas}" ]; then
+          # Mask the SAS so it doesn't appear in later step env dumps.
+          echo "::add-mask::${sas}"
+
+          if [ "${DISK_SETUP_USE_SAS}" = "true" ] && [ -z "${sas}" ]; then
             echo "Failed to generate user-delegation SAS (empty output)."
             echo "Ensure the runner identity can generate SAS via AAD (often requires Storage Blob Data Contributor + Blob Delegator on the storage account)."
             exit 1
@@ -165,12 +212,12 @@ jobs:
               vm="$SQL_VM_SECONDARY"
             fi
 
-            addr="azurerm_mssql_virtual_machine.sql_vm[${idx}]"
+            addr="azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
             echo "Checking SQL IaaS resource: $rid"
             if az resource show --ids "$rid" -o none 2>/dev/null; then
-              if terraform state list | grep -Fxq "$addr"; then
+              if terraform state show "$addr" >/dev/null 2>&1; then
                 echo "$addr already in state"
               else
                 echo "Importing $addr"
@@ -181,11 +228,183 @@ jobs:
             fi
           done
 
-      - name: Terraform Plan
-        run: terraform plan -input=false -var-file=env/dev.tfvars -out=tfplan
+      - name: Prune missing SQL IaaS resources from state (best-effort)
+        run: |
+          set -euo pipefail
+          for idx in 0 1; do
+            if [ "$idx" = "0" ]; then
+              vm="$SQL_VM_PRIMARY"
+            else
+              vm="$SQL_VM_SECONDARY"
+            fi
 
-      - name: Terraform Apply
-        id: tf_apply
+            addr="azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+
+            if terraform state show "$addr" >/dev/null 2>&1; then
+              if az resource show --ids "$rid" -o none 2>/dev/null; then
+                echo "$addr exists in Azure; keeping in state"
+              else
+                echo "Azure resource missing; removing from state: $addr"
+                terraform state rm "$addr"
+              fi
+            else
+              echo "$addr not in state; nothing to prune"
+            fi
+          done
+
+      - name: Import existing disk setup extensions (if any)
+        run: |
+          set -euo pipefail
+
+          manage_ext="$(terraform console -var-file=env/dev.tfvars <<< 'var.manage_disk_setup_extension' | tr -d '\r' | tr -d '"')"
+          if [ "${manage_ext}" = "false" ]; then
+            echo "manage_disk_setup_extension=false; skipping import of configure-sql-disks"
+            exit 0
+          fi
+
+          for idx in 0 1; do
+            if [ "$idx" = "0" ]; then
+              vm="$SQL_VM_PRIMARY"
+            else
+              vm="$SQL_VM_SECONDARY"
+            fi
+
+            addr="module.sql_vm[\"${vm}\"].module.extension[\"configure_sql_disks\"].azurerm_virtual_machine_extension.this"
+            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.Compute/virtualMachines/${vm}/extensions/configure-sql-disks"
+
+            echo "Checking VM extension: $rid"
+            if az vm extension show --ids "$rid" -o none 2>/dev/null; then
+              if terraform state show "$addr" >/dev/null 2>&1; then
+                echo "$addr already in state"
+              else
+                echo "Importing $addr"
+                terraform import -var-file=env/dev.tfvars "$addr" "$rid"
+              fi
+            else
+              echo "Not found in Azure, skipping import"
+            fi
+          done
+
+      - name: Skip disk setup extension management (optional)
+        run: |
+          set -euo pipefail
+
+          manage_ext="$(terraform console -var-file=env/dev.tfvars <<< 'var.manage_disk_setup_extension' | tr -d '\r' | tr -d '"')"
+          if [ "${manage_ext}" = "false" ]; then
+            echo "manage_disk_setup_extension=false; removing disk setup extension from state"
+            for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+              addr="module.sql_vm[\"${vm}\"].module.extension[\"configure_sql_disks\"].azurerm_virtual_machine_extension.this"
+              if terraform state show "$addr" >/dev/null 2>&1; then
+                terraform state rm "$addr" || true
+              else
+                echo "not in state: $addr"
+              fi
+            done
+          else
+            echo "manage_disk_setup_extension=true; keeping extension managed"
+          fi
+
+      - name: "Preflight: fail fast on disk SKU drift (prevents VM replacement)"
+        run: |
+          set -euo pipefail
+
+          if [ "${ALLOW_DISK_SKU_DRIFT}" = "true" ]; then
+            echo "ALLOW_DISK_SKU_DRIFT=true; skipping disk SKU drift preflight"
+            exit 0
+          fi
+
+          desired_os="$(terraform console -var-file=env/dev.tfvars <<< 'var.os_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_data="$(terraform console -var-file=env/dev.tfvars <<< 'var.data_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_log="$(terraform console -var-file=env/dev.tfvars <<< 'var.log_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_tempdb="$(terraform console -var-file=env/dev.tfvars <<< 'var.tempdb_disk_type' | tr -d '\r' | tr -d '"')"
+
+          echo "Desired disk SKUs: os=${desired_os}, data=${desired_data}, log=${desired_log}, tempdb=${desired_tempdb}"
+
+          check_vm() {
+            local vm="$1"
+            echo "== Disk SKU preflight for ${vm} =="
+
+            if ! az vm show -g "$SQL_RG" -n "$vm" -o none 2>/dev/null; then
+              echo "VM ${vm} not found (ok on first deploy)"
+              return 0
+            fi
+
+            os_sku="$(az vm show -g "$SQL_RG" -n "$vm" --query "storageProfile.osDisk.managedDisk.storageAccountType" -o tsv)"
+            data_skus="$(az vm show -g "$SQL_RG" -n "$vm" --query "storageProfile.dataDisks[].managedDisk.storageAccountType" -o tsv | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
+
+            echo "Azure osDisk SKU: ${os_sku}"
+            echo "Azure dataDisks SKUs: ${data_skus:-<none>}"
+
+            mismatched="false"
+
+            if [ -n "${desired_os}" ] && [ "${os_sku}" != "${desired_os}" ]; then
+              echo "Mismatch: osDisk is ${os_sku} but desired is ${desired_os}"
+              mismatched="true"
+            fi
+
+            # If any data disk SKU differs from the desired SKU, treat as drift.
+            if [ -n "${data_skus}" ] && [ -n "${desired_data}" ]; then
+              for s in ${data_skus}; do
+                if [ "${s}" != "${desired_data}" ]; then
+                  echo "Mismatch: dataDisk is ${s} but desired is ${desired_data}"
+                  mismatched="true"
+                fi
+              done
+            fi
+
+            if [ "${mismatched}" = "true" ]; then
+              echo ""
+              echo "Disk SKU drift detected on ${vm}."
+              echo "This commonly forces VM replacement in the AVM VM module, which triggers long SQL IaaS deletes (and can time out)."
+              echo "Fix by converting the existing managed disks to the desired SKU in Azure first, THEN rerun Terraform."
+              echo "(Or re-run the workflow with ALLOW_DISK_SKU_DRIFT=true to proceed anyway.)"
+              return 1
+            fi
+
+            return 0
+          }
+
+          check_vm "$SQL_VM_PRIMARY"
+          check_vm "$SQL_VM_SECONDARY"
+
+      - name: Terraform Plan
+        id: tf_plan
+        run: |
+          set +e
+
+          log_file="terraform-plan.log"
+          rm -f "$log_file"
+
+          on_term() {
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform plan received termination signal"
+            echo "Last 50 lines of $log_file:"
+            tail -n 50 "$log_file" 2>/dev/null || true
+          }
+          trap on_term SIGINT SIGTERM
+
+          # Plan is informational; apply runs in two phases for stability.
+          ( terraform plan -input=false -var-file=env/dev.tfvars 2>&1 | tee "$log_file" ) &
+          pid=$!
+
+          # Heartbeat every 60s so slow AzureRM refresh doesn't look hung.
+          while kill -0 "$pid" 2>/dev/null; do
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform plan still running..."
+            tail -n 5 "$log_file" 2>/dev/null || true
+            sleep 60
+          done
+
+          wait "$pid"
+          code=$?
+          echo "Last 30 lines of $log_file:"
+          tail -n 30 "$log_file" 2>/dev/null || true
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
+      - name: "Terraform Apply (Phase 1: VMs + extensions)"
+        id: tf_apply_vms
         continue-on-error: true
         run: |
           set +e
@@ -201,7 +420,9 @@ jobs:
           }
           trap on_term SIGINT SIGTERM
 
-          ( terraform apply -auto-approve tfplan 2>&1 | tee "$log_file" ) &
+          # Phase 1 applies only the VM module. This avoids racing SQL IaaS registration
+          # against transient VM restarts/deallocations.
+          ( terraform apply -parallelism=1 -auto-approve -var-file=env/dev.tfvars -target=module.sql_vm 2>&1 | tee "$log_file" ) &
           pid=$!
 
           azure_watch_counter=0
@@ -223,7 +444,7 @@ jobs:
 
                 echo "-- $vm imageReference / plan --"
                 az vm show -g "$SQL_RG" -n "$vm" \
-                  --query "{image:storageProfile.imageReference, plan:plan}" \
+                  --query 'storageProfile.imageReference, plan' \
                   -o jsonc 2>/dev/null || true
 
                 echo "-- $vm SQL IaaS provisioningState --"
@@ -252,17 +473,143 @@ jobs:
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Install SSMS (best-effort)
-        if: steps.tf_apply.outputs.exitcode == '0'
+      - name: Fail fast if VM phase failed
+        if: ${{ steps.tf_apply_vms.outputs.exitcode != '0' }}
+        run: |
+          echo "Terraform apply phase 1 (VMs/extensions) failed (exitcode=${{ steps.tf_apply_vms.outputs.exitcode }})"
+          exit 1
+
+      - name: Wait for disk setup extension to finish
+        if: steps.tf_apply_vms.outputs.exitcode == '0'
         run: |
           set -euo pipefail
 
-          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
-            echo "== Installing SSMS on $vm =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
-              --scripts @install_ssms.ps1 \
-              --query "value[0].message" -o tsv || true
+          manage_ext="$(terraform console -var-file=env/dev.tfvars <<< 'var.manage_disk_setup_extension' | tr -d '\r' | tr -d '"')"
+          if [ "${manage_ext}" = "false" ]; then
+            echo "manage_disk_setup_extension=false; skipping wait for configure-sql-disks"
+            exit 0
+          fi
+
+          wait_extension() {
+            local vm="$1"
+            local ext="$2"
+            echo "Waiting for extension '$ext' on VM '$vm' to reach Succeeded..."
+
+            for i in $(seq 1 60); do
+              state="$(timeout 20s az vm extension show -g "$SQL_RG" --vm-name "$vm" -n "$ext" --query "provisioningState" -o tsv 2>/dev/null || true)"
+              ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo "[$ts] [$i/60] $vm/$ext provisioningState=${state:-<unknown>}"
+
+              if [ -z "$state" ]; then
+                # Extension may not be created in some scenarios; don't block forever.
+                sleep 30
+                continue
+              fi
+
+              if [ "$state" = "Succeeded" ]; then
+                return 0
+              fi
+              if [ "$state" = "Failed" ]; then
+                echo "Extension $ext on $vm is Failed"
+                timeout 20s az vm extension show -g "$SQL_RG" --vm-name "$vm" -n "$ext" --instance-view -o jsonc || true
+                return 1
+              fi
+              sleep 30
+            done
+
+            echo "Timed out waiting for extension '$ext' on '$vm'"
+            timeout 20s az vm extension show -g "$SQL_RG" --vm-name "$vm" -n "$ext" --instance-view -o jsonc || true
+            return 1
+          }
+
+          wait_extension "$SQL_VM_PRIMARY" "configure-sql-disks"
+          wait_extension "$SQL_VM_SECONDARY" "configure-sql-disks"
+
+      - name: Ensure SQL VMs are running (required for SQL IaaS)
+        if: steps.tf_apply_vms.outputs.exitcode == '0'
+        run: |
+          set -euo pipefail
+
+          wait_running_strict() {
+            local vm="$1"
+            echo "Ensuring VM is running (strict): $vm"
+
+            # Try to start (ignore errors if currently provisioning)
+            timeout 30s az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
+
+            for i in $(seq 1 60); do
+              state="$(timeout 30s az vm get-instance-view -g "$SQL_RG" -n "$vm" \
+                --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
+              ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              echo "[$ts] [$i/60] $vm powerState=${state:-<unknown>}"
+              if [ "$state" = "PowerState/running" ]; then
+                return 0
+              fi
+              sleep 10
+            done
+
+            echo "$vm did not reach PowerState/running in time"
+            timeout 30s az vm get-instance-view -g "$SQL_RG" -n "$vm" -o jsonc 2>/dev/null || true
+            return 1
+          }
+
+          wait_running_strict "$SQL_VM_PRIMARY"
+          wait_running_strict "$SQL_VM_SECONDARY"
+
+      - name: "Terraform Apply (Phase 2: SQL IaaS + remaining resources)"
+        id: tf_apply
+        continue-on-error: true
+        if: ${{ steps.tf_apply_vms.outputs.exitcode == '0' }}
+        run: |
+          set +e
+          log_file="terraform-apply.log"
+          on_term() {
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform apply (phase 2) received termination signal"
+            echo "Last 50 lines of $log_file:"
+            tail -n 50 "$log_file" 2>/dev/null || true
+          }
+          trap on_term SIGINT SIGTERM
+          ( terraform apply -parallelism=1 -auto-approve -var-file=env/dev.tfvars 2>&1 | tee -a "$log_file" ) &
+          pid=$!
+          azure_watch_counter=0
+          while kill -0 "$pid" 2>/dev/null; do
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "[$ts] terraform apply (phase 2) still running..."
+            tail -n 5 "$log_file" 2>/dev/null || true
+            azure_watch_counter=$((azure_watch_counter + 1))
+            if [ $((azure_watch_counter % 5)) -eq 0 ]; then
+              echo "[$ts] Azure status snapshot (every ~10 minutes)"
+              for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+                echo "-- $vm power state --"
+                az vm get-instance-view -g "$SQL_RG" -n "$vm" \
+                  --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
+                echo "-- $vm SQL IaaS provisioningState --"
+                rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+                az resource show --ids "$rid" --query "properties.provisioningState" -o tsv 2>/dev/null || true
+              done
+            fi
+            sleep 120
           done
+          wait "$pid"
+          code=$?
+          echo "Last 30 lines of $log_file:"
+          tail -n 30 "$log_file" 2>/dev/null || true
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload Terraform logs
+        if: ${{ env.UPLOAD_ARTIFACTS == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-sqlserver-logs
+          if-no-files-found: warn
+          retention-days: 3
+          path: |
+            sqlserver/terraform-plan.log
+            sqlserver/terraform-apply.log
+
 
       - name: Diagnostics (extension instance-view)
         if: steps.tf_apply.outputs.exitcode != '0'
@@ -305,6 +652,11 @@ jobs:
             echo "== $vm configure-sql-disks.log (tail) =="
             az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.log' -ErrorAction SilentlyContinue | Select-Object -Last 400 | Out-String" \
+              --query "value[0].message" -o tsv || true
+
+            echo "== $vm enable-alwayson.log (tail) =="
+            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+              --scripts "Get-Content 'C:\\Windows\\Temp\\enable-alwayson.log' -ErrorAction SilentlyContinue | Select-Object -Last 400 | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm CustomScriptExtension status files (tail) =="

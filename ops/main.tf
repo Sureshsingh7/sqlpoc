@@ -5,58 +5,57 @@ locals {
     },
     var.tags
   )
+
+  kv_secrets = merge(
+    {
+      sql_vm_admin = {
+        name         = "sql-vm-admin-password"
+        content_type = "SQL Server VM local admin password (shared for primary and secondary)"
+      }
+    },
+    var.enable_jumpbox ? {
+      jumpbox_admin = {
+        name         = "${var.jumpbox_name}-local-admin"
+        content_type = "Jumpbox local admin password (break-glass)"
+      }
+    } : {}
+  )
+
+  kv_secrets_value = merge(
+    {
+      sql_vm_admin = random_password.sql_vm_admin.result
+    },
+    var.enable_jumpbox ? {
+      jumpbox_admin = random_password.jumpbox[0].result
+    } : {}
+  )
+
+  jumpbox_extensions = {
+    aad_login = {
+      name                       = "AADLoginForWindows"
+      publisher                  = "Microsoft.Azure.ActiveDirectory"
+      type                       = "AADLoginForWindows"
+      type_handler_version       = "1.0"
+      auto_upgrade_minor_version = true
+    }
+  }
+
+  jumpbox_role_assignments = var.manage_role_assignments ? {
+    vm_admin_login = {
+      role_definition_id_or_name = "Virtual Machine Administrator Login"
+      principal_id               = var.suresh_principal_id
+      description                = "Allow AAD admin login via Bastion"
+    }
+  } : {}
 }
 
 data "azurerm_resource_group" "ops" {
   name = var.ops_resource_group_name
 }
 
-resource "azurerm_network_interface" "runner" {
-  name                = "nic-gh-runner"
-  location            = data.azurerm_resource_group.ops.location
-  resource_group_name = data.azurerm_resource_group.ops.name
-
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
-    private_ip_address_allocation = "Dynamic"
-  }
-}
-
-resource "azurerm_linux_virtual_machine" "runner" {
-  name                = "vm-gh-runner"
-  resource_group_name = data.azurerm_resource_group.ops.name
-  location            = data.azurerm_resource_group.ops.location
-  size                = "Standard_B2ms"
-
-  admin_username = var.vm_admin_username
-  network_interface_ids = [
-    azurerm_network_interface.runner.id
-  ]
-
-  admin_ssh_key {
-    username   = var.vm_admin_username
-    public_key = var.ssh_public_key
-  }
-
-  os_disk {
-    caching              = "ReadWrite"
-    storage_account_type = "Standard_LRS"
-  }
-
-  source_image_reference {
-    publisher = "Canonical"
-    offer     = "0001-com-ubuntu-server-jammy"
-    sku       = "22_04-lts"
-    version   = "latest"
-  }
-
-  identity {
-    type = "UserAssigned"
-    identity_ids = [
-      var.terraform_uami_resource_id
-    ]
-  }
+resource "random_password" "sql_vm_admin" {
+  length  = 32
+  special = true
 }
 
 # -----------------------------------------------------------------------------
@@ -69,158 +68,182 @@ resource "random_password" "jumpbox" {
   special = true
 }
 
-resource "azurerm_network_interface" "jumpbox" {
-  count               = var.enable_jumpbox ? 1 : 0
-  name                = "nic-jumpbox"
+# -----------------------------------------------------------------------------
+# Private DNS Zone for Key Vault
+# -----------------------------------------------------------------------------
+module "kv_private_dns" {
+  source  = "Azure/avm-res-network-privatednszone/azurerm"
+  version = "0.4.4"
+
+  domain_name = "privatelink.vaultcore.azure.net"
+  parent_id   = data.azurerm_resource_group.ops.id
+  tags        = local.tags
+
+  virtual_network_links = {
+    ops_vnet = {
+      name               = "link-kv-ops-vnet"
+      virtual_network_id = data.terraform_remote_state.network.outputs.ops_vnet_id
+      autoregistration   = false
+    }
+  }
+}
+
+# -----------------------------------------------------------------------------
+# OPS Key Vault (with private endpoint)
+# -----------------------------------------------------------------------------
+module "ops_kv" {
+  source  = "Azure/avm-res-keyvault-vault/azurerm"
+  version = "0.10.2"
+
+  name                          = "kv-fnz-poc-se"
+  location                      = var.location
+  resource_group_name           = var.ops_resource_group_name
+  tenant_id                     = var.tenant_id
+  sku_name                      = "standard"
+  purge_protection_enabled      = true
+  soft_delete_retention_days    = 30
+  public_network_access_enabled = true
+  network_acls                  = null
+  tags                          = local.tags
+
+  role_assignments = var.manage_role_assignments ? {
+    terraform_secrets_officer = {
+      role_definition_id_or_name = "Key Vault Secrets Officer"
+      principal_id               = var.terraform_uami_principal_id
+    }
+    suresh_secrets_user = {
+      role_definition_id_or_name = "Key Vault Secrets User"
+      principal_id               = var.suresh_principal_id
+    }
+  } : {}
+
+  secrets       = local.kv_secrets
+  secrets_value = local.kv_secrets_value
+
+  private_endpoints = {
+    kv_pep = {
+      name                          = "pep-kv-fnz-poc"
+      subnet_resource_id            = data.terraform_remote_state.network.outputs.pep_subnet_id
+      subresource_name              = "vault"
+      private_dns_zone_resource_ids = [module.kv_private_dns.resource_id]
+    }
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Runner VM (Linux)
+# -----------------------------------------------------------------------------
+module "runner_vm" {
+  source  = "Azure/avm-res-compute-virtualmachine/azurerm"
+  version = "0.20.0"
+
+  name                = "vm-gh-runner"
   location            = data.azurerm_resource_group.ops.location
   resource_group_name = data.azurerm_resource_group.ops.name
+  zone                = null
 
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
-    private_ip_address_allocation = "Dynamic"
+  os_type  = "Linux"
+  sku_size = "Standard_B2ms"
+
+  network_interfaces = {
+    runner_nic = {
+      name = "nic-gh-runner"
+      ip_configurations = {
+        primary = {
+          name                          = "internal"
+          private_ip_address_allocation = "Dynamic"
+          private_ip_subnet_resource_id = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
+          is_primary_ipconfiguration    = true
+        }
+      }
+    }
+  }
+
+  account_credentials = {
+    admin_credentials = {
+      username                           = var.vm_admin_username
+      ssh_keys                           = [var.ssh_public_key]
+      generate_admin_password_or_ssh_key = false
+    }
+    password_authentication_disabled = true
+  }
+
+  source_image_reference = {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts"
+    version   = "latest"
+  }
+
+  managed_identities = {
+    user_assigned_resource_ids = [var.terraform_uami_resource_id]
+  }
+
+  os_disk = {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
   }
 
   tags = local.tags
 }
 
-resource "azurerm_windows_virtual_machine" "jumpbox" {
-  count               = var.enable_jumpbox ? 1 : 0
+# -----------------------------------------------------------------------------
+# Jumpbox VM (Windows)
+# -----------------------------------------------------------------------------
+module "jumpbox_vm" {
+  count   = var.enable_jumpbox ? 1 : 0
+  source  = "Azure/avm-res-compute-virtualmachine/azurerm"
+  version = "0.20.0"
+
   name                = var.jumpbox_name
-  resource_group_name = data.azurerm_resource_group.ops.name
   location            = data.azurerm_resource_group.ops.location
-  size                = var.jumpbox_size
+  resource_group_name = data.azurerm_resource_group.ops.name
+  zone                = null
 
-  admin_username = var.vm_admin_username
-  admin_password = random_password.jumpbox[0].result
+  os_type  = "Windows"
+  sku_size = var.jumpbox_size
 
-  network_interface_ids = [
-    azurerm_network_interface.jumpbox[0].id
-  ]
-
-  os_disk {
-    caching              = "ReadWrite"
-    storage_account_type = "Standard_LRS"
+  network_interfaces = {
+    jumpbox_nic = {
+      name = "nic-jumpbox"
+      ip_configurations = {
+        primary = {
+          name                          = "internal"
+          private_ip_address_allocation = "Dynamic"
+          private_ip_subnet_resource_id = data.terraform_remote_state.network.outputs.ops_subnet_runner_id
+          is_primary_ipconfiguration    = true
+        }
+      }
+    }
   }
 
-  source_image_reference {
+  account_credentials = {
+    admin_credentials = {
+      username                           = var.vm_admin_username
+      password                           = random_password.jumpbox[0].result
+      generate_admin_password_or_ssh_key = false
+    }
+  }
+
+  source_image_reference = {
     publisher = "MicrosoftWindowsServer"
     offer     = "WindowsServer"
     sku       = "2022-datacenter-g2"
     version   = "latest"
   }
 
-  identity {
-    type = "SystemAssigned"
+  managed_identities = {
+    system_assigned = true
+  }
+
+  extensions       = local.jumpbox_extensions
+  role_assignments = local.jumpbox_role_assignments
+
+  os_disk = {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
   }
 
   tags = local.tags
-}
-
-# Store the jumpbox local admin password in the OPS Key Vault for break-glass.
-resource "azurerm_key_vault_secret" "jumpbox_admin_password" {
-  count        = var.enable_jumpbox ? 1 : 0
-  name         = "${var.jumpbox_name}-local-admin"
-  value        = random_password.jumpbox[0].result
-  key_vault_id = azurerm_key_vault.ops.id
-  content_type = "Jumpbox local admin password (break-glass)"
-}
-
-# Enable Azure AD login on Windows so you can sign in via Bastion without needing the local password.
-resource "azurerm_virtual_machine_extension" "jumpbox_aad_login" {
-  count                      = var.enable_jumpbox ? 1 : 0
-  name                       = "AADLoginForWindows"
-  virtual_machine_id         = azurerm_windows_virtual_machine.jumpbox[0].id
-  publisher                  = "Microsoft.Azure.ActiveDirectory"
-  type                       = "AADLoginForWindows"
-  type_handler_version       = "1.0"
-  auto_upgrade_minor_version = true
-}
-
-resource "azurerm_role_assignment" "jumpbox_vm_admin_login" {
-  count                = (var.enable_jumpbox && var.manage_role_assignments) ? 1 : 0
-  scope                = azurerm_windows_virtual_machine.jumpbox[0].id
-  role_definition_name = "Virtual Machine Administrator Login"
-  principal_id         = var.suresh_principal_id
-
-  depends_on = [azurerm_virtual_machine_extension.jumpbox_aad_login]
-}
-
-resource "azurerm_key_vault" "ops" {
-  name                       = "kv-fnz-poc-se"
-  location                   = var.location
-  resource_group_name        = var.ops_resource_group_name
-  tenant_id                  = var.tenant_id
-  sku_name                   = "standard"
-  purge_protection_enabled   = true
-  soft_delete_retention_days = 30
-
-  access_policy {
-    tenant_id = var.tenant_id
-    object_id = var.terraform_uami_principal_id
-
-    secret_permissions = [
-      "Get",
-      "List",
-      "Set",
-      "Delete",
-    ]
-  }
-
-}
-
-resource "azurerm_role_assignment" "kv_tf_secrets_officer" {
-  count                = var.manage_role_assignments ? 1 : 0
-  scope                = azurerm_key_vault.ops.id
-  role_definition_name = "Key Vault Secrets Officer"
-  principal_id         = var.terraform_uami_principal_id
-}
-
-
-resource "azurerm_role_assignment" "kv_suresh_reader" {
-  count                = var.manage_role_assignments ? 1 : 0
-  scope                = azurerm_key_vault.ops.id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = var.suresh_principal_id
-}
-
-# Private DNS Zone for Key Vault
-resource "azurerm_private_dns_zone" "kv" {
-  name                = "privatelink.vaultcore.azure.net"
-  resource_group_name = data.azurerm_resource_group.ops.name
-
-  tags = local.tags
-}
-
-# Link Private DNS Zone for Key Vault to OPS VNet
-resource "azurerm_private_dns_zone_virtual_network_link" "kv_ops_vnet" {
-  name                  = "link-kv-ops-vnet"
-  resource_group_name   = data.azurerm_resource_group.ops.name
-  private_dns_zone_name = azurerm_private_dns_zone.kv.name
-  virtual_network_id    = data.terraform_remote_state.network.outputs.ops_vnet_id
-
-  tags = local.tags
-}
-
-# Private Endpoint for Key Vault
-resource "azurerm_private_endpoint" "kv_pep" {
-  name                = "pep-kv-fnz-poc"
-  location            = data.azurerm_resource_group.ops.location
-  resource_group_name = data.azurerm_resource_group.ops.name
-  subnet_id           = data.terraform_remote_state.network.outputs.pep_subnet_id
-
-  private_service_connection {
-    name                           = "psc-kv-fnz-poc"
-    private_connection_resource_id = azurerm_key_vault.ops.id
-    is_manual_connection           = false
-    subresource_names              = ["vault"]
-  }
-
-  tags = local.tags
-
-  private_dns_zone_group {
-    name                 = "kv-dns-zone-group"
-    private_dns_zone_ids = [azurerm_private_dns_zone.kv.id]
-  }
 }
 

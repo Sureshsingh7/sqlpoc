@@ -3,10 +3,23 @@ variable "subscription_id" {
   description = "Azure Subscription ID"
 }
 
+variable "use_msi" {
+  type        = bool
+  description = "Use managed identity to access remote Terraform state. Set false for local runs."
+  default     = true
+}
+
 variable "disk_setup_sas" {
   type        = string
-  description = "User delegation SAS token (no leading '?') for downloading scripts/disk_setup.ps1 from the TFSTATE storage container"
+  description = "Optional SAS token (no leading '?') for downloading scripts/disk_setup.ps1 from the TFSTATE storage container. Leave empty to use managed identity."
   sensitive   = true
+  default     = ""
+}
+
+variable "manage_disk_setup_extension" {
+  type        = bool
+  description = "Whether Terraform should manage the disk setup CustomScriptExtension. Set to false after disks are configured to avoid repeated extension updates."
+  default     = true
 }
 
 variable "location" {
@@ -46,6 +59,18 @@ variable "sql_admin_username" {
   }
 }
 
+variable "sql_vm_user_assigned_identity_ids" {
+  type        = set(string)
+  description = "User-assigned managed identity resource IDs to attach to each SQL VM (keeps UAMIs from being removed)."
+  default     = []
+}
+
+variable "sql_vm_user_assigned_identity_client_id" {
+  type        = string
+  description = "Client ID of the user-assigned identity to use for CustomScriptExtension managedIdentity (avoids needing read on the UAMI resource)."
+  default     = ""
+}
+
 variable "vm_size" {
   type        = string
   description = "VM size for SQL Server (recommended: Standard_D4s_v4 or larger for production)"
@@ -54,6 +79,18 @@ variable "vm_size" {
     condition     = can(regex("Standard_D[4-9].*|Standard_E[4-9].*", var.vm_size))
     error_message = "VM size must be at least D4s_v4 or E4s_v4 for SQL Server."
   }
+}
+
+variable "cluster_local_admin_username" {
+  type        = string
+  description = "Local user to create on both SQL VMs for workgroup WSFC administration"
+  default     = "clusteradmin"
+}
+
+variable "witness_storage_security_control_tag_value" {
+  type        = string
+  description = "Value for the SecurityControl tag to bypass the org policy that disables Shared Key access on storage accounts"
+  default     = "ignore"
 }
 
 # Storage configuration
@@ -145,8 +182,8 @@ variable "image_sku" {
   description = "Image SKU (enterprise, standard, express, or web)"
   default     = "standard"
   validation {
-    condition     = contains(["enterprise", "standard", "express", "web", "stddev-gen2", "standard-gen2"], var.image_sku)
-    error_message = "Image SKU must be one of: enterprise, standard, express, web, stddev-gen2, standard-gen2."
+    condition     = contains(["enterprise", "standard", "express", "web", "stddev-gen2", "standard-gen2", "enterprise-gen2"], var.image_sku)
+    error_message = "Image SKU must be one of: enterprise, standard, express, web, stddev-gen2, standard-gen2, enterprise-gen2."
   }
 }
 
