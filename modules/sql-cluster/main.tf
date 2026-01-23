@@ -4,6 +4,10 @@ resource "random_string" "witness_suffix" {
   special = false
 }
 
+data "azurerm_resource_group" "this" {
+  name = var.resource_group_name
+}
+
 locals {
   sql_vm_map       = { for idx, name in var.sql_vm_names : name => idx }
   sql_vm_nic_names = [for name in var.sql_vm_names : "nic-${name}"]
@@ -16,7 +20,7 @@ module "witness_blob_dns" {
   version = "0.4.4"
 
   domain_name = "privatelink.blob.core.windows.net"
-  resource_group_name = var.resource_group_name
+  parent_id   = data.azurerm_resource_group.this.id
   tags        = var.tags
 
   virtual_network_links = {
