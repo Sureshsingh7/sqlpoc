@@ -69,3 +69,10 @@ variable "manage_role_assignments" {
   type        = bool
   default     = false
 }
+
+variable "install_ssms_sas" {
+  type        = string
+  description = "SAS token for downloading install_ssms.ps1 from the TFSTATE storage container"
+  sensitive   = true
+  default     = ""
+}
