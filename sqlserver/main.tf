@@ -84,19 +84,25 @@ locals {
   tfstate_storage_account_name = "stfnzpocdj522c"
   tfstate_container_name       = "tfstate"
 
+  # Disk setup script configuration
   disk_setup_blob_name = "scripts/disk_setup.ps1"
   disk_setup_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/${local.disk_setup_blob_name}"
+
+  # If SAS is empty, use managed identity to access the blob.
+  disk_setup_file_uri = var.disk_setup_sas != "" ? "${local.disk_setup_blob_url}?${var.disk_setup_sas}" : local.disk_setup_blob_url
+
+  # Used to force a settings diff so CustomScriptExtension re-runs when the script changes.
+  disk_setup_sha = filesha256("${path.module}/disk_setup.ps1")
 
   # Failover cluster script configuration
   failover_cluster_blob_name = "scripts/create_failover_cluster.ps1"
   failover_cluster_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/${local.failover_cluster_blob_name}"
-  failover_cluster_file_uri  = "${local.failover_cluster_blob_url}?${var.failover_cluster_sas}"
 
-  # The workflow provides a user-delegation SAS without a leading '?'.
-  disk_setup_file_uri = "${local.disk_setup_blob_url}?${var.disk_setup_sas}"
+  # If SAS is empty, use managed identity to access the blob.
+  failover_cluster_file_uri = var.failover_cluster_sas != "" ? "${local.failover_cluster_blob_url}?${var.failover_cluster_sas}" : local.failover_cluster_blob_url
 
   # Used to force a settings diff so CustomScriptExtension re-runs when the script changes.
-  disk_setup_sha = filesha256("${path.module}/disk_setup.ps1")
+  failover_cluster_sha = filesha256("${path.module}/create_failover_cluster.ps1")
 }
 
 
