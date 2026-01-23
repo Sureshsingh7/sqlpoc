@@ -38,7 +38,7 @@ jobs:
 
 
       # If shared-key/SAS auth is disabled, use managed identity for disk_setup.ps1.
-      DISK_SETUP_USE_SAS: "false"
+      DISK_SETUP_USE_SAS: "true"
 
       # GitHub Actions artifact storage is frequently quota-limited in this org.
       # Default to no uploads; logs are already tailed to the console.
@@ -169,12 +169,37 @@ jobs:
             --overwrite true \
             --only-show-errors
 
+          # Upload create_failover_cluster.ps1
+          echo "Uploading create_failover_cluster.ps1 to: ${TFSTATE_SA}/${TFSTATE_CONTAINER}/scripts/create_failover_cluster.ps1"
+          az storage blob upload \
+            --auth-mode login \
+            --account-name "${TFSTATE_SA}" \
+            --container-name "${TFSTATE_CONTAINER}" \
+            --name "scripts/create_failover_cluster.ps1" \
+            --file "create_failover_cluster.ps1" \
+            --overwrite true \
+            --only-show-errors
+
+
           if [ "${DISK_SETUP_USE_SAS}" != "true" ]; then
             echo "DISK_SETUP_USE_SAS=false; using managed identity (no SAS)"
             sas=""
+            failover_sas=""
           elif [ -n "${DISK_SETUP_SAS:-}" ]; then
             echo "Using pre-provided DISK_SETUP_SAS from secrets (stable; avoids extension churn)"
             sas="${DISK_SETUP_SAS}"
+            # Generate SAS for failover cluster script
+            expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
+            failover_sas="$(az storage blob generate-sas \
+              --auth-mode login \
+              --as-user \
+              --account-name "${TFSTATE_SA}" \
+              --container-name "${TFSTATE_CONTAINER}" \
+              --name "scripts/create_failover_cluster.ps1" \
+              --permissions r \
+              --expiry "${expiry}" \
+              --https-only \
+              -o tsv)"
           else
             # Short-lived user delegation SAS (AAD-based, no account keys)
             expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
@@ -188,19 +213,37 @@ jobs:
               --expiry "${expiry}" \
               --https-only \
               -o tsv)"
+            failover_sas="$(az storage blob generate-sas \
+              --auth-mode login \
+              --as-user \
+              --account-name "${TFSTATE_SA}" \
+              --container-name "${TFSTATE_CONTAINER}" \
+              --name "scripts/create_failover_cluster.ps1" \
+              --permissions r \
+              --expiry "${expiry}" \
+              --https-only \
+              -o tsv)"
           fi
 
-          # Mask the SAS so it doesn't appear in later step env dumps.
+          # Mask the SAS tokens so they don't appear in later step env dumps.
           echo "::add-mask::${sas}"
+          echo "::add-mask::${failover_sas}"
 
           if [ "${DISK_SETUP_USE_SAS}" = "true" ] && [ -z "${sas}" ]; then
-            echo "Failed to generate user-delegation SAS (empty output)."
+            echo "Failed to generate user-delegation SAS for disk_setup.ps1 (empty output)."
+            echo "Ensure the runner identity can generate SAS via AAD (often requires Storage Blob Data Contributor + Blob Delegator on the storage account)."
+            exit 1
+          fi
+
+          if [ "${DISK_SETUP_USE_SAS}" = "true" ] && [ -z "${failover_sas}" ]; then
+            echo "Failed to generate user-delegation SAS for create_failover_cluster.ps1 (empty output)."
             echo "Ensure the runner identity can generate SAS via AAD (often requires Storage Blob Data Contributor + Blob Delegator on the storage account)."
             exit 1
           fi
 
           # Export for Terraform (sensitive; avoid echoing the SAS)
           echo "TF_VAR_disk_setup_sas=${sas}" >> "$GITHUB_ENV"
+          echo "TF_VAR_failover_cluster_sas=${failover_sas}" >> "$GITHUB_ENV"
 
       - name: Import existing SQL IaaS resources (if any)
         run: |
@@ -422,7 +465,7 @@ jobs:
 
           # Phase 1 applies only the VM module. This avoids racing SQL IaaS registration
           # against transient VM restarts/deallocations.
-          ( terraform apply -parallelism=1 -auto-approve -var-file=env/dev.tfvars -target=module.sql_vm 2>&1 | tee "$log_file" ) &
+          ( terraform apply -auto-approve -var-file=env/dev.tfvars -target=module.sql_vm 2>&1 | tee "$log_file" ) &
           pid=$!
 
           azure_watch_counter=0

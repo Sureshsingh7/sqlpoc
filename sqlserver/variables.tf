@@ -22,6 +22,12 @@ variable "manage_disk_setup_extension" {
   default     = true
 }
 
+variable "enable_failover_cluster" {
+  type        = bool
+  description = "Whether to run the create_failover_cluster.ps1 script inside the CustomScriptExtension."
+  default     = true
+}
+
 variable "location" {
   type        = string
   description = "Azure region for SQL VM deployment"
@@ -48,6 +54,24 @@ variable "sql_private_ips" {
   default     = ["10.10.0.10", "10.10.0.74"]
 }
 
+variable "sql_vm_ips" {
+  type        = list(string)
+  description = "Static private IP addresses for SQL Server VMs [primary_vm_ip, secondary_vm_ip]"
+  default     = ["10.10.0.10", "10.10.0.74"]
+}
+
+variable "cluster_ips" {
+  type        = list(string)
+  description = "Static IP addresses for the failover cluster [cluster_primary_ip, cluster_secondary_ip]"
+  default     = ["10.10.0.12", "10.10.0.76"]
+}
+
+variable "failover_cluster_sas" {
+  type        = string
+  description = "User delegation SAS token (no leading '?') for downloading scripts/create_failover_cluster.ps1 from the TFSTATE storage container"
+  sensitive   = true
+  default     = ""
+}
 
 variable "sql_admin_username" {
   type        = string

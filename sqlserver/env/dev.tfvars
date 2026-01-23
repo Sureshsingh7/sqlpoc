@@ -9,6 +9,7 @@ sql_resource_group_name = "rg-fnz-poc-sql-se"
 # SQL VM configuration
 sql_vm_names       = ["sql-primary", "sql-secondary"]
 sql_private_ips    = ["10.10.0.10", "10.10.0.74"]
+cluster_ips        = ["10.10.0.11", "10.10.0.75"]
 sql_admin_username = "sqladmin"
 
 # VM sizing
@@ -32,6 +33,7 @@ backup_disk_type    = "Premium_LRS"
 backup_disk_size_gb = 512
 
 manage_disk_setup_extension = false
+enable_failover_cluster     = true
 
 # SQL Server image
 image_publisher = "microsoftsqlserver"
