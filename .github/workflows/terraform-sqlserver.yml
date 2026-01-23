@@ -465,7 +465,7 @@ jobs:
 
           # Phase 1 applies only the VM module. This avoids racing SQL IaaS registration
           # against transient VM restarts/deallocations.
-          ( terraform apply -parallelism=1 -auto-approve -var-file=env/dev.tfvars -target=module.sql_vm 2>&1 | tee "$log_file" ) &
+          ( terraform apply -auto-approve -var-file=env/dev.tfvars -target=module.sql_vm 2>&1 | tee "$log_file" ) &
           pid=$!
 
           azure_watch_counter=0
