@@ -87,36 +87,27 @@ locals {
   disk_setup_blob_name = "scripts/disk_setup.ps1"
   disk_setup_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/${local.disk_setup_blob_name}"
 
-  # If SAS is empty, use managed identity to access the blob.
-  disk_setup_file_uri = var.disk_setup_sas != "" ? "${local.disk_setup_blob_url}?${var.disk_setup_sas}" : local.disk_setup_blob_url
+  # Failover cluster script configuration
+  failover_cluster_blob_name = "scripts/create_failover_cluster.ps1"
+  failover_cluster_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/${local.failover_cluster_blob_name}"
+  failover_cluster_file_uri  = "${local.failover_cluster_blob_url}?${var.failover_cluster_sas}"
+
+  # The workflow provides a user-delegation SAS without a leading '?'.
+  disk_setup_file_uri = "${local.disk_setup_blob_url}?${var.disk_setup_sas}"
 
   # Used to force a settings diff so CustomScriptExtension re-runs when the script changes.
   disk_setup_sha = filesha256("${path.module}/disk_setup.ps1")
-
 }
+
 
 # Locals for naming and organization
 locals {
   sql_vm_count = length(var.sql_vm_names)
-
-  # Calculate subnet parameters for dynamic IP allocation
-  sql1_prefix_length    = tonumber(split("/", data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix)[1])
-  sql2_prefix_length    = tonumber(split("/", data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix)[1])
-  sql1_max_usable_index = pow(2, 32 - local.sql1_prefix_length) - 5
-  sql2_max_usable_index = pow(2, 32 - local.sql2_prefix_length) - 5
-
-  # Dynamic host index allocation (percentage-based for subnet size flexibility)
-  primary_vm_host_index        = max(10, floor(local.sql1_max_usable_index * 0.15))
-  secondary_vm_host_index      = max(10, floor(local.sql2_max_usable_index * 0.15))
-  cluster_primary_host_index   = max(20, floor(local.sql1_max_usable_index * 0.30))
-  cluster_secondary_host_index = max(20, floor(local.sql2_max_usable_index * 0.45))
-
-  # Compute VM and cluster IPs from subnet CIDR blocks
-  primary_vm_ip        = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, local.primary_vm_host_index)
-  secondary_vm_ip      = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, local.secondary_vm_host_index)
-  cluster_primary_ip   = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql1_address_prefix, local.cluster_primary_host_index)
-  cluster_secondary_ip = cidrhost(data.terraform_remote_state.network.outputs.sql_subnet_sql2_address_prefix, local.cluster_secondary_host_index)
-
+  # VM and Cluster IPs from variables
+  primary_vm_ip        = var.sql_vm_ips[0]
+  secondary_vm_ip      = var.sql_vm_ips[1]
+  cluster_primary_ip   = var.cluster_ips[0]
+  cluster_secondary_ip = var.cluster_ips[1]
   tags = merge(
     {
       "project"   = "SQLPOC"
@@ -227,7 +218,7 @@ module "sql_vm" {
 
   extensions = var.manage_disk_setup_extension ? {
     configure_sql_disks = {
-      name                       = "configure-sql-disks"
+      name                       = "configure-sql-disks-failover-cluster"
       publisher                  = "Microsoft.Compute"
       type                       = "CustomScriptExtension"
       type_handler_version       = "1.10"
@@ -236,9 +227,34 @@ module "sql_vm" {
         diskSetupToken = local.disk_setup_sha
       })
       protected_settings = jsonencode({
-        fileUris         = [local.disk_setup_file_uri]
-        commandToExecute = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; $p=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $p){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $p.FullName\""
-        managedIdentity  = var.sql_vm_user_assigned_identity_client_id != "" ? { clientId = var.sql_vm_user_assigned_identity_client_id } : {}
+        fileUris = [local.disk_setup_file_uri, local.failover_cluster_file_uri]
+        commandToExecute = join("", [
+          "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"",
+          "$ErrorActionPreference='Stop'; ",
+          "$root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; ",
+          # Run disk setup script
+          "$diskScript=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; ",
+          "if(-not $diskScript){ throw 'disk_setup.ps1 not found'; }; ",
+          "Write-Host 'Running disk_setup.ps1...'; ",
+          "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $diskScript.FullName; ",
+          # Run failover cluster script (script handles primary/secondary VM logic internally)
+          "$clusterScript=Get-ChildItem -Path $root -Recurse -Filter create_failover_cluster.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; ",
+          "if(-not $clusterScript){ throw 'create_failover_cluster.ps1 not found'; }; ",
+          "Write-Host 'Running create_failover_cluster.ps1...'; ",
+          "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $clusterScript.FullName ",
+          "-VM1PrivateIP '${local.primary_vm_ip}' ",
+          "-VM2PrivateIP '${local.secondary_vm_ip}' ",
+          "-ClusterPrimaryIP '${local.cluster_primary_ip}' ",
+          "-ClusterSecondaryIP '${local.cluster_secondary_ip}' ",
+          "-ClusterName '${var.failover_cluster_name}' ",
+          "-VM1Name '${var.sql_vm_names[0]}' ",
+          "-VM2Name '${var.sql_vm_names[1]}' ",
+          "-ClusterAdminUsername '${var.cluster_local_admin_username}' ",
+          "-ClusterAdminPasswordBase64 '${base64encode(local.sql_vm_admin_password)}'",
+          "-WitnessStorageAccountName '${module.witness_storage.name}' ",
+          "-WitnessStorageKeyBase64 '${base64encode(module.witness_storage.resource.primary_access_key)}'"
+        ])
+        managedIdentity = var.sql_vm_user_assigned_identity_client_id != "" ? { clientId = var.sql_vm_user_assigned_identity_client_id } : {}
       })
     }
   } : {}
