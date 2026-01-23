@@ -38,7 +38,7 @@ jobs:
 
 
       # If shared-key/SAS auth is disabled, use managed identity for disk_setup.ps1.
-      DISK_SETUP_USE_SAS: "false"
+      DISK_SETUP_USE_SAS: "true"
 
       # GitHub Actions artifact storage is frequently quota-limited in this org.
       # Default to no uploads; logs are already tailed to the console.
