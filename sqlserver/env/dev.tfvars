@@ -33,6 +33,7 @@ backup_disk_type    = "Premium_LRS"
 backup_disk_size_gb = 512
 
 manage_disk_setup_extension = true
+enable_failover_cluster     = true
 
 # SQL Server image
 image_publisher = "microsoftsqlserver"

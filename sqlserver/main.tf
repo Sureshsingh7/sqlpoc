@@ -222,39 +222,49 @@ module "sql_vm" {
     } if disk.vm_index == each.value
   }
 
-  extensions = var.manage_disk_setup_extension ? {
-    configure_sql_disks = {
+  extensions = (var.manage_disk_setup_extension || var.enable_failover_cluster) ? {
+    configure_sql_disks_failover_cluster = {
       name                       = "configure-sql-disks-failover-cluster"
       publisher                  = "Microsoft.Compute"
       type                       = "CustomScriptExtension"
       type_handler_version       = "1.10"
       auto_upgrade_minor_version = true
       settings = jsonencode({
-        scriptsToken = "${local.disk_setup_sha}-${local.failover_cluster_sha}"
+        scriptsToken = "${var.manage_disk_setup_extension ? local.disk_setup_sha : "none"}-${var.enable_failover_cluster ? local.failover_cluster_sha : "none"}"
       })
       protected_settings = jsonencode({
-        fileUris = [local.disk_setup_file_uri, local.failover_cluster_file_uri]
+        fileUris = concat(
+          var.manage_disk_setup_extension ? [local.disk_setup_file_uri] : [],
+          var.enable_failover_cluster ? [local.failover_cluster_file_uri] : []
+        )
         commandToExecute = join("", [
           "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"",
           "$ErrorActionPreference='Stop'; ",
           "$root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; ",
-          "$diskScript=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; ",
-          "if(-not $diskScript){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; ",
-          "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $diskScript.FullName; ",
-          "$clusterScript=Get-ChildItem -Path $root -Recurse -Filter create_failover_cluster.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; ",
-          "if(-not $clusterScript){ throw 'create_failover_cluster.ps1 not found in CustomScriptExtension downloads'; }; ",
-          "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $clusterScript.FullName ",
-          "-VM1PrivateIP '${local.primary_vm_ip}' ",
-          "-VM2PrivateIP '${local.secondary_vm_ip}' ",
-          "-ClusterPrimaryIP '${local.cluster_primary_ip}' ",
-          "-ClusterSecondaryIP '${local.cluster_secondary_ip}' ",
-          "-ClusterName '${var.failover_cluster_name}' ",
-          "-VM1Name '${var.sql_vm_names[0]}' ",
-          "-VM2Name '${var.sql_vm_names[1]}' ",
-          "-ClusterAdminUsername '${var.cluster_local_admin_username}' ",
-          "-ClusterAdminPasswordBase64 '${base64encode(local.sql_vm_admin_password)}' ",
-          "-WitnessStorageAccountName '${module.witness_storage.name}' ",
-          "-WitnessStorageKeyBase64 '${base64encode(module.witness_storage.resource.primary_access_key)}'\""
+          # Conditionally run disk_setup.ps1
+          var.manage_disk_setup_extension ? join("", [
+            "$diskScript=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; ",
+            "if(-not $diskScript){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; ",
+            "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $diskScript.FullName; "
+          ]) : "Write-Host 'Skipping disk_setup.ps1 (manage_disk_setup_extension=false)'; ",
+          # Conditionally run create_failover_cluster.ps1
+          var.enable_failover_cluster ? join("", [
+            "$clusterScript=Get-ChildItem -Path $root -Recurse -Filter create_failover_cluster.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; ",
+            "if(-not $clusterScript){ throw 'create_failover_cluster.ps1 not found in CustomScriptExtension downloads'; }; ",
+            "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $clusterScript.FullName ",
+            "-VM1PrivateIP '${local.primary_vm_ip}' ",
+            "-VM2PrivateIP '${local.secondary_vm_ip}' ",
+            "-ClusterPrimaryIP '${local.cluster_primary_ip}' ",
+            "-ClusterSecondaryIP '${local.cluster_secondary_ip}' ",
+            "-ClusterName '${var.failover_cluster_name}' ",
+            "-VM1Name '${var.sql_vm_names[0]}' ",
+            "-VM2Name '${var.sql_vm_names[1]}' ",
+            "-ClusterAdminUsername '${var.cluster_local_admin_username}' ",
+            "-ClusterAdminPasswordBase64 '${base64encode(local.sql_vm_admin_password)}' ",
+            "-WitnessStorageAccountName '${module.witness_storage.name}' ",
+            "-WitnessStorageKeyBase64 '${base64encode(module.witness_storage.resource.primary_access_key)}'; "
+          ]) : "Write-Host 'Skipping create_failover_cluster.ps1 (enable_failover_cluster=false)'; ",
+          "\""
         ])
         managedIdentity = var.sql_vm_user_assigned_identity_client_id != "" ? { clientId = var.sql_vm_user_assigned_identity_client_id } : {}
       })

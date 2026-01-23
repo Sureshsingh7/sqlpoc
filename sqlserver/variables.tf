@@ -22,6 +22,12 @@ variable "manage_disk_setup_extension" {
   default     = true
 }
 
+variable "enable_failover_cluster" {
+  type        = bool
+  description = "Whether to run the create_failover_cluster.ps1 script inside the CustomScriptExtension."
+  default     = true
+}
+
 variable "location" {
   type        = string
   description = "Azure region for SQL VM deployment"
