@@ -40,16 +40,20 @@ output "ops_key_vault_id" {
 }
 
 output "witness_storage_account_name" {
-  value       = module.witness_storage.name
+  value       = module.sql_cluster.witness_storage_account_name
   description = "Storage account name used for WSFC Cloud Witness"
 }
 
-output "cluster_local_admin_username" {
-  value       = var.cluster_local_admin_username
-  description = "Local user that workflows will create on both SQL VMs"
+output "cluster_name" {
+  value       = module.sql_cluster.cluster_name
+  description = "Name of the specified failover cluster"
 }
 
-output "failover_cluster_name" {
-  value       = var.failover_cluster_name
-  description = "Name of the workgroup failover cluster"
+output "cluster_primary_ip" {
+  value       = module.sql_cluster.cluster_primary_ip
 }
+
+output "cluster_secondary_ip" {
+  value       = module.sql_cluster.cluster_secondary_ip
+}
+
