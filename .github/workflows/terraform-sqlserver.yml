@@ -74,42 +74,42 @@ jobs:
           mkdir -p "${TF_PLUGIN_CACHE_DIR}"
           echo "TF_PLUGIN_CACHE_DIR=${TF_PLUGIN_CACHE_DIR}"
 
-      # - name: Ensure SQL VMs are running (best-effort)
-      #   run: |
-      #     set -euo pipefail
+      - name: Ensure SQL VMs are running (best-effort)
+        run: |
+          set -euo pipefail
 
-      #     echo "Microsoft.SqlVirtualMachine RP registrationState:"
-      #     timeout 20s az provider show -n Microsoft.SqlVirtualMachine --query "registrationState" -o tsv 2>/dev/null || true
+          echo "Microsoft.SqlVirtualMachine RP registrationState:"
+          timeout 20s az provider show -n Microsoft.SqlVirtualMachine --query "registrationState" -o tsv 2>/dev/null || true
 
-      #     wait_running() {
-      #       local vm="$1"
-      #       echo "Ensuring VM is running: $vm"
+          wait_running() {
+            local vm="$1"
+            echo "Ensuring VM is running: $vm"
 
-      #       # VM may not exist yet on first deploy; ignore start errors.
-      #       timeout 20s az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
+            # VM may not exist yet on first deploy; ignore start errors.
+            timeout 20s az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
 
-      #       # If it exists, wait until PowerState/running.
-      #       for i in $(seq 1 12); do
-      #         state="$(timeout 20s az vm get-instance-view -g "$SQL_RG" -n "$vm" \
-      #           --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
+            # If it exists, wait until PowerState/running.
+            for i in $(seq 1 12); do
+              state="$(timeout 20s az vm get-instance-view -g "$SQL_RG" -n "$vm" \
+                --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
 
-      #         if [ -z "$state" ]; then
-      #           echo "[$i/30] $vm: not found yet (or no instance-view)"
-      #         else
-      #           echo "[$i/30] $vm: $state"
-      #           if [ "$state" = "PowerState/running" ]; then
-      #             return 0
-      #           fi
-      #         fi
-      #         sleep 10
-      #       done
-      #       # Don't hard-fail here; Terraform can still be creating the VM.
-      #       echo "$vm did not reach PowerState/running within wait window (continuing)"
-      #       return 0
-      #     }
+              if [ -z "$state" ]; then
+                echo "[$i/30] $vm: not found yet (or no instance-view)"
+              else
+                echo "[$i/30] $vm: $state"
+                if [ "$state" = "PowerState/running" ]; then
+                  return 0
+                fi
+              fi
+              sleep 10
+            done
+            # Don't hard-fail here; Terraform can still be creating the VM.
+            echo "$vm did not reach PowerState/running within wait window (continuing)"
+            return 0
+          }
 
-      #     wait_running "$SQL_VM_PRIMARY"
-      #     wait_running "$SQL_VM_SECONDARY"
+          wait_running "$SQL_VM_PRIMARY"
+          wait_running "$SQL_VM_SECONDARY"
 
       # 2️⃣ Force clean workspace
       - name: Ensure clean workspace
