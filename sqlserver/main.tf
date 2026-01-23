@@ -236,7 +236,7 @@ module "sql_vm" {
         fileUris = concat(
           var.manage_disk_setup_extension ? [local.disk_setup_file_uri] : [],
           var.enable_failover_cluster ? [local.failover_cluster_file_uri] : []
-        )
+        ),
         commandToExecute = join("", [
           "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"",
           "$ErrorActionPreference='Stop'; ",
@@ -265,7 +265,7 @@ module "sql_vm" {
             "-WitnessStorageKeyBase64 '${base64encode(module.witness_storage.resource.primary_access_key)}'; "
           ]) : "Write-Host 'Skipping create_failover_cluster.ps1 (enable_failover_cluster=false)'; ",
           "\""
-        ])
+        ]),
         managedIdentity = var.sql_vm_user_assigned_identity_client_id != "" ? { clientId = var.sql_vm_user_assigned_identity_client_id } : {}
       })
     }
