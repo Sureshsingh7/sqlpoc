@@ -160,6 +160,26 @@ function ConfigureVMPrerequisites {
     Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
     Restart-Service WinRM
 
+    LD "Creating specific WinRM Firewall rule for cluster node subnet connectivity"
+    # When nodes are in different subnets (e.g. AZs), the default Public profile WinRM rule limits to LocalSubnet.
+    # We explicitly allow traffic from all cluster node IPs.
+    if ($NodeIPs.Count -gt 0) {
+        $ruleName = "Allow_WinRM_Cluster_Nodes"
+        # Remove existing if present to ensure update
+        Remove-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
+        
+        New-NetFirewallRule -Name $ruleName `
+            -DisplayName "Allow WinRM from Cluster Nodes" `
+            -Direction Inbound `
+            -Action Allow `
+            -Protocol TCP `
+            -LocalPort 5985,5986 `
+            -RemoteAddress $NodeIPs `
+            -Profile Any `
+            -ErrorAction Stop | Out-Null
+        LD "Firewall rule '$ruleName' created for IPs: $($NodeIPs -join ', ')"
+    }
+
     L "VM prerequisites configured"
 }
 
