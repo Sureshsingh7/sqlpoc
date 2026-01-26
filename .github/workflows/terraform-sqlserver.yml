@@ -255,7 +255,7 @@ jobs:
               vm="$SQL_VM_SECONDARY"
             fi
 
-            addr="azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+            addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
             echo "Checking SQL IaaS resource: $rid"
@@ -281,7 +281,7 @@ jobs:
               vm="$SQL_VM_SECONDARY"
             fi
 
-            addr="azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+            addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
             if terraform state show "$addr" >/dev/null 2>&1; then
@@ -313,7 +313,7 @@ jobs:
               vm="$SQL_VM_SECONDARY"
             fi
 
-            addr="module.sql_vm[\"${vm}\"].module.extension[\"configure_sql_disks\"].azurerm_virtual_machine_extension.this"
+            addr="module.sql_cluster.module.sql_vm[\"${vm}\"].module.extension[\"configure_sql_disks\"].azurerm_virtual_machine_extension.this"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.Compute/virtualMachines/${vm}/extensions/configure-sql-disks"
 
             echo "Checking VM extension: $rid"
@@ -337,7 +337,7 @@ jobs:
           if [ "${manage_ext}" = "false" ]; then
             echo "manage_disk_setup_extension=false; removing disk setup extension from state"
             for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
-              addr="module.sql_vm[\"${vm}\"].module.extension[\"configure_sql_disks\"].azurerm_virtual_machine_extension.this"
+              addr="module.sql_cluster.module.sql_vm[\"${vm}\"].module.extension[\"configure_sql_disks\"].azurerm_virtual_machine_extension.this"
               if terraform state show "$addr" >/dev/null 2>&1; then
                 terraform state rm "$addr" || true
               else
@@ -465,7 +465,7 @@ jobs:
 
           # Phase 1 applies only the VM module. This avoids racing SQL IaaS registration
           # against transient VM restarts/deallocations.
-          ( terraform apply -auto-approve -var-file=env/dev.tfvars -target=module.sql_vm 2>&1 | tee "$log_file" ) &
+          ( terraform apply -auto-approve -var-file=env/dev.tfvars -target=module.sql_cluster.module.sql_vm 2>&1 | tee "$log_file" ) &
           pid=$!
 
           azure_watch_counter=0
