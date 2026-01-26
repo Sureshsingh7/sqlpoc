@@ -190,7 +190,6 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
 
   name                = "disk-setup"
   location            = var.location
-  resource_group_name = var.resource_group_name
   virtual_machine_id  = module.sql_vm[each.key].resource_id
 
   source {
@@ -205,7 +204,6 @@ resource "azurerm_virtual_machine_run_command" "failover_cluster" {
 
   name                = "failover-cluster-setup"
   location            = var.location
-  resource_group_name = var.resource_group_name
   virtual_machine_id  = module.sql_vm[each.key].resource_id
   depends_on          = [azurerm_virtual_machine_run_command.disk_setup]
 
