@@ -1,26 +1,4 @@
 
-data "terraform_remote_state" "network" {
-  backend = "azurerm"
-  config = {
-    resource_group_name  = "rg-fnz-poc-tfstate-se"
-    storage_account_name = "stfnzpocdj522c"
-    container_name       = "tfstate"
-    key                  = "sqlpoc.network.tfstate"
-    use_msi              = var.use_msi
-  }
-}
-
-data "terraform_remote_state" "ops" {
-  backend = "azurerm"
-  config = {
-    resource_group_name  = "rg-fnz-poc-tfstate-se"
-    storage_account_name = "stfnzpocdj522c"
-    container_name       = "tfstate"
-    key                  = "sqlpoc.ops.tfstate"
-    use_msi              = var.use_msi
-  }
-}
-
 data "azurerm_key_vault_secret" "sql_vm_admin" {
   name         = "sql-vm-admin-password"
   key_vault_id = data.terraform_remote_state.ops.outputs.ops_key_vault_id

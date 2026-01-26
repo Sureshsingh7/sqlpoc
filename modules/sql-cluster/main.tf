@@ -189,38 +189,26 @@ module "sql_vm" {
         scriptsToken = "${var.manage_disk_setup_extension ? local.disk_setup_sha : "none"}-${var.enable_failover_cluster ? local.failover_cluster_sha : "none"}"
       })
       protected_settings = jsonencode({
-        fileUris = concat(
-          var.manage_disk_setup_extension ? [local.disk_setup_file_uri] : [],
-          var.enable_failover_cluster ? [local.failover_cluster_file_uri] : []
-        ),
         commandToExecute = join("", [
           "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"",
           "$ErrorActionPreference='Stop'; ",
-          "$root='C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension'; ",
-          # Conditionally run disk_setup.ps1
+          # Unpack and run disk_setup.ps1
           var.manage_disk_setup_extension ? join("", [
-            "$diskScript=Get-ChildItem -Path $root -Recurse -Filter disk_setup.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; ",
-            "if(-not $diskScript){ throw 'disk_setup.ps1 not found in CustomScriptExtension downloads'; }; ",
-            "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $diskScript.FullName; "
+            "$diskScriptPath = '$env:TEMP\\disk_setup.ps1'; ",
+            "[IO.File]::WriteAllBytes($diskScriptPath, [Convert]::FromBase64String('${base64encode(file("${path.module}/disk_setup.ps1"))}')); ",
+            "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $diskScriptPath; "
           ]) : "Write-Host 'Skipping disk_setup.ps1 (manage_disk_setup_extension=false)'; ",
-          # Conditionally run create_failover_cluster.ps1
-          # Note: We pass NodeIPs, ClusterIPs, and NodeNames as comma-separated arrays for the PS script to bind to [string[]]
+          # Unpack and run create_failover_cluster.ps1
           var.enable_failover_cluster ? join("", [
-            "$clusterScript=Get-ChildItem -Path $root -Recurse -Filter create_failover_cluster.ps1 -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; ",
-            "if(-not $clusterScript){ throw 'create_failover_cluster.ps1 not found in CustomScriptExtension downloads'; }; ",
-            # Construct SecureString for password to pass to script param [SecureString]
-            "$ss = ConvertTo-SecureString '${base64encode(var.sql_vm_admin_password)}' -AsPlainText -Force; ",
-            "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $clusterScript.FullName ",
+            "$clusterScriptPath = '$env:TEMP\\create_failover_cluster.ps1'; ",
+             "[IO.File]::WriteAllBytes($clusterScriptPath, [Convert]::FromBase64String('${base64encode(file("${path.module}/create_failover_cluster.ps1"))}')); ",
+            # Construct SecureString if needed, but here we just run the file which expects base64 strings or strings
+             "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $clusterScriptPath ",
             "-NodeIPs '${join("','", var.sql_private_ips)}' ",
             "-ClusterIPs '${join("','", var.cluster_ips)}' ",
             "-ClusterName '${var.failover_cluster_name}' ",
             "-NodeNames '${join("','", var.sql_vm_names)}' ",
             "-ClusterAdminUsername '${var.cluster_local_admin_username}' ",
-            # Pass SecureString via BSTR if calling internal functions, but here we call the script file.
-            # Powershell.exe -File parameters are strings. The script expects [SecureString].
-            # When we pass a string to a SecureString param from the command line, PowerShell wraps it.
-            # Our script logic unwraps it then decodes base64.
-            # So we just pass the base64 string.
             "-ClusterAdminPasswordSecure '${base64encode(var.sql_vm_admin_password)}' ",
             "-WitnessStorageAccountName '${module.witness_storage[0].name}' ",
             "-WitnessStorageKeyBase64 '${base64encode(module.witness_storage[0].resource.primary_access_key)}' ",
