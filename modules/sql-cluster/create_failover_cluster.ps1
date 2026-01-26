@@ -34,6 +34,11 @@ $ErrorActionPreference = 'Stop'
 $log = 'C:\Windows\Temp\create-failover-cluster.log'
 $err = 'C:\Windows\Temp\create-failover-cluster.err.txt'
 
+# Handle comma-separated strings for array parameters (workaround for RunCommand passing single strings)
+if ($NodeIPs.Count -eq 1 -and $NodeIPs[0] -like "*,*") { $NodeIPs = $NodeIPs[0] -split "," }
+if ($ClusterIPs.Count -eq 1 -and $ClusterIPs[0] -like "*,*") { $ClusterIPs = $ClusterIPs[0] -split "," }
+if ($NodeNames.Count -eq 1 -and $NodeNames[0] -like "*,*") { $NodeNames = $NodeNames[0] -split "," }
+
 # Decode cluster admin password from base64 (passed as SecureString to suppress warnings/avoid plain text args)
 $ClusterAdminPassword = ""
 if ($ClusterAdminPasswordSecure) {

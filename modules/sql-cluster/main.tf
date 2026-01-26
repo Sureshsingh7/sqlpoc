@@ -178,51 +178,96 @@ module "sql_vm" {
     } if disk.vm_index == each.value
   }
 
-  extensions = (var.manage_disk_setup_extension || var.enable_failover_cluster) ? {
-    configure_sql_disks_failover_cluster = {
-      name                       = "configure-sql-disks-failover-cluster"
-      publisher                  = "Microsoft.Compute"
-      type                       = "CustomScriptExtension"
-      type_handler_version       = "1.10"
-      auto_upgrade_minor_version = true
-      settings = jsonencode({
-        scriptsToken = "${var.manage_disk_setup_extension ? local.disk_setup_sha : "none"}-${var.enable_failover_cluster ? local.failover_cluster_sha : "none"}"
-      })
-      protected_settings = jsonencode({
-        commandToExecute = join("", [
-          "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"",
-          "$ErrorActionPreference='Stop'; ",
-          # Unpack and run disk_setup.ps1
-          var.manage_disk_setup_extension ? join("", [
-            "$diskScriptPath = '$env:TEMP\\disk_setup.ps1'; ",
-            "[IO.File]::WriteAllBytes($diskScriptPath, [Convert]::FromBase64String('${base64encode(file("${path.module}/disk_setup.ps1"))}')); ",
-            "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $diskScriptPath; "
-          ]) : "Write-Host 'Skipping disk_setup.ps1 (manage_disk_setup_extension=false)'; ",
-          # Unpack and run create_failover_cluster.ps1
-          var.enable_failover_cluster ? join("", [
-            "$clusterScriptPath = '$env:TEMP\\create_failover_cluster.ps1'; ",
-             "[IO.File]::WriteAllBytes($clusterScriptPath, [Convert]::FromBase64String('${base64encode(file("${path.module}/create_failover_cluster.ps1"))}')); ",
-            # Construct SecureString if needed, but here we just run the file which expects base64 strings or strings
-             "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $clusterScriptPath ",
-            "-NodeIPs '${join("','", var.sql_private_ips)}' ",
-            "-ClusterIPs '${join("','", var.cluster_ips)}' ",
-            "-ClusterName '${var.failover_cluster_name}' ",
-            "-NodeNames '${join("','", var.sql_vm_names)}' ",
-            "-ClusterAdminUsername '${var.cluster_local_admin_username}' ",
-            "-ClusterAdminPasswordSecure '${base64encode(var.sql_vm_admin_password)}' ",
-            "-WitnessStorageAccountName '${module.witness_storage[0].name}' ",
-            "-WitnessStorageKeyBase64 '${base64encode(module.witness_storage[0].resource.primary_access_key)}' ",
-            (var.primary_cluster_dns != "" ? "-PrimaryClusterDNS '${var.primary_cluster_dns}' " : ""),
-            (var.primary_cluster_ip != "" ? "-PrimaryClusterIP '${var.primary_cluster_ip}' " : ""),
-            "; "
-          ]) : "Write-Host 'Skipping create_failover_cluster.ps1 (enable_failover_cluster=false)'; ",
-          "\""
-        ]),
-        managedIdentity = var.sql_vm_user_assigned_identity_client_id != "" ? { clientId = var.sql_vm_user_assigned_identity_client_id } : {}
-      })
-    }
-  } : {}
+  extensions = {}
 
+
+  tags = var.tags
+}
+
+
+resource "azurerm_virtual_machine_run_command" "disk_setup" {
+  for_each = var.manage_disk_setup_extension ? local.sql_vm_map : {}
+
+  name                = "disk-setup"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  virtual_machine_id  = module.sql_vm[each.key].resource_id
+
+  source {
+    script = file("${path.module}/disk_setup.ps1")
+  }
+
+  tags = var.tags
+}
+
+resource "azurerm_virtual_machine_run_command" "failover_cluster" {
+  for_each = var.enable_failover_cluster ? local.sql_vm_map : {}
+
+  name                = "failover-cluster-setup"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  virtual_machine_id  = module.sql_vm[each.key].resource_id
+  depends_on          = [azurerm_virtual_machine_run_command.disk_setup]
+
+  source {
+    script = file("${path.module}/create_failover_cluster.ps1")
+  }
+
+  protected_parameter {
+    name  = "ClusterAdminPasswordSecure"
+    value = base64encode(var.sql_vm_admin_password)
+  }
+
+  protected_parameter {
+    name  = "WitnessStorageKeyBase64"
+    value = base64encode(module.witness_storage[0].resource.primary_access_key)
+  }
+
+  parameter {
+    name  = "NodeIPs"
+    value = join(",", var.sql_private_ips)
+  }
+  
+  parameter {
+    name  = "ClusterIPs"
+    value = join(",", var.cluster_ips)
+  }
+
+  parameter {
+    name  = "ClusterName"
+    value = var.failover_cluster_name
+  }
+
+  parameter {
+    name  = "NodeNames"
+    value = join(",", var.sql_vm_names)
+  }
+
+  parameter {
+    name  = "ClusterAdminUsername"
+    value = var.cluster_local_admin_username
+  }
+
+  parameter {
+    name  = "WitnessStorageAccountName"
+    value = module.witness_storage[0].name
+  }
+  
+  dynamic "parameter" {
+    for_each = var.primary_cluster_dns != "" ? [1] : []
+    content {
+      name  = "PrimaryClusterDNS"
+      value = var.primary_cluster_dns
+    }
+  }
+
+  dynamic "parameter" {
+    for_each = var.primary_cluster_ip != "" ? [1] : []
+    content {
+      name  = "PrimaryClusterIP"
+      value = var.primary_cluster_ip
+    }
+  }
 
   tags = var.tags
 }
