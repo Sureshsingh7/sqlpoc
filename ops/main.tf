@@ -58,8 +58,7 @@ locals {
         timestamp = local.install_ssms_sha
       })
       protected_settings = jsonencode({
-        fileUris         = [local.install_ssms_file_uri]
-        commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -File install_ssms.ps1"
+        commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -EncodedCommand ${textencodebase64(file("${path.module}/install_ssms.ps1"), "UTF-16LE")}"
       })
     }
   }
