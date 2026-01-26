@@ -46,7 +46,7 @@ jobs:
 
       # Changing managed disk SKUs via the AVM VM module often forces VM replacement.
       # That in turn triggers long SQL IaaS deletes. Fail fast unless explicitly allowed.
-      ALLOW_DISK_SKU_DRIFT: "false"
+      ALLOW_DISK_SKU_DRIFT: "true"
 
     steps:
       # 1️⃣ Checkout FIRST
