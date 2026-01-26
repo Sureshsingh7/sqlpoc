@@ -213,98 +213,92 @@ function ValidateNodeConnectivity {
     L "All nodes are reachable"
 }
 
-function CreateLocalAdminUser {
+function CreateClusterAdminLocal {
     param(
-        [string]$ComputerName,
         [string]$Username,
-        [string]$Password,
-        [bool]$IsLocal = $false
+        [string]$Password
     )
 
-    LD "Creating local admin user '$Username' on $ComputerName (IsLocal=$IsLocal)"
+    L "Creating local cluster admin user '$Username' on $env:COMPUTERNAME"
 
-    if ($IsLocal) {
-        try {
-            $existingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
-            if ($existingUser) {
-                LD "User '$Username' already exists locally"
-            } else {
-                $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-                New-LocalUser -Name $Username -Password $securePassword -FullName "Cluster Admin User" -Description "User for failover cluster operations" -PasswordNeverExpires -ErrorAction Stop
-                L "User '$Username' created locally"
-            }
-
-            $adminGroup = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*\$Username" }
-            if (-not $adminGroup) {
-                Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
-                L "User '$Username' added to Administrators group"
-            } else {
-                LD "User '$Username' already in Administrators group"
-            }
-            return $true
-        } catch {
-            LE "Failed to create local admin user: $_"
-            throw
+    try {
+        $existingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
+        if ($existingUser) {
+            LD "User '$Username' already exists locally"
+            # Update password to ensure it matches
+            $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+            Set-LocalUser -Name $Username -Password $securePassword -ErrorAction Stop
+        } else {
+            $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+            New-LocalUser -Name $Username -Password $securePassword -FullName "Cluster Admin User" -Description "User for failover cluster operations" -PasswordNeverExpires -ErrorAction Stop
+            L "User '$Username' created locally"
         }
-    } else {
-        try {
-            if ([string]::IsNullOrWhiteSpace($ClusterAdminUsername) -or [string]::IsNullOrWhiteSpace($ClusterAdminPassword)) {
-                LW "Cluster admin credentials not provided for remote user creation"
-                return $false
-            }
 
-            $secureAdminPwd = ConvertTo-SecureString $ClusterAdminPassword -AsPlainText -Force
-            $cred = New-Object System.Management.Automation.PSCredential("$ComputerName\$ClusterAdminUsername", $secureAdminPwd)
+        $adminGroup = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*\$Username" }
+        if (-not $adminGroup) {
+            Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
+            L "User '$Username' added to Administrators group"
+        } else {
+            LD "User '$Username' already in Administrators group"
+        }
+        return $true
+    } catch {
+        LE "Failed to create/update local admin user: $_"
+        throw
+    }
+}
 
-            $scriptBlock = {
-                param($Username, $Password)
-                try {
-                    $existingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
-                    if ($existingUser) { return "EXISTS" }
+function WaitForOtherNodes {
+    param(
+        [string[]]$Nodes,
+        [string]$Username,
+        [string]$Password
+    )
 
-                    $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-                    New-LocalUser -Name $Username -Password $securePassword -FullName "Cluster Admin User" -Description "User for failover cluster operations" -PasswordNeverExpires -ErrorAction Stop
-                    Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
-                    return "SUCCESS"
-                } catch {
-                    return "ERROR: $_"
+    $localName = $env:COMPUTERNAME
+    $otherNodes = $Nodes | Where-Object { $_ -ne $localName }
+    
+    if ($otherNodes.Count -eq 0) { return }
+
+    L "Waiting for other nodes to be ready: $($otherNodes -join ', ')"
+    
+    $securePwd = ConvertTo-SecureString $Password -AsPlainText -Force
+    # Note: Using IP for credential target to avoid Kerberos, forcing NTLM with local accounts
+    # But for Invoke-Command, we generally use ComputerName.
+    
+    foreach ($node in $otherNodes) {
+        $ready = $false
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $authErrorLogged = $false
+
+        while ($sw.Elapsed.TotalMinutes -lt 10) {
+            try {
+                # We use the ClusterAdmin credentials to verify the user exists on the remote node and remote remoting is working
+                $cred = New-Object System.Management.Automation.PSCredential("$node\$Username", $securePwd)
+                
+                # Check if we can run a command on the remote node
+                $res = Invoke-Command -ComputerName $node -Credential $cred -ScriptBlock { $env:COMPUTERNAME } -ErrorAction Stop
+                
+                if ($res -eq $node) {
+                    LD "Node $node is ready and accessible with cluster admin credentials"
+                    $ready = $true
+                    break
+                }
+            } catch {
+                if (-not $authErrorLogged) {
+                    LD "Waiting for $node... Last error: $_"
+                    $authErrorLogged = $true # Reduce noise
                 }
             }
-
-            $result = Invoke-Command -ComputerName $ComputerName -Credential $cred -ScriptBlock $scriptBlock -ArgumentList $Username, $Password -ErrorAction Stop
-            LD "Remote user creation on ${ComputerName}: $result"
-            return ($result -match 'SUCCESS|EXISTS')
-        } catch {
-            LW "Failed to create user on ${ComputerName}: $_"
-            return $false
+            Start-Sleep -Seconds 15
         }
-    }
-}
-
-function CreateClusterAdminOnBothVMs {
-    L "Creating cluster admin user on all VMs"
-
-    if ([string]::IsNullOrWhiteSpace($ClusterAdminUsername) -or [string]::IsNullOrWhiteSpace($ClusterAdminPassword)) {
-        LW "Cluster admin credentials not provided, skipping user creation"
-        return $false
-    }
-
-    $currentHostname = $env:COMPUTERNAME
-    $allSuccess = $true
-
-    foreach ($node in $NodeNames) {
-        $isLocal = ($node -eq $currentHostname)
-        LD "Processing node: $node (IsLocal=$isLocal)"
         
-        $result = CreateLocalAdminUser -ComputerName $node -Username $ClusterAdminUsername -Password $ClusterAdminPassword -IsLocal $isLocal
-        if (-not $result) {
-            LE "Failed to create admin user on $node"
-            $allSuccess = $false
+        if (-not $ready) {
+            throw "Timeout waiting for node $node to become accessible with cluster admin credentials."
         }
     }
-
-    return $allSuccess
 }
+
 
 function EnableSqlAlwaysOn {
     L "Enabling SQL Server Always On"
@@ -492,7 +486,11 @@ function Main {
     ConfigureVMPrerequisites
     ConfigureHostsFile
     ValidateNodeConnectivity
-    CreateClusterAdminOnBothVMs
+    
+    if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
+        CreateClusterAdminLocal -Username $ClusterAdminUsername -Password $ClusterAdminPassword
+    }
+
     EnableSqlAlwaysOn
 
     # We designate the first node in NodeNames as the "Primary" which performs clustering
@@ -504,6 +502,9 @@ function Main {
     }
 
     L "Primary node ($primaryNode) - creating cluster"
+    
+    # Wait for secondary node(s) to have their admin user ready
+    WaitForOtherNodes -Nodes $NodeNames -Username $ClusterAdminUsername -Password $ClusterAdminPassword
 
     if (CheckClusterExists -Name $ClusterName) {
         DisplayClusterInfo -Name $ClusterName
