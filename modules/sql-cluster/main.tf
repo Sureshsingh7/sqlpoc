@@ -9,6 +9,7 @@ data "azurerm_resource_group" "this" {
 }
 
 locals {
+  sql_vm_count     = length(var.sql_vm_names)
   sql_vm_map       = { for idx, name in var.sql_vm_names : name => idx }
   sql_vm_nic_names = [for name in var.sql_vm_names : "nic-${name}"]
 }
@@ -79,7 +80,7 @@ locals {
 
   # VM and Cluster IPs from variables
   # Support N nodes: Just reference the variables directly in the module resources
-  
+
   # Disk configuration
   disks_per_vm = [
     { name_suffix = "data-01", disk_size_gb = var.data_disk_size_gb, storage_type = var.data_disk_type, lun = 0 },
@@ -215,10 +216,10 @@ module "sql_vm" {
             "-ClusterName '${var.failover_cluster_name}' ",
             "-NodeNames '${join("','", var.sql_vm_names)}' ",
             "-ClusterAdminUsername '${var.cluster_local_admin_username}' ",
-            # Pass SecureString via BSTR if calling internal functions, but here we call the script file. 
+            # Pass SecureString via BSTR if calling internal functions, but here we call the script file.
             # Powershell.exe -File parameters are strings. The script expects [SecureString].
-            # When we pass a string to a SecureString param from the command line, PowerShell wraps it. 
-            # Our script logic unwraps it then decodes base64. 
+            # When we pass a string to a SecureString param from the command line, PowerShell wraps it.
+            # Our script logic unwraps it then decodes base64.
             # So we just pass the base64 string.
             "-ClusterAdminPasswordSecure '${base64encode(var.sql_vm_admin_password)}' ",
             "-WitnessStorageAccountName '${module.witness_storage[0].name}' ",
