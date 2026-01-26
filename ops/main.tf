@@ -203,6 +203,8 @@ module "runner_vm" {
     user_assigned_resource_ids = [var.terraform_uami_resource_id]
   }
 
+  encryption_at_host_enabled = false
+
   os_disk = {
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
@@ -262,6 +264,7 @@ module "jumpbox_vm" {
 
   extensions       = local.jumpbox_extensions
   role_assignments = local.jumpbox_role_assignments
+  encryption_at_host_enabled = false
 
   os_disk = {
     caching              = "ReadWrite"
