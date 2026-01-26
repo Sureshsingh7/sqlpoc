@@ -263,6 +263,7 @@ function CreateClusterAdminLocal {
 function WaitForOtherNodes {
     param(
         [string[]]$Nodes,
+        [string[]]$NodeIPs,
         [string]$Username,
         [string]$Password
     )
@@ -274,14 +275,24 @@ function WaitForOtherNodes {
 
     L "Waiting for other nodes to be ready: $($otherNodes -join ', ')"
 
+    # Map Names to IPs for connection reliability
+    $nodeIpMap = @{}
+    for ($i = 0; $i -lt $Nodes.Count; $i++) {
+        if ($i -lt $NodeIPs.Count) {
+            $nodeIpMap[$Nodes[$i]] = $NodeIPs[$i]
+        }
+    }
+
     $securePwd = ConvertTo-SecureString $Password -AsPlainText -Force
-    # Note: Using IP for credential target to avoid Kerberos, forcing NTLM with local accounts
-    # But for Invoke-Command, we generally use ComputerName.
 
     foreach ($node in $otherNodes) {
         $ready = $false
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $authErrorLogged = $false
+        $lastError = $null
+        
+        # Use IP if available to avoid DNS/Kerberos issues in workgroup
+        $target = if ($nodeIpMap.ContainsKey($node)) { $nodeIpMap[$node] } else { $node }
+        LD "Checking connectivity to node '$node' via target '$target'"
 
         while ($sw.Elapsed.TotalMinutes -lt 10) {
             try {
@@ -289,7 +300,7 @@ function WaitForOtherNodes {
                 $cred = New-Object System.Management.Automation.PSCredential("$node\$Username", $securePwd)
 
                 # Check if we can run a command on the remote node
-                $res = Invoke-Command -ComputerName $node -Credential $cred -ScriptBlock { $env:COMPUTERNAME } -ErrorAction Stop
+                $res = Invoke-Command -ComputerName $target -Credential $cred -ScriptBlock { $env:COMPUTERNAME } -ErrorAction Stop
 
                 if ($res -eq $node) {
                     LD "Node $node is ready and accessible with cluster admin credentials"
@@ -297,16 +308,19 @@ function WaitForOtherNodes {
                     break
                 }
             } catch {
-                if (-not $authErrorLogged) {
-                    LD "Waiting for $node... Last error: $_"
-                    $authErrorLogged = $true # Reduce noise
+                $lastError = $_
+                # Log periodically to console to aid troubleshooting in Azure
+                if ([int]$sw.Elapsed.TotalSeconds % 60 -lt 15) {
+                     Write-Host "Waiting for $node ($target)... Last error: $($_.Exception.Message)"
                 }
             }
             Start-Sleep -Seconds 15
         }
 
         if (-not $ready) {
-            throw "Timeout waiting for node $node to become accessible with cluster admin credentials."
+            $errMsg = "Timeout waiting for node $node ($target). Last error: $($lastError | Out-String)"
+            LE $errMsg
+            throw $errMsg
         }
     }
 }
@@ -516,7 +530,7 @@ function Main {
     L "Primary node ($primaryNode) - creating cluster"
 
     # Wait for secondary node(s) to have their admin user ready
-    WaitForOtherNodes -Nodes $NodeNames -Username $ClusterAdminUsername -Password $ClusterAdminPassword
+    WaitForOtherNodes -Nodes $NodeNames -NodeIPs $NodeIPs -Username $ClusterAdminUsername -Password $ClusterAdminPassword
 
     if (CheckClusterExists -Name $ClusterName) {
         DisplayClusterInfo -Name $ClusterName
