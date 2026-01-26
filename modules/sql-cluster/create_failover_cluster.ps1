@@ -101,7 +101,7 @@ function ValidateInputs {
             throw "$($param.Key) cannot be empty"
         }
     }
-    
+
     if ($NodeIPs.Count -ne $NodeNames.Count) {
         throw "NodeIPs count ($($NodeIPs.Count)) must match NodeNames count ($($NodeNames.Count))"
     }
@@ -126,7 +126,7 @@ function ConfigureVMPrerequisites {
         $ip = $NodeIPs[$i]
         $name = $NodeNames[$i]
         $entry = "$ip`t$name.$domainName`t$name"
-        
+
         if (-not (Select-String -Path $hostsFile -Pattern $name -Quiet)) {
             LD "Adding hosts entry: $entry"
             Add-Content -Path $hostsFile -Value $entry
@@ -269,15 +269,15 @@ function WaitForOtherNodes {
 
     $localName = $env:COMPUTERNAME
     $otherNodes = $Nodes | Where-Object { $_ -ne $localName }
-    
+
     if ($otherNodes.Count -eq 0) { return }
 
     L "Waiting for other nodes to be ready: $($otherNodes -join ', ')"
-    
+
     $securePwd = ConvertTo-SecureString $Password -AsPlainText -Force
     # Note: Using IP for credential target to avoid Kerberos, forcing NTLM with local accounts
     # But for Invoke-Command, we generally use ComputerName.
-    
+
     foreach ($node in $otherNodes) {
         $ready = $false
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -287,10 +287,10 @@ function WaitForOtherNodes {
             try {
                 # We use the ClusterAdmin credentials to verify the user exists on the remote node and remote remoting is working
                 $cred = New-Object System.Management.Automation.PSCredential("$node\$Username", $securePwd)
-                
+
                 # Check if we can run a command on the remote node
                 $res = Invoke-Command -ComputerName $node -Credential $cred -ScriptBlock { $env:COMPUTERNAME } -ErrorAction Stop
-                
+
                 if ($res -eq $node) {
                     LD "Node $node is ready and accessible with cluster admin credentials"
                     $ready = $true
@@ -304,7 +304,7 @@ function WaitForOtherNodes {
             }
             Start-Sleep -Seconds 15
         }
-        
+
         if (-not $ready) {
             throw "Timeout waiting for node $node to become accessible with cluster admin credentials."
         }
@@ -498,7 +498,7 @@ function Main {
     ConfigureVMPrerequisites
     ConfigureHostsFile
     ValidateNodeConnectivity
-    
+
     if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
         CreateClusterAdminLocal -Username $ClusterAdminUsername -Password $ClusterAdminPassword
     }
@@ -514,7 +514,7 @@ function Main {
     }
 
     L "Primary node ($primaryNode) - creating cluster"
-    
+
     # Wait for secondary node(s) to have their admin user ready
     WaitForOtherNodes -Nodes $NodeNames -Username $ClusterAdminUsername -Password $ClusterAdminPassword
 

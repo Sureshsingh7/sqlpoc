@@ -261,8 +261,8 @@ module "jumpbox_vm" {
     system_assigned = true
   }
 
-  extensions       = local.jumpbox_extensions
-  role_assignments = local.jumpbox_role_assignments
+  extensions                 = local.jumpbox_extensions
+  role_assignments           = local.jumpbox_role_assignments
   encryption_at_host_enabled = false
 
   os_disk = {

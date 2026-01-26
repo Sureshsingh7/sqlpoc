@@ -188,9 +188,9 @@ module "sql_vm" {
 resource "azurerm_virtual_machine_run_command" "disk_setup" {
   for_each = var.manage_disk_setup_extension ? local.sql_vm_map : {}
 
-  name                = "disk-setup"
-  location            = var.location
-  virtual_machine_id  = module.sql_vm[each.key].resource_id
+  name               = "disk-setup"
+  location           = var.location
+  virtual_machine_id = module.sql_vm[each.key].resource_id
 
   source {
     script = file("${path.module}/disk_setup.ps1")
@@ -202,10 +202,10 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
 resource "azurerm_virtual_machine_run_command" "failover_cluster" {
   for_each = var.enable_failover_cluster ? local.sql_vm_map : {}
 
-  name                = "failover-cluster-setup"
-  location            = var.location
-  virtual_machine_id  = module.sql_vm[each.key].resource_id
-  depends_on          = [azurerm_virtual_machine_run_command.disk_setup]
+  name               = "failover-cluster-setup"
+  location           = var.location
+  virtual_machine_id = module.sql_vm[each.key].resource_id
+  depends_on         = [azurerm_virtual_machine_run_command.disk_setup]
 
   source {
     script = file("${path.module}/create_failover_cluster.ps1")
@@ -226,7 +226,7 @@ resource "azurerm_virtual_machine_run_command" "failover_cluster" {
     name  = "NodeIPs"
     value = join(",", var.sql_private_ips)
   }
-  
+
   parameter {
     name  = "ClusterIPs"
     value = join(",", var.cluster_ips)
@@ -251,7 +251,7 @@ resource "azurerm_virtual_machine_run_command" "failover_cluster" {
     name  = "WitnessStorageAccountName"
     value = module.witness_storage[0].name
   }
-  
+
   dynamic "parameter" {
     for_each = var.primary_cluster_dns != "" ? [1] : []
     content {
