@@ -34,9 +34,9 @@ module "witness_blob_dns" {
 }
 
 module "witness_storage" {
-  count                           = var.enable_failover_cluster ? 1 : 0
-  source                          = "Azure/avm-res-storage-storageaccount/azurerm"
-  version                         = "0.6.7"
+  count   = var.enable_failover_cluster ? 1 : 0
+  source  = "Azure/avm-res-storage-storageaccount/azurerm"
+  version = "0.6.7"
 
   name                            = "stsqlw${random_string.witness_suffix.result}"
   resource_group_name             = var.resource_group_name
@@ -70,13 +70,13 @@ locals {
   tfstate_storage_account_name = "stfnzpocdj522c"
   tfstate_container_name       = "tfstate"
 
-  disk_setup_blob_url        = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/scripts/disk_setup.ps1"
-  disk_setup_file_uri        = var.disk_setup_sas != "" ? "${local.disk_setup_blob_url}?${var.disk_setup_sas}" : local.disk_setup_blob_url
-  disk_setup_sha             = filesha256("${path.module}/disk_setup.ps1")
+  disk_setup_blob_url = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/scripts/disk_setup.ps1"
+  disk_setup_file_uri = var.disk_setup_sas != "" ? "${local.disk_setup_blob_url}?${var.disk_setup_sas}" : local.disk_setup_blob_url
+  disk_setup_sha      = filesha256("${path.module}/disk_setup.ps1")
 
-  failover_cluster_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/scripts/create_failover_cluster.ps1"
-  failover_cluster_file_uri  = var.failover_cluster_sas != "" ? "${local.failover_cluster_blob_url}?${var.failover_cluster_sas}" : local.failover_cluster_blob_url
-  failover_cluster_sha       = filesha256("${path.module}/create_failover_cluster.ps1")
+  failover_cluster_blob_url = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/scripts/create_failover_cluster.ps1"
+  failover_cluster_file_uri = var.failover_cluster_sas != "" ? "${local.failover_cluster_blob_url}?${var.failover_cluster_sas}" : local.failover_cluster_blob_url
+  failover_cluster_sha      = filesha256("${path.module}/create_failover_cluster.ps1")
 
   # VM and Cluster IPs from variables
   # Support N nodes: Just reference the variables directly in the module resources

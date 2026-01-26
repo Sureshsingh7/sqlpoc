@@ -50,10 +50,10 @@ output "cluster_name" {
 }
 
 output "cluster_primary_ip" {
-  value       = module.sql_cluster.cluster_primary_ip
+  value = module.sql_cluster.cluster_primary_ip
 }
 
 output "cluster_secondary_ip" {
-  value       = module.sql_cluster.cluster_secondary_ip
+  value = module.sql_cluster.cluster_secondary_ip
 }
 

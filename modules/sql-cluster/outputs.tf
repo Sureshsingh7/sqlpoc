@@ -14,9 +14,9 @@ output "cluster_name" {
 }
 
 output "cluster_primary_ip" {
-  value       = var.cluster_ips[0]
+  value = var.cluster_ips[0]
 }
 
 output "cluster_secondary_ip" {
-  value       = var.cluster_ips[1]
+  value = var.cluster_ips[1]
 }
