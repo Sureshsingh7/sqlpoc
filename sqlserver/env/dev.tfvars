@@ -16,20 +16,20 @@ sql_admin_username = "sqladmin"
 vm_size = "Standard_D4s_v4"
 
 # Storage configuration
-os_disk_type    = "Standard_LRS"
+os_disk_type    = "Premium_LRS"
 os_disk_size_gb = 128
 
-data_disk_type    = "Standard_LRS"
+data_disk_type    = "Premium_LRS"
 data_disk_count   = 1
 data_disk_size_gb = 256
 
-log_disk_type    = "Standard_LRS"
+log_disk_type    = "Premium_LRS"
 log_disk_size_gb = 256
 
-tempdb_disk_type    = "Standard_LRS"
+tempdb_disk_type    = "Premium_LRS"
 tempdb_disk_size_gb = 256
 
-backup_disk_type    = "Standard_LRS"
+backup_disk_type    = "Premium_LRS"
 backup_disk_size_gb = 512
 
 manage_disk_setup_extension = false
