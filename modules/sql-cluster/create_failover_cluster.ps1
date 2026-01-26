@@ -15,7 +15,7 @@ param(
     [string]$ClusterAdminUsername = "clusteradmin",
 
     [Parameter(Mandatory=$false)]
-    [SecureString]$ClusterAdminPasswordSecure,
+    [string]$ClusterAdminPasswordSecure,
 
     [Parameter(Mandatory=$false)]
     [string]$WitnessStorageAccountName = "",
@@ -39,16 +39,14 @@ if ($NodeIPs.Count -eq 1 -and $NodeIPs[0] -like "*,*") { $NodeIPs = $NodeIPs[0] 
 if ($ClusterIPs.Count -eq 1 -and $ClusterIPs[0] -like "*,*") { $ClusterIPs = $ClusterIPs[0] -split "," }
 if ($NodeNames.Count -eq 1 -and $NodeNames[0] -like "*,*") { $NodeNames = $NodeNames[0] -split "," }
 
-# Decode cluster admin password from base64 (passed as SecureString to suppress warnings/avoid plain text args)
+# Decode cluster admin password from base64 (passed as string to suppress warnings/avoid plain text args)
 $ClusterAdminPassword = ""
-if ($ClusterAdminPasswordSecure) {
+if (-not [string]::IsNullOrWhiteSpace($ClusterAdminPasswordSecure)) {
     try {
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ClusterAdminPasswordSecure)
-        $ClusterAdminPasswordBase64 = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-        $ClusterAdminPassword = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ClusterAdminPasswordBase64))
+        $ClusterAdminPassword = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ClusterAdminPasswordSecure))
     } catch {
         # Fallback if not valid base64 or conversion failed
-        $ClusterAdminPassword = $ClusterAdminPasswordBase64
+        $ClusterAdminPassword = $ClusterAdminPasswordSecure
     }
 }
 
