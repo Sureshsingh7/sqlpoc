@@ -148,6 +148,11 @@ function ConfigureVMPrerequisites {
         LD "Failover Clustering already installed"
     }
 
+    LD "Configuring WinRM for Workgroup Auth"
+    Enable-PSRemoting -Force -SkipNetworkProfileCheck -ErrorAction SilentlyContinue | Out-Null
+    Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
+    Restart-Service WinRM
+
     L "VM prerequisites configured"
 }
 
