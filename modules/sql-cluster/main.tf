@@ -211,7 +211,8 @@ resource "azurerm_virtual_machine_run_command" "failover_cluster" {
     script = file("${path.module}/create_failover_cluster.ps1")
   }
 
-  protected_parameter {
+  # Using parameter instead of protected_parameter for password to debug transmission issues
+  parameter {
     name  = "ClusterAdminPasswordSecure"
     value = base64encode(var.sql_vm_admin_password)
   }
