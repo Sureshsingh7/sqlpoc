@@ -106,6 +106,13 @@ function ValidateInputs {
         throw "NodeIPs count ($($NodeIPs.Count)) must match NodeNames count ($($NodeNames.Count))"
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
+        if ([string]::IsNullOrWhiteSpace($ClusterAdminPassword)) {
+             LE "ClusterAdminPassword is empty. Secure parameter length: $(if ($ClusterAdminPasswordSecure) { $ClusterAdminPasswordSecure.Length } else { 'null' })"
+             throw "ClusterAdminUsername ('$ClusterAdminUsername') was provided but ClusterAdminPassword is empty."
+        }
+    }
+
     L "All inputs validated successfully"
 }
 
