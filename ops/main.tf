@@ -6,6 +6,16 @@ locals {
     var.tags
   )
 
+  # Storage constants for script download (copied from sqlserver/main.tf)
+  tfstate_resource_group_name  = "rg-fnz-poc-tfstate-se"
+  tfstate_storage_account_name = "stfnzpocdj522c"
+  tfstate_container_name       = "tfstate"
+
+  install_ssms_blob_name = "scripts/install_ssms.ps1"
+  install_ssms_blob_url  = "https://${local.tfstate_storage_account_name}.blob.core.windows.net/${local.tfstate_container_name}/${local.install_ssms_blob_name}"
+  install_ssms_file_uri  = var.install_ssms_sas != "" ? "${local.install_ssms_blob_url}?${var.install_ssms_sas}" : local.install_ssms_blob_url
+  install_ssms_sha       = filesha256("${path.module}/install_ssms.ps1")
+
   kv_secrets = merge(
     {
       sql_vm_admin = {
@@ -37,6 +47,19 @@ locals {
       type                       = "AADLoginForWindows"
       type_handler_version       = "1.0"
       auto_upgrade_minor_version = true
+    }
+    install_ssms = {
+      name                       = "install_ssms"
+      publisher                  = "Microsoft.Compute"
+      type                       = "CustomScriptExtension"
+      type_handler_version       = "1.10"
+      auto_upgrade_minor_version = true
+      settings = jsonencode({
+        timestamp = local.install_ssms_sha
+      })
+      protected_settings = jsonencode({
+        commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -EncodedCommand ${textencodebase64(file("${path.module}/install_ssms.ps1"), "UTF-16LE")}"
+      })
     }
   }
 
@@ -179,6 +202,8 @@ module "runner_vm" {
     user_assigned_resource_ids = [var.terraform_uami_resource_id]
   }
 
+  encryption_at_host_enabled = false
+
   os_disk = {
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
@@ -236,8 +261,9 @@ module "jumpbox_vm" {
     system_assigned = true
   }
 
-  extensions       = local.jumpbox_extensions
-  role_assignments = local.jumpbox_role_assignments
+  extensions                 = local.jumpbox_extensions
+  role_assignments           = local.jumpbox_role_assignments
+  encryption_at_host_enabled = false
 
   os_disk = {
     caching              = "ReadWrite"

@@ -57,10 +57,51 @@ jobs:
             -backend-config="resource_group_name=${TFSTATE_RG}" \
             -backend-config="storage_account_name=${TFSTATE_SA}" \
             -backend-config="container_name=${TFSTATE_CONTAINER}" \
-            -backend-config="key=${TFSTATE_KEY}"
+            -backend-config="key=${TFSTATE_KEY}" \
+            -backend-config="use_msi=true" \
+            -backend-config="use_azuread_auth=true"
 
       - name: Terraform Validate
         run: terraform validate
+
+      - name: Publish install_ssms.ps1 to TFSTATE + generate SAS
+        env:
+          TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
+          TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
+        run: |
+          set -euo pipefail
+
+          echo "Uploading install_ssms.ps1 to: ${TFSTATE_SA}/${TFSTATE_CONTAINER}/scripts/install_ssms.ps1"
+          az storage blob upload \
+            --auth-mode login \
+            --account-name "${TFSTATE_SA}" \
+            --container-name "${TFSTATE_CONTAINER}" \
+            --name "scripts/install_ssms.ps1" \
+            --file "install_ssms.ps1" \
+            --overwrite true \
+            --only-show-errors
+
+          # User delegation SAS (valid for 6 hours)
+          expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
+          sas="$(az storage blob generate-sas \
+            --auth-mode login \
+            --as-user \
+            --account-name "${TFSTATE_SA}" \
+            --container-name "${TFSTATE_CONTAINER}" \
+            --name "scripts/install_ssms.ps1" \
+            --permissions r \
+            --expiry "${expiry}" \
+            --https-only \
+            -o tsv)"
+
+          echo "::add-mask::${sas}"
+          
+          if [ -z "${sas}" ]; then
+            echo "Failed to generate user-delegation SAS."
+            exit 1
+          fi
+
+          echo "TF_VAR_install_ssms_sas=${sas}" >> "$GITHUB_ENV"
 
       - name: State cleanup (skip RBAC destroys when disabled)
         run: |
