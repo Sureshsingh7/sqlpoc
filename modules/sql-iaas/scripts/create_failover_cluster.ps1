@@ -146,7 +146,10 @@ function WaitForOtherNodes {
     foreach ($node in $otherNodes) {
         $ready = $false
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $target = if ($nodeIpMap.ContainsKey($node)) { $nodeIpMap[$node] } else { $node }
+        $target = $node
+        if ($nodeIpMap.ContainsKey($node)) {
+            $target = $nodeIpMap[$node]
+        }
         
         while ($sw.Elapsed.TotalMinutes -lt 10) {
             try {
