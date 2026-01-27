@@ -37,7 +37,7 @@ variable "subnet_ids" {
 
 variable "availability_zones" {
   description = "For HA deployments: zones to be used. Typically inferred from is_ha. But can be overwritten if the desired SKUs are not available in all zones."
-  type        = list(int)
+  type        = list(number)
   default     = [1, 2, 3]
 }
 
