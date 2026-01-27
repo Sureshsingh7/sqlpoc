@@ -132,19 +132,6 @@ function CreateClusterAdminLocal {
     Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction SilentlyContinue
 }
 
-function EnableSqlAlwaysOn {
-    L "Enabling SQL Server Always On"
-    Import-Module dbatools -Force -ErrorAction SilentlyContinue
-    if (-not (Get-Module dbatools)) {
-        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers -ErrorAction SilentlyContinue
-        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-        Install-Module dbatools -Force -Scope AllUsers -AllowClobber -SkipPublisherCheck
-        Import-Module dbatools -Force
-    }
-    Enable-DbaAgHadr -SqlInstance $env:COMPUTERNAME -Force -Confirm:$false
-    Start-Sleep -Seconds 30
-}
-
 function WaitForOtherNodes {
     param([string[]]$Nodes, [string[]]$NodeIPs, [string]$Username, [string]$Password)
     $localName = $env:COMPUTERNAME
@@ -181,7 +168,6 @@ function WaitForOtherNodes {
 
 function CreateFailoverCluster {
     L "Creating failover cluster '$ClusterName'"
-    # We use a scheduled task to run with the cluster admin credentials proper
     
     $scriptDir = "C:\ClusterSetup"
     New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null
@@ -192,19 +178,28 @@ function CreateFailoverCluster {
     $fullUsername = "$env:COMPUTERNAME\$ClusterAdminUsername"
     $clusterScript = "$scriptDir\cluster-startup.ps1"
     
-    # New-Cluster command adapted for VNN/ILB
-    # -AdministrativeAccessPoint DNS or None?
-    # For ILB, normally we use DNS and the Static Address of the ILB Frontend
-    
+    # -------------------------------------------------------------------------
+    # Script running as ClusterAdmin on Primary Node
+    # -------------------------------------------------------------------------
     @"
 `$log = '$scriptDir\cluster-startup.log'
+`$nodes = @('$($NodeNames -join "','")')
+
+function L([string]`$m){ Add-Content -Path `$log -Value ((Get-Date -Format o) + " " + `$m) }
 
 try {
-    Add-Content -Path `$log -Value "Creating cluster '$ClusterName'"
-    
+    L "Ensuring dbatools..."
+    if (-not (Get-Module dbatools)) {
+         Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers -ErrorAction SilentlyContinue
+         Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+         Install-Module dbatools -Force -Scope AllUsers -AllowClobber -SkipPublisherCheck -ErrorAction SilentlyContinue
+         Import-Module dbatools -Force
+    }
+
+    L "Creating cluster '$ClusterName'"
     `$params = @{
         Name = '$ClusterName'
-        Node = @('$($NodeNames -join "','")')
+        Node = `$nodes
         NoStorage = `$true
         AdministrativeAccessPoint = 'DNS' 
         StaticAddress = '$ClusterIP'
@@ -212,9 +207,37 @@ try {
         ErrorAction = 'Stop'
     }
     
-    `$c = New-Cluster @params
-    "SUCCESS:`$(`$c.Name)" | Out-File '$resultFile' -Force
+    `$existing = Get-Cluster -Name '$ClusterName' -ErrorAction SilentlyContinue
+    if (`$existing) {
+         L "Cluster already exists"
+    } else {
+         `$c = New-Cluster @params
+         L "Cluster created: `$(`$c.Name)"
+    }
+
+    # Enable AlwaysOn on ALL nodes after cluster is formed
+    foreach (`$n in `$nodes) {
+        L "Enabling AlwaysOn on `$n..."
+        try {
+             # Run locally if self, or remote via Invoke-Command if other
+             if (`$n -eq `$env:COMPUTERNAME) {
+                  Enable-DbaAgHadr -SqlInstance localhost -Force -Confirm:`$false
+             } else {
+                  # Since we are ClusterAdmin, and WinRM is open, pass current creds (implicit)
+                  Invoke-Command -ComputerName `$n -ScriptBlock { 
+                       Import-Module dbatools -Force; Enable-DbaAgHadr -SqlInstance localhost -Force -Confirm:`$false 
+                  }
+             }
+             L "AlwaysOn enabled on `$n"
+        } catch {
+             L "Failed to enable AlwaysOn on `$n : `$(`$_.Exception.Message)"
+             throw "Failed enabling AlwaysOn on `$n"
+        }
+    }
+
+    "SUCCESS" | Out-File '$resultFile' -Force
 } catch {
+    L "ERROR: `$(`$_ | Out-String)"
     `$_ | Out-File '$errorFile' -Force
     exit 1
 }
@@ -222,7 +245,12 @@ try {
 
     $taskName = "CreateCluster_Task"
     $futureTime = (Get-Date).AddMinutes(1).ToString("HH:mm")
+    
+    # Passing password safely in batch/cmd usage is tricky with special chars.
+    # We assume password complexity requirements but hopefully no double quotes.
+    # 'schtasks' /rp parameter:
     schtasks /create /tn $taskName /tr "powershell.exe -ExecutionPolicy Bypass -File $clusterScript" /sc once /st $futureTime /ru $fullUsername /rp "$ClusterAdminPassword" /rl highest /f | Out-Null
+    
     schtasks /run /tn $taskName | Out-Null
     
     L "Waiting for cluster creation task..."
@@ -264,11 +292,10 @@ function Main {
         CreateClusterAdminLocal -Username $ClusterAdminUsername -Password $ClusterAdminPassword
     }
 
-    EnableSqlAlwaysOn
-
     $primaryNode = $NodeNames[0]
     if ($env:COMPUTERNAME -ne $primaryNode) {
-        L "Secondary node setup finished"
+        L "Secondary node setup finished (Local Admin created, WinRM ready)"
+        # Secondary waits passively for Primary to add it to cluster and enable AlwaysOn
         return
     }
 
