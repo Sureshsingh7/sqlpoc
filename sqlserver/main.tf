@@ -16,7 +16,7 @@ module "sql_cluster" {
 
   resource_group_name = var.sql_resource_group_name
   location            = var.location
-  name_prefix         = "sqlpoc"
+  name_prefix         = var.sql_name_prefix
 
   is_ha = var.enable_failover_cluster
   is_dr = false

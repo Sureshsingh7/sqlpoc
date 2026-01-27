@@ -260,6 +260,12 @@ variable "tags" {
   default     = {}
 }
 
+variable "sql_name_prefix" {
+  type        = string
+  description = "Prefix used for naming SQL resources (VMs, LB, etc.). Defaults to 'sqlpoc'. Override for HA variants (e.g. 'sqlpoc-ha')."
+  default     = "sqlpoc"
+}
+
 # Cluster configuration variables
 variable "failover_cluster_name" {
   type        = string
