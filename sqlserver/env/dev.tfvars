@@ -44,8 +44,8 @@ tempdb_disk_size_gb = 256
 backup_disk_type    = "Premium_LRS"
 backup_disk_size_gb = 512
 
-manage_disk_setup_extension = false
-enable_failover_cluster     = true
+manage_disk_setup_extension = true
+enable_failover_cluster     = false
 
 # SQL Server image
 image_publisher = "microsoftsqlserver"
