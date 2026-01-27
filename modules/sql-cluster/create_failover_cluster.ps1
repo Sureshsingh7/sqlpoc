@@ -1,49 +1,52 @@
 param(
     [Parameter(Mandatory=$false)]
-    [string]$VM1PrivateIP = "10.10.0.10",
+    [string[]]$NodeIPs = @(),
 
     [Parameter(Mandatory=$false)]
-    [string]$VM2PrivateIP = "10.10.0.74",
-
-    [Parameter(Mandatory=$false)]
-    [string]$ClusterPrimaryIP = "10.10.0.12",
-
-    [Parameter(Mandatory=$false)]
-    [string]$ClusterSecondaryIP = "10.10.0.76",
+    [string[]]$ClusterIPs = @(),
 
     [Parameter(Mandatory=$false)]
     [string]$ClusterName = "sqlpoc-cluster",
 
     [Parameter(Mandatory=$false)]
-    [string]$VM1Name = "sql-mirror-vm1",
-
-    [Parameter(Mandatory=$false)]
-    [string]$VM2Name = "sql-mirror-vm2",
+    [string[]]$NodeNames = @(),
 
     [Parameter(Mandatory=$false)]
     [string]$ClusterAdminUsername = "clusteradmin",
 
     [Parameter(Mandatory=$false)]
-    [string]$ClusterAdminPasswordBase64 = "",
+    [string]$ClusterAdminPasswordSecure,
 
     [Parameter(Mandatory=$false)]
     [string]$WitnessStorageAccountName = "",
 
     [Parameter(Mandatory=$false)]
-    [string]$WitnessStorageKeyBase64 = ""
+    [string]$WitnessStorageKeyBase64 = "",
+
+    [Parameter(Mandatory=$false)]
+    [string]$PrimaryClusterDNS = "",
+
+    [Parameter(Mandatory=$false)]
+    [string]$PrimaryClusterIP = ""
 )
 
 $ErrorActionPreference = 'Stop'
 $log = 'C:\Windows\Temp\create-failover-cluster.log'
 $err = 'C:\Windows\Temp\create-failover-cluster.err.txt'
 
-# Decode cluster admin password from base64 if provided
+# Handle comma-separated strings for array parameters (workaround for RunCommand passing single strings)
+if ($NodeIPs.Count -eq 1 -and $NodeIPs[0] -like "*,*") { $NodeIPs = $NodeIPs[0] -split "," }
+if ($ClusterIPs.Count -eq 1 -and $ClusterIPs[0] -like "*,*") { $ClusterIPs = $ClusterIPs[0] -split "," }
+if ($NodeNames.Count -eq 1 -and $NodeNames[0] -like "*,*") { $NodeNames = $NodeNames[0] -split "," }
+
+# Decode cluster admin password from base64 (passed as string to suppress warnings/avoid plain text args)
 $ClusterAdminPassword = ""
-if (-not [string]::IsNullOrWhiteSpace($ClusterAdminPasswordBase64)) {
+if (-not [string]::IsNullOrWhiteSpace($ClusterAdminPasswordSecure)) {
     try {
-        $ClusterAdminPassword = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ClusterAdminPasswordBase64))
+        $ClusterAdminPassword = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ClusterAdminPasswordSecure))
     } catch {
-        $ClusterAdminPassword = $ClusterAdminPasswordBase64
+        # Fallback if not valid base64 or conversion failed
+        $ClusterAdminPassword = $ClusterAdminPasswordSecure
     }
 }
 
@@ -71,30 +74,45 @@ function LE([string]$m) { Write-Log -Message $m -Level "ERROR" }
 
 # Log script parameters
 LD "ClusterAdminUsername = $ClusterAdminUsername"
-LD "ClusterAdminPasswordBase64 length = $($ClusterAdminPasswordBase64.Length)"
-LD "WitnessStorageAccountName = $WitnessStorageAccountName"
-LD "VM1PrivateIP = $VM1PrivateIP, VM2PrivateIP = $VM2PrivateIP"
-LD "ClusterPrimaryIP = $ClusterPrimaryIP, ClusterSecondaryIP = $ClusterSecondaryIP"
+LD "NodeIPs = $($NodeIPs -join ', ')"
+LD "NodeNames = $($NodeNames -join ', ')"
+LD "ClusterIPs = $($ClusterIPs -join ', ')"
+
+# Log DR parameters if provided
+if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
+    LD "DR Configuration: PrimaryClusterDNS = $PrimaryClusterDNS"
+}
+if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP)) {
+    LD "DR Configuration: PrimaryClusterIP = $PrimaryClusterIP"
+}
 
 function ValidateInputs {
     L "Validating inputs"
     $requiredParams = @{
-        "VM1PrivateIP" = $VM1PrivateIP
-        "VM2PrivateIP" = $VM2PrivateIP
-        "ClusterPrimaryIP" = $ClusterPrimaryIP
-        "ClusterSecondaryIP" = $ClusterSecondaryIP
+        "NodeIPs" = $NodeIPs
+        "ClusterIPs" = $ClusterIPs
         "ClusterName" = $ClusterName
-        "VM1Name" = $VM1Name
-        "VM2Name" = $VM2Name
+        "NodeNames" = $NodeNames
     }
 
     foreach ($param in $requiredParams.GetEnumerator()) {
-        if ([string]::IsNullOrWhiteSpace($param.Value)) {
+        if ($null -eq $param.Value -or ($param.Value -is [Array] -and $param.Value.Count -eq 0) -or ([string]::IsNullOrWhiteSpace($param.Value))) {
             LE "Required parameter '$($param.Key)' is empty"
             throw "$($param.Key) cannot be empty"
         }
-        LD "$($param.Key) = $($param.Value)"
     }
+
+    if ($NodeIPs.Count -ne $NodeNames.Count) {
+        throw "NodeIPs count ($($NodeIPs.Count)) must match NodeNames count ($($NodeNames.Count))"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
+        if ([string]::IsNullOrWhiteSpace($ClusterAdminPassword)) {
+             LE "ClusterAdminPassword is empty. Secure parameter length: $(if ($ClusterAdminPasswordSecure) { $ClusterAdminPasswordSecure.Length } else { 'null' })"
+             throw "ClusterAdminUsername ('$ClusterAdminUsername') was provided but ClusterAdminPassword is empty."
+        }
+    }
+
     L "All inputs validated successfully"
 }
 
@@ -104,12 +122,12 @@ function ConfigureVMPrerequisites {
     $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
     $domainName = "sqlpoc.local"
 
-    @(
-        @{ IP = $VM1PrivateIP; Name = $VM1Name },
-        @{ IP = $VM2PrivateIP; Name = $VM2Name }
-    ) | ForEach-Object {
-        $entry = "$($_.IP)`t$($_.Name).$domainName`t$($_.Name)"
-        if (-not (Select-String -Path $hostsFile -Pattern $_.Name -Quiet)) {
+    for ($i = 0; $i -lt $NodeIPs.Count; $i++) {
+        $ip = $NodeIPs[$i]
+        $name = $NodeNames[$i]
+        $entry = "$ip`t$name.$domainName`t$name"
+
+        if (-not (Select-String -Path $hostsFile -Pattern $name -Quiet)) {
             LD "Adding hosts entry: $entry"
             Add-Content -Path $hostsFile -Value $entry
         }
@@ -135,6 +153,31 @@ function ConfigureVMPrerequisites {
         L "Failover Clustering installed"
     } else {
         LD "Failover Clustering already installed"
+    }
+
+    LD "Configuring WinRM for Workgroup Auth"
+    Enable-PSRemoting -Force -SkipNetworkProfileCheck -ErrorAction SilentlyContinue | Out-Null
+    Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
+    Restart-Service WinRM
+
+    LD "Creating specific WinRM Firewall rule for cluster node subnet connectivity"
+    # When nodes are in different subnets (e.g. AZs), the default Public profile WinRM rule limits to LocalSubnet.
+    # We explicitly allow traffic from all cluster node IPs.
+    if ($NodeIPs.Count -gt 0) {
+        $ruleName = "Allow_WinRM_Cluster_Nodes"
+        # Remove existing if present to ensure update
+        Remove-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
+
+        New-NetFirewallRule -Name $ruleName `
+            -DisplayName "Allow WinRM from Cluster Nodes" `
+            -Direction Inbound `
+            -Action Allow `
+            -Protocol TCP `
+            -LocalPort 5985,5986 `
+            -RemoteAddress $NodeIPs `
+            -Profile Any `
+            -ErrorAction Stop | Out-Null
+        LD "Firewall rule '$ruleName' created for IPs: $($NodeIPs -join ', ')"
     }
 
     L "VM prerequisites configured"
@@ -168,10 +211,20 @@ function ConfigureHostsFile {
     $hostsContent = Get-Content $hostsFile -Raw -ErrorAction SilentlyContinue
     if ($null -eq $hostsContent) { $hostsContent = "" }
 
-    @($ClusterPrimaryIP, $ClusterSecondaryIP) | ForEach-Object {
-        $line = "$_`t$ClusterName"
-        if ($hostsContent -notmatch [regex]::Escape($_)) {
+    # Add cluster IPs to hosts file
+    foreach ($clusterIP in $ClusterIPs) {
+        $line = "$clusterIP`t$ClusterName"
+        if ($hostsContent -notmatch [regex]::Escape($clusterIP)) {
             LD "Adding hosts entry: $line"
+            Add-Content -Path $hostsFile -Value $line -Force
+        }
+    }
+
+    # DR: Add Primary Cluster IP to hosts file if provided
+    if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP) -and -not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
+        $line = "$PrimaryClusterIP`t$PrimaryClusterDNS"
+        if ($hostsContent -notmatch [regex]::Escape($PrimaryClusterIP)) {
+            LD "Adding DR hosts entry: $line"
             Add-Content -Path $hostsFile -Value $line -Force
         }
     }
@@ -182,7 +235,7 @@ function ConfigureHostsFile {
 
 function ValidateNodeConnectivity {
     L "Validating network connectivity"
-    @($VM1Name, $VM2Name) | ForEach-Object {
+    $NodeNames | ForEach-Object {
         if (-not (Test-Connection -ComputerName $_ -Count 1 -Quiet -ErrorAction SilentlyContinue)) {
             LE "Cannot reach node: $_"
             throw "Cannot reach $_"
@@ -192,96 +245,106 @@ function ValidateNodeConnectivity {
     L "All nodes are reachable"
 }
 
-function CreateLocalAdminUser {
+function CreateClusterAdminLocal {
     param(
-        [string]$ComputerName,
         [string]$Username,
-        [string]$Password,
-        [bool]$IsLocal = $false
+        [string]$Password
     )
 
-    LD "Creating local admin user '$Username' on $ComputerName (IsLocal=$IsLocal)"
+    L "Creating local cluster admin user '$Username' on $env:COMPUTERNAME"
 
-    if ($IsLocal) {
-        try {
-            $existingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
-            if ($existingUser) {
-                LD "User '$Username' already exists locally"
-            } else {
-                $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-                New-LocalUser -Name $Username -Password $securePassword -FullName "Cluster Admin User" -Description "User for failover cluster operations" -PasswordNeverExpires -ErrorAction Stop
-                L "User '$Username' created locally"
-            }
-
-            $adminGroup = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*\$Username" }
-            if (-not $adminGroup) {
-                Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
-                L "User '$Username' added to Administrators group"
-            } else {
-                LD "User '$Username' already in Administrators group"
-            }
-            return $true
-        } catch {
-            LE "Failed to create local admin user: $_"
-            throw
+    try {
+        $existingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
+        if ($existingUser) {
+            LD "User '$Username' already exists locally"
+            # Update password to ensure it matches
+            $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+            Set-LocalUser -Name $Username -Password $securePassword -ErrorAction Stop
+        } else {
+            $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+            New-LocalUser -Name $Username -Password $securePassword -FullName "Cluster Admin User" -Description "User for failover cluster operations" -PasswordNeverExpires -ErrorAction Stop
+            L "User '$Username' created locally"
         }
-    } else {
-        try {
-            if ([string]::IsNullOrWhiteSpace($ClusterAdminUsername) -or [string]::IsNullOrWhiteSpace($ClusterAdminPassword)) {
-                LW "Cluster admin credentials not provided for remote user creation"
-                return $false
-            }
 
-            $secureAdminPwd = ConvertTo-SecureString $ClusterAdminPassword -AsPlainText -Force
-            $cred = New-Object System.Management.Automation.PSCredential("$ComputerName\$ClusterAdminUsername", $secureAdminPwd)
+        $adminGroup = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*\$Username" }
+        if (-not $adminGroup) {
+            Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
+            L "User '$Username' added to Administrators group"
+        } else {
+            LD "User '$Username' already in Administrators group"
+        }
+        return $true
+    } catch {
+        LE "Failed to create/update local admin user: $_"
+        throw
+    }
+}
 
-            $scriptBlock = {
-                param($Username, $Password)
-                try {
-                    $existingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
-                    if ($existingUser) { return "EXISTS" }
+function WaitForOtherNodes {
+    param(
+        [string[]]$Nodes,
+        [string[]]$NodeIPs,
+        [string]$Username,
+        [string]$Password
+    )
 
-                    $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-                    New-LocalUser -Name $Username -Password $securePassword -FullName "Cluster Admin User" -Description "User for failover cluster operations" -PasswordNeverExpires -ErrorAction Stop
-                    Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
-                    return "SUCCESS"
-                } catch {
-                    return "ERROR: $_"
+    $localName = $env:COMPUTERNAME
+    $otherNodes = $Nodes | Where-Object { $_ -ne $localName }
+
+    if ($otherNodes.Count -eq 0) { return }
+
+    L "Waiting for other nodes to be ready: $($otherNodes -join ', ')"
+
+    # Map Names to IPs for connection reliability
+    $nodeIpMap = @{}
+    for ($i = 0; $i -lt $Nodes.Count; $i++) {
+        if ($i -lt $NodeIPs.Count) {
+            $nodeIpMap[$Nodes[$i]] = $NodeIPs[$i]
+        }
+    }
+
+    $securePwd = ConvertTo-SecureString $Password -AsPlainText -Force
+
+    foreach ($node in $otherNodes) {
+        $ready = $false
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $lastError = $null
+
+        # Use IP if available to avoid DNS/Kerberos issues in workgroup
+        $target = if ($nodeIpMap.ContainsKey($node)) { $nodeIpMap[$node] } else { $node }
+        LD "Checking connectivity to node '$node' via target '$target'"
+
+        while ($sw.Elapsed.TotalMinutes -lt 10) {
+            try {
+                # We use the ClusterAdmin credentials to verify the user exists on the remote node and remote remoting is working
+                $cred = New-Object System.Management.Automation.PSCredential("$node\$Username", $securePwd)
+
+                # Check if we can run a command on the remote node
+                $res = Invoke-Command -ComputerName $target -Credential $cred -ScriptBlock { $env:COMPUTERNAME } -ErrorAction Stop
+
+                if ($res -eq $node) {
+                    LD "Node $node is ready and accessible with cluster admin credentials"
+                    $ready = $true
+                    break
+                }
+            } catch {
+                $lastError = $_
+                # Log periodically to console to aid troubleshooting in Azure
+                if ([int]$sw.Elapsed.TotalSeconds % 60 -lt 15) {
+                     Write-Host "Waiting for $node ($target)... Last error: $($_.Exception.Message)"
                 }
             }
+            Start-Sleep -Seconds 15
+        }
 
-            $result = Invoke-Command -ComputerName $ComputerName -Credential $cred -ScriptBlock $scriptBlock -ArgumentList $Username, $Password -ErrorAction Stop
-            LD "Remote user creation on ${ComputerName}: $result"
-            return ($result -match 'SUCCESS|EXISTS')
-        } catch {
-            LW "Failed to create user on ${ComputerName}: $_"
-            return $false
+        if (-not $ready) {
+            $errMsg = "Timeout waiting for node $node ($target). Last error: $($lastError | Out-String)"
+            LE $errMsg
+            throw $errMsg
         }
     }
 }
 
-function CreateClusterAdminOnBothVMs {
-    L "Creating cluster admin user on both VMs"
-
-    if ([string]::IsNullOrWhiteSpace($ClusterAdminUsername) -or [string]::IsNullOrWhiteSpace($ClusterAdminPassword)) {
-        LW "Cluster admin credentials not provided, skipping user creation"
-        return $false
-    }
-
-    $currentHostname = $env:COMPUTERNAME
-    $localVMName = if ($currentHostname -eq $VM1Name) { $VM1Name } elseif ($currentHostname -eq $VM2Name) { $VM2Name } else { $currentHostname }
-    $remoteVMName = if ($currentHostname -eq $VM1Name) { $VM2Name } else { $VM1Name }
-
-    LD "Current=$currentHostname, Local=$localVMName, Remote=$remoteVMName"
-
-    $localResult = CreateLocalAdminUser -ComputerName $localVMName -Username $ClusterAdminUsername -Password $ClusterAdminPassword -IsLocal $true
-    $remoteResult = CreateLocalAdminUser -ComputerName $remoteVMName -Username $ClusterAdminUsername -Password $ClusterAdminPassword -IsLocal $false
-
-    if ($localResult) { L "Cluster admin user ready on local VM" }
-    if ($remoteResult) { L "Cluster admin user ready on remote VM" }
-
-    return ($localResult -and $remoteResult)
-}
 
 function EnableSqlAlwaysOn {
     L "Enabling SQL Server Always On"
@@ -342,8 +405,8 @@ try {
         exit 0
     }
 
-    Add-Content -Path `$log -Value "Creating cluster '$ClusterName' with nodes '$VM1Name','$VM2Name'..."
-    `$c = New-Cluster -Name '$ClusterName' -Node @('$VM1Name','$VM2Name') -AdministrativeAccessPoint DNS -StaticAddress @('$ClusterPrimaryIP','$ClusterSecondaryIP') -NoStorage -Force -ErrorAction Stop
+    Add-Content -Path `$log -Value "Creating cluster '$ClusterName' with nodes '$($NodeNames -join "','")'..."
+    `$c = New-Cluster -Name '$ClusterName' -Node @('$($NodeNames -join "','")') -AdministrativeAccessPoint DNS -StaticAddress @('$($ClusterIPs -join "','")') -NoStorage -Force -ErrorAction Stop
     Add-Content -Path `$log -Value "SUCCESS: Cluster `$(`$c.Name) created"
     "SUCCESS:`$(`$c.Name)" | Out-File '$resultFile' -Force
 } catch {
@@ -463,24 +526,35 @@ function ConfigureCloudWitness {
 
 function Main {
     L "========== Failover Cluster Setup =========="
-    L "Host: $env:COMPUTERNAME | Primary: $VM1Name | Cluster: $ClusterName"
+    L "Host: $env:COMPUTERNAME | Cluster: $ClusterName"
 
     ValidateInputs
     ConfigureVMPrerequisites
     ConfigureHostsFile
     ValidateNodeConnectivity
-    CreateClusterAdminOnBothVMs
+
+    if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
+        CreateClusterAdminLocal -Username $ClusterAdminUsername -Password $ClusterAdminPassword
+    }
+
     EnableSqlAlwaysOn
 
-    if ($env:COMPUTERNAME -ne $VM1Name) {
-        L "Secondary VM setup completed"
+    # We designate the first node in NodeNames as the "Primary" which performs clustering
+    $primaryNode = $NodeNames[0]
+
+    if ($env:COMPUTERNAME -ne $primaryNode) {
+        L "Secondary node setup completed"
         return
     }
 
-    L "Primary VM - creating cluster"
+    L "Primary node ($primaryNode) - creating cluster"
+
+    # Wait for secondary node(s) to have their admin user ready
+    WaitForOtherNodes -Nodes $NodeNames -NodeIPs $NodeIPs -Username $ClusterAdminUsername -Password $ClusterAdminPassword
 
     if (CheckClusterExists -Name $ClusterName) {
         DisplayClusterInfo -Name $ClusterName
+        # Even if exists, we might need to do DR config tasks here in the future
         return
     }
 
