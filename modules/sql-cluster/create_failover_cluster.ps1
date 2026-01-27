@@ -167,7 +167,7 @@ function ConfigureVMPrerequisites {
         $ruleName = "Allow_WinRM_Cluster_Nodes"
         # Remove existing if present to ensure update
         Remove-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
-        
+
         New-NetFirewallRule -Name $ruleName `
             -DisplayName "Allow WinRM from Cluster Nodes" `
             -Direction Inbound `
@@ -309,7 +309,7 @@ function WaitForOtherNodes {
         $ready = $false
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $lastError = $null
-        
+
         # Use IP if available to avoid DNS/Kerberos issues in workgroup
         $target = if ($nodeIpMap.ContainsKey($node)) { $nodeIpMap[$node] } else { $node }
         LD "Checking connectivity to node '$node' via target '$target'"
