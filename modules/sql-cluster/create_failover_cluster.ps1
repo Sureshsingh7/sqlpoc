@@ -311,7 +311,10 @@ function WaitForOtherNodes {
         $lastError = $null
 
         # Use IP if available to avoid DNS/Kerberos issues in workgroup
-        $target = if ($nodeIpMap.ContainsKey($node)) { $nodeIpMap[$node] } else { $node }
+        $target = $node
+        if ($nodeIpMap.ContainsKey($node)) {
+            $target = $nodeIpMap[$node]
+        }
         LD "Checking connectivity to node '$node' via target '$target'"
 
         while ($sw.Elapsed.TotalMinutes -lt 10) {
