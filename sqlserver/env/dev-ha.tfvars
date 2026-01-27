@@ -56,7 +56,7 @@ failover_cluster_name = "sqlpoc-ha-cl"
 
 # SQL Server image
 image_publisher = "microsoftsqlserver"
-image_offer     = "sql2022-ws2022"
+image_offer     = "sql2025-ws2025"
 image_sku       = "enterprise-gen2"
 image_version   = "latest"
 

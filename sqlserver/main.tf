@@ -24,8 +24,7 @@ module "sql_cluster" {
   vm_sku = var.vm_size
 
   subnet_ids = [
-    data.terraform_remote_state.network.outputs.sql_subnet_sql1_id,
-    data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
+    data.terraform_remote_state.network.outputs.sql_subnet_sql1_id
   ]
   vnet_id = data.terraform_remote_state.network.outputs.sql_vnet_id
 
