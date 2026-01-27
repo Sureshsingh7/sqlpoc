@@ -29,18 +29,18 @@ module "sql_cluster" {
   ]
   vnet_id = data.terraform_remote_state.network.outputs.sql_vnet_id
 
-  sql_admin_username             = var.sql_admin_username
-  sql_vm_admin_password          = local.sql_vm_admin_password
-  cluster_local_admin_username   = var.cluster_local_admin_username
-  user_assigned_identity_ids     = var.sql_vm_user_assigned_identity_ids
+  sql_admin_username           = var.sql_admin_username
+  sql_vm_admin_password        = local.sql_vm_admin_password
+  cluster_local_admin_username = var.cluster_local_admin_username
+  user_assigned_identity_ids   = var.sql_vm_user_assigned_identity_ids
 
   # Disk configuration
-  data_disk_size_gb     = var.data_disk_size_gb
-  data_disk_type        = var.data_disk_type
-  log_disk_size_gb      = var.log_disk_size_gb
-  log_disk_type         = var.log_disk_type
-  tempdb_disk_size_gb   = var.tempdb_disk_size_gb
-  tempdb_disk_type      = var.tempdb_disk_type
+  data_disk_size_gb   = var.data_disk_size_gb
+  data_disk_type      = var.data_disk_type
+  log_disk_size_gb    = var.log_disk_size_gb
+  log_disk_type       = var.log_disk_type
+  tempdb_disk_size_gb = var.tempdb_disk_size_gb
+  tempdb_disk_type    = var.tempdb_disk_type
 
   # Image configuration
   image_publisher = var.image_publisher

@@ -12,7 +12,7 @@ locals {
   # Determine VM names and count based on HA/DR flags
   is_ha_dr_deployment = var.is_ha
   vm_count            = local.is_ha_dr_deployment ? 2 : 1
-  
+
   # Naming convention: {prefix}-sql-{01,02}
   # For DR, we might want to continue the sequence or use a suffix? 
   # Assuming unique name_prefix per deployment:
@@ -102,7 +102,7 @@ module "sql_vm" {
   name                = each.key
   location            = var.location
   resource_group_name = var.resource_group_name
-  
+
   # Distribute across zones if provided, otherwise null (let Azure decide or single zone)
   zone = length(var.availability_zones) > 0 ? var.availability_zones[each.value % length(var.availability_zones)] : null
 
@@ -195,7 +195,7 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
     maintenance_window_starting_hour       = 2
   }
 
-  tags = var.tags
+  tags       = var.tags
   depends_on = [module.sql_vm]
 }
 
@@ -332,7 +332,7 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
     name  = "NodeNames"
     value = join(",", values(module.sql_vm)[*].name)
   }
-  
+
   parameter {
     name  = "ClusterName"
     value = var.failover_cluster_name
@@ -347,9 +347,9 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
     name  = "WitnessStorageAccountName"
     value = module.witness_storage[0].name
   }
-  
+
   parameter {
-    name = "ClusterIP"
+    name  = "ClusterIP"
     value = azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
   }
 
