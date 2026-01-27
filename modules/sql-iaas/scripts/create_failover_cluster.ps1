@@ -234,13 +234,33 @@ function ConfigureHostsFile {
 }
 
 function ValidateNodeConnectivity {
-    L "Validating network connectivity"
-    $NodeNames | ForEach-Object {
-        if (-not (Test-Connection -ComputerName $_ -Count 1 -Quiet -ErrorAction SilentlyContinue)) {
-            LE "Cannot reach node: $_"
-            throw "Cannot reach $_"
+    L "Validating network connectivity (waiting for other nodes to be up and firewall rules applied)"
+    
+    # Wait up to 20 minutes for checks to pass
+    $timeout = New-TimeSpan -Minutes 20
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    foreach ($node in $NodeNames) {
+        if ($node -eq $env:COMPUTERNAME) { continue }
+
+        $connected = $false
+        while ($sw.Elapsed -lt $timeout) {
+            if (Test-Connection -ComputerName $node -Count 1 -Quiet -ErrorAction SilentlyContinue) {
+                LD "Node $node is reachable (ICMP)"
+                $connected = $true
+                break
+            }
+            
+            if ($sw.Elapsed.Seconds % 30 -eq 0) {
+                 LD "Waiting for node $node to be reachable (ICMP)... ($([math]::Round($sw.Elapsed.TotalSeconds))s elapsed)"
+            }
+            Start-Sleep -Seconds 5
         }
-        LD "Node $_ is reachable"
+
+        if (-not $connected) {
+            LE "Timeout waiting for ping response from node: $node"
+            throw "Cannot reach node: $node (ICMP timeout)"
+        }
     }
     L "All nodes are reachable"
 }
