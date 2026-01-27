@@ -6,13 +6,25 @@ subscription_id         = "51595cc9-4191-4785-a757-15e45165d2a4"
 location                = "swedencentral"
 sql_resource_group_name = "rg-fnz-poc-sql-se"
 
-# SQL VM configuration
-sql_vm_names       = ["sql-primary", "sql-secondary"]
-sql_private_ips    = ["10.10.0.10", "10.10.0.74"]
-cluster_ips        = ["10.10.0.11", "10.10.0.75"]
+# SQL VM configuration (map of objects)
+sql_vms = {
+  "sql-primary" = {
+    private_ip        = "10.10.0.10"
+    subnet_id         = "primary"
+    availability_zone = "1"
+    cluster_ip        = "10.10.0.11"
+  }
+  "sql-secondary" = {
+    private_ip        = "10.10.0.74"
+    subnet_id         = "secondary"
+    availability_zone = "2"
+    cluster_ip        = "10.10.0.75"
+  }
+}
+
 sql_admin_username = "sqladmin"
 
-# VM sizing
+# VM sizing (default for all VMs, can be overridden per-VM in sql_vms)
 vm_size = "Standard_D4s_v4"
 
 # Storage configuration

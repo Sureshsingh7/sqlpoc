@@ -36,11 +36,9 @@ module "sql_cluster" {
   disk_setup_sas       = var.disk_setup_sas
   failover_cluster_sas = var.failover_cluster_sas
 
-  sql_vm_names       = var.sql_vm_names
-  sql_private_ips    = var.sql_private_ips
-  cluster_ips        = var.cluster_ips
-  availability_zones = var.availability_zones
-  tags               = var.tags
+  # VM Configuration (map of objects)
+  sql_vms = var.sql_vms
+  tags    = var.tags
 
   # Storage Config
   os_disk_type                               = var.os_disk_type
