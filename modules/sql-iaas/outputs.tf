@@ -10,7 +10,7 @@ output "sql_vm_names" {
 
 output "sql_vm_ips" {
   description = "Private IPs of the SQL VMs."
-  value       = { for k, v in module.sql_vm : k => v.private_ip_address }
+  value       = { for k, v in module.sql_vm : k => v.virtual_machine_azurerm.private_ip_address }
 }
 
 output "load_balancer_ip" {
