@@ -77,8 +77,8 @@ jobs:
             echo "Configuring for HA (Dual VM)"
             echo "TF_VAR_FILE=env/dev-ha.tfvars" >> $GITHUB_ENV
             echo "IS_HA=true" >> $GITHUB_ENV
-            echo "SQL_VM_PRIMARY=sqlpoc-ha-sql-01" >> $GITHUB_ENV
-            echo "SQL_VM_SECONDARY=sqlpoc-ha-sql-02" >> $GITHUB_ENV
+            echo "SQL_VM_PRIMARY=poc-ha-sql-01" >> $GITHUB_ENV
+            echo "SQL_VM_SECONDARY=poc-ha-sql-02" >> $GITHUB_ENV
           else
             echo "Configuring for Mono (Single VM)"
             echo "TF_VAR_FILE=env/dev.tfvars" >> $GITHUB_ENV

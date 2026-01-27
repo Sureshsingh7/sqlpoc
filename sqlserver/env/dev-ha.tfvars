@@ -7,18 +7,18 @@ location                = "swedencentral"
 sql_resource_group_name = "rg-fnz-poc-sql-se"
 
 # Naming Prefix with 'ha'
-sql_name_prefix = "sqlpoc-ha"
+sql_name_prefix = "poc-ha"
 
 # SQL VM configuration (map of objects)
 # Note: For HA deployment, define primary and secondary.
 sql_vms = {
-  "sqlpoc-ha-sql-01" = {
+  "poc-ha-sql-01" = {
     private_ip        = "10.10.0.10"
     subnet_id         = "primary"
     availability_zone = "1"
     cluster_ip        = "10.10.0.12"
   },
-  "sqlpoc-ha-sql-02" = {
+  "poc-ha-sql-02" = {
     private_ip        = "10.10.0.11"
     subnet_id         = "primary"
     availability_zone = "2"
