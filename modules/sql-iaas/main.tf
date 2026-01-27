@@ -109,6 +109,11 @@ module "sql_vm" {
   os_type  = "Windows"
   sku_size = var.vm_sku
 
+  managed_identities = {
+    system_assigned            = false
+    user_assigned_resource_ids = toset(var.user_assigned_identity_ids)
+  }
+
   patch_assessment_mode                                  = "AutomaticByPlatform"
   patch_mode                                             = "AutomaticByPlatform"
   bypass_platform_safety_checks_on_user_schedule_enabled = true
@@ -122,7 +127,7 @@ module "sql_vm" {
         primary = {
           name                          = "internal"
           private_ip_address_allocation = "Dynamic"
-          private_ip_subnet_resource_id = var.subnet_ids[0]
+          private_ip_subnet_resource_id = var.subnet_ids[each.value % length(var.subnet_ids)]
           is_primary_ipconfiguration    = true
         }
       }

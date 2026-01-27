@@ -22,3 +22,9 @@ output "cluster_name" {
   description = "Name of the Failover Cluster."
   value       = var.failover_cluster_name
 }
+
+output "witness_storage_account_name" {
+  description = "Name of the Witness Storage Account."
+  value       = var.is_ha ? module.witness_storage[0].name : null
+}
+

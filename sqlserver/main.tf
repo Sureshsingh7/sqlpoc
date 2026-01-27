@@ -12,56 +12,44 @@ locals {
 }
 
 module "sql_cluster" {
-  source = "../modules/sql-cluster"
+  source = "../modules/sql-iaas"
 
-  resource_group_name         = var.sql_resource_group_name
-  location                    = var.location
-  vm_size                     = var.vm_size
-  enable_failover_cluster     = var.enable_failover_cluster
-  manage_disk_setup_extension = var.manage_disk_setup_extension
+  resource_group_name = var.sql_resource_group_name
+  location            = var.location
+  name_prefix         = "sqlpoc"
 
-  subnet_id_primary          = data.terraform_remote_state.network.outputs.sql_subnet_sql1_id
-  subnet_id_secondary        = data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
-  subnet_id_private_endpoint = data.terraform_remote_state.network.outputs.pep_subnet_id
-  vnet_id                    = data.terraform_remote_state.network.outputs.sql_vnet_id
+  is_ha = var.enable_failover_cluster
+  is_dr = false
 
-  sql_admin_username           = var.sql_admin_username
-  sql_vm_admin_password        = local.sql_vm_admin_password
-  cluster_local_admin_username = var.cluster_local_admin_username
+  vm_sku = var.vm_size
 
-  sql_vm_user_assigned_identity_ids       = var.sql_vm_user_assigned_identity_ids
-  sql_vm_user_assigned_identity_client_id = var.sql_vm_user_assigned_identity_client_id
+  subnet_ids = [
+    data.terraform_remote_state.network.outputs.sql_subnet_sql1_id,
+    data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
+  ]
+  vnet_id = data.terraform_remote_state.network.outputs.sql_vnet_id
 
-  # SAS tokens for scripts (scripts must be hosted in the location module expects)
-  disk_setup_sas       = var.disk_setup_sas
-  failover_cluster_sas = var.failover_cluster_sas
+  sql_admin_username             = var.sql_admin_username
+  sql_vm_admin_password          = local.sql_vm_admin_password
+  cluster_local_admin_username   = var.cluster_local_admin_username
+  user_assigned_identity_ids     = var.sql_vm_user_assigned_identity_ids
 
-  # VM Configuration (map of objects)
-  sql_vms = var.sql_vms
-  tags    = var.tags
+  # Disk configuration
+  data_disk_size_gb     = var.data_disk_size_gb
+  data_disk_type        = var.data_disk_type
+  log_disk_size_gb      = var.log_disk_size_gb
+  log_disk_type         = var.log_disk_type
+  tempdb_disk_size_gb   = var.tempdb_disk_size_gb
+  tempdb_disk_type      = var.tempdb_disk_type
 
-  # Storage Config
-  os_disk_type                               = var.os_disk_type
-  os_disk_size_gb                            = var.os_disk_size_gb
-  data_disk_type                             = var.data_disk_type
-  data_disk_count                            = var.data_disk_count
-  data_disk_size_gb                          = var.data_disk_size_gb
-  log_disk_type                              = var.log_disk_type
-  log_disk_size_gb                           = var.log_disk_size_gb
-  tempdb_disk_type                           = var.tempdb_disk_type
-  tempdb_disk_size_gb                        = var.tempdb_disk_size_gb
-  witness_storage_security_control_tag_value = var.witness_storage_security_control_tag_value
-
-  # Image Config
-  image_publisher      = var.image_publisher
-  image_offer          = var.image_offer
-  image_sku            = var.image_sku
-  image_version        = var.image_version
-  enable_sql_extension = var.enable_sql_extension
+  # Image configuration
+  image_publisher = var.image_publisher
+  image_offer     = var.image_offer
+  image_sku       = var.image_sku
+  image_version   = var.image_version
 
   failover_cluster_name = var.failover_cluster_name
+  dns_zone_name         = "sql.internal"
 
-  # DR Configuration (Optional)
-  # primary_cluster_dns = ...
-  # primary_cluster_ip = ...
+  tags = var.tags
 }

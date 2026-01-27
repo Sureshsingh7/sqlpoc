@@ -49,18 +49,18 @@ output "cluster_name" {
   description = "Name of the specified failover cluster"
 }
 
-output "cluster_ips" {
-  value       = module.sql_cluster.cluster_ips
-  description = "Map of VM names to their cluster IPs"
-}
-
 output "sql_vm_ids" {
   value       = module.sql_cluster.sql_vm_ids
   description = "Map of VM names to their resource IDs"
 }
 
 output "sql_vm_private_ips" {
-  value       = module.sql_cluster.sql_vm_private_ips
+  value       = module.sql_cluster.sql_vm_ips
   description = "Map of VM names to their private IPs"
+}
+
+output "load_balancer_ip" {
+  value       = module.sql_cluster.load_balancer_ip
+  description = "Frontend IP of the Internal Load Balancer"
 }
 

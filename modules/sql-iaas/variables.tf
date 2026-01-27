@@ -137,3 +137,10 @@ variable "dns_zone_name" {
   type        = string
   default     = "sql.internal"
 }
+
+variable "user_assigned_identity_ids" {
+  description = "List of User Assigned Identity IDs to assign to the VMs."
+  type        = list(string)
+  default     = []
+}
+
