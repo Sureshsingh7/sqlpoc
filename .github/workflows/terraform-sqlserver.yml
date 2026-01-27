@@ -29,8 +29,11 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
       ARM_SKIP_AZURECLI_AUTH: "true"
       SQL_RG: rg-fnz-poc-sql-se
-      SQL_VM_PRIMARY: sql-primary
-      SQL_VM_SECONDARY: sql-secondary
+      
+      # Deployment Configuration
+      IS_HA: "false" # Set to "true" for HA (Dual VM), "false" for Mono (Single VM)
+      SQL_VM_PRIMARY: sqlpoc-sql-01
+      SQL_VM_SECONDARY: sqlpoc-sql-02
 
       # Provider downloads (esp. azapi) sometimes hit slow GitHub release endpoints.
       TF_REGISTRY_CLIENT_TIMEOUT: "300"
@@ -109,7 +112,9 @@ jobs:
           }
 
           wait_running "$SQL_VM_PRIMARY"
-          wait_running "$SQL_VM_SECONDARY"
+          if [ "${IS_HA}" = "true" ]; then
+            wait_running "$SQL_VM_SECONDARY"
+          fi
 
       # 2️⃣ Force clean workspace
       - name: Ensure clean workspace
@@ -248,13 +253,13 @@ jobs:
       - name: Import existing SQL IaaS resources (if any)
         run: |
           set -euo pipefail
-          for idx in 0 1; do
-            if [ "$idx" = "0" ]; then
-              vm="$SQL_VM_PRIMARY"
-            else
-              vm="$SQL_VM_SECONDARY"
-            fi
+          
+          vms=("$SQL_VM_PRIMARY")
+          if [ "${IS_HA}" = "true" ]; then
+            vms+=("$SQL_VM_SECONDARY")
+          fi
 
+          for vm in "${vms[@]}"; do
             addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
@@ -274,13 +279,13 @@ jobs:
       - name: Prune missing SQL IaaS resources from state (best-effort)
         run: |
           set -euo pipefail
-          for idx in 0 1; do
-            if [ "$idx" = "0" ]; then
-              vm="$SQL_VM_PRIMARY"
-            else
-              vm="$SQL_VM_SECONDARY"
-            fi
+          
+          vms=("$SQL_VM_PRIMARY")
+          if [ "${IS_HA}" = "true" ]; then
+            vms+=("$SQL_VM_SECONDARY")
+          fi
 
+          for vm in "${vms[@]}"; do
             addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
@@ -357,7 +362,9 @@ jobs:
           }
 
           check_vm "$SQL_VM_PRIMARY"
-          check_vm "$SQL_VM_SECONDARY"
+          if [ "${IS_HA}" = "true" ]; then
+            check_vm "$SQL_VM_SECONDARY"
+          fi
 
       - name: Terraform Plan
         id: tf_plan
@@ -428,7 +435,13 @@ jobs:
             azure_watch_counter=$((azure_watch_counter + 1))
             if [ $((azure_watch_counter % 5)) -eq 0 ]; then
               echo "[$ts] Azure status snapshot (every ~10 minutes)"
-              for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+              
+              vms=("$SQL_VM_PRIMARY")
+              if [ "${IS_HA}" = "true" ]; then
+                vms+=("$SQL_VM_SECONDARY")
+              fi
+
+              for vm in "${vms[@]}"; do
                 echo "-- $vm power state --"
                 az vm get-instance-view -g "$SQL_RG" -n "$vm" \
                   --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
@@ -499,7 +512,9 @@ jobs:
           }
 
           wait_running_strict "$SQL_VM_PRIMARY"
-          wait_running_strict "$SQL_VM_SECONDARY"
+          if [ "${IS_HA}" = "true" ]; then
+            wait_running_strict "$SQL_VM_SECONDARY"
+          fi
 
       - name: "Terraform Apply (Phase 2: SQL IaaS + remaining resources)"
         id: tf_apply
@@ -525,7 +540,13 @@ jobs:
             azure_watch_counter=$((azure_watch_counter + 1))
             if [ $((azure_watch_counter % 5)) -eq 0 ]; then
               echo "[$ts] Azure status snapshot (every ~10 minutes)"
-              for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+              
+              vms=("$SQL_VM_PRIMARY")
+              if [ "${IS_HA}" = "true" ]; then
+                vms+=("$SQL_VM_SECONDARY")
+              fi
+
+              for vm in "${vms[@]}"; do
                 echo "-- $vm power state --"
                 az vm get-instance-view -g "$SQL_RG" -n "$vm" \
                   --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
@@ -562,14 +583,23 @@ jobs:
           set -e
           echo "== sql-primary extension instance-view =="
           az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_PRIMARY" -n configure-sql-disks --instance-view -o jsonc || true
-          echo "== sql-secondary extension instance-view =="
-          az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_SECONDARY" -n configure-sql-disks --instance-view -o jsonc || true
+          
+          if [ "${IS_HA}" = "true" ]; then
+            echo "== sql-secondary extension instance-view =="
+            az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_SECONDARY" -n configure-sql-disks --instance-view -o jsonc || true
+          fi
 
       - name: Diagnostics (SQL IaaS provisioning state)
         if: steps.tf_apply.outputs.exitcode != '0'
         run: |
           set -e
-          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+          
+          vms=("$SQL_VM_PRIMARY")
+          if [ "${IS_HA}" = "true" ]; then
+            vms+=("$SQL_VM_SECONDARY")
+          fi
+
+          for vm in "${vms[@]}"; do
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
             echo "== $vm SQL IaaS resource =="
             az resource show --ids "$rid" -o jsonc || true
@@ -579,7 +609,13 @@ jobs:
         if: steps.tf_apply.outputs.exitcode != '0'
         run: |
           set -e
-          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+          
+          vms=("$SQL_VM_PRIMARY")
+          if [ "${IS_HA}" = "true" ]; then
+            vms+=("$SQL_VM_SECONDARY")
+          fi
+          
+          for vm in "${vms[@]}"; do
             echo "== $vm disk inventory =="
             az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Disk | Select Number,PartitionStyle,IsOffline,IsReadOnly,OperationalStatus,Size,Location | Format-Table -AutoSize | Out-String" \
@@ -618,8 +654,11 @@ jobs:
             az vm extension show -g "$SQL_RG" --vm-name "$vm" -n SqlIaasExtension --instance-view -o jsonc || true
           echo "== sql-primary run-command disk-setup =="
           az vm run-command show -g "$SQL_RG" --vm-name "$SQL_VM_PRIMARY" --run-command-name disk-setup --instance-view -o jsonc || true
-          echo "== sql-secondary run-command disk-setup =="
-          az vm run-command show -g "$SQL_RG" --vm-name "$SQL_VM_SECONDARY" --run-command-name disk-setup --instance-view -o jsonc || true
+          
+          if [ "${IS_HA}" = "true" ]; then
+            echo "== sql-secondary run-command disk-setup =="
+            az vm run-command show -g "$SQL_RG" --vm-name "$SQL_VM_SECONDARY" --run-command-name disk-setup --instance-view -o jsonc || true
+          fi
 
             echo "== $vm SQL IaaS extension logs (tail) =="
             az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
@@ -631,7 +670,13 @@ jobs:
         if: steps.tf_apply.outputs.exitcode != '0'
         run: |
           set -e
-          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+          
+          vms=("$SQL_VM_PRIMARY")
+          if [ "${IS_HA}" = "true" ]; then
+            vms+=("$SQL_VM_SECONDARY")
+          fi
+
+          for vm in "${vms[@]}"; do
             echo "== $vm drive letters / volumes =="
             az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-PSDrive -PSProvider FileSystem | Sort-Object Name | Format-Table -AutoSize | Out-String" \
