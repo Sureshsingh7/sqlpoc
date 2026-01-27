@@ -229,7 +229,7 @@ resource "azurerm_lb_backend_address_pool_address" "sql_nodes" {
   name                    = each.key
   backend_address_pool_id = azurerm_lb_backend_address_pool.sql_lb_backend[0].id
   virtual_network_id      = var.vnet_id
-  ip_address              = module.sql_vm[each.key].private_ip_address
+  ip_address              = module.sql_vm[each.key].virtual_machine_azurerm.private_ip_address
 }
 
 resource "azurerm_lb_probe" "sql_probe" {
@@ -325,7 +325,7 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
   # Pass ALL node IPs and Names to each node so they know their peers
   parameter {
     name  = "NodeIPs"
-    value = join(",", [for k, v in module.sql_vm : v.private_ip_address])
+    value = join(",", [for k, v in module.sql_vm : v.virtual_machine_azurerm.private_ip_address])
   }
 
   parameter {
