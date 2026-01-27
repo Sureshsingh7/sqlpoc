@@ -269,12 +269,8 @@ function CreateClusterAdminOnBothVMs {
     }
 
     $currentHostname = $env:COMPUTERNAME
-    $localVMName = $currentHostname
-    if ($currentHostname -eq $VM1Name) { $localVMName = $VM1Name }
-    elseif ($currentHostname -eq $VM2Name) { $localVMName = $VM2Name }
-
-    $remoteVMName = $VM1Name
-    if ($currentHostname -eq $VM1Name) { $remoteVMName = $VM2Name }
+    $localVMName = if ($currentHostname -eq $VM1Name) { $VM1Name } elseif ($currentHostname -eq $VM2Name) { $VM2Name } else { $currentHostname }
+    $remoteVMName = if ($currentHostname -eq $VM1Name) { $VM2Name } else { $VM1Name }
 
     LD "Current=$currentHostname, Local=$localVMName, Remote=$remoteVMName"
 
