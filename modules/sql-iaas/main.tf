@@ -297,6 +297,36 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
     script = file("${path.module}/scripts/disk_setup.ps1")
   }
 
+  parameter {
+    name  = "NodeIPs"
+    value = var.is_ha ? join(",", [for name in local.vm_names : module.sql_vm[name].virtual_machine_azurerm.private_ip_address]) : ""
+  }
+
+  parameter {
+    name  = "NodeNames"
+    value = var.is_ha ? join(",", local.vm_names) : ""
+  }
+
+  parameter {
+    name  = "ClusterName"
+    value = var.is_ha ? var.failover_cluster_name : ""
+  }
+
+  parameter {
+    name  = "ClusterIPs"
+    value = var.is_ha ? azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address : ""
+  }
+
+  parameter {
+    name  = "ClusterAdminUsername"
+    value = var.is_ha ? var.cluster_local_admin_username : ""
+  }
+
+  protected_parameter {
+    name  = "ClusterAdminPasswordSecure"
+    value = var.is_ha ? base64encode(var.sql_vm_admin_password) : ""
+  }
+
   tags = var.tags
 }
 
@@ -312,7 +342,7 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
     script = file("${path.module}/scripts/create_failover_cluster.ps1")
   }
 
-  parameter {
+  protected_parameter {
     name  = "ClusterAdminPasswordSecure"
     value = base64encode(var.sql_vm_admin_password)
   }
@@ -325,12 +355,12 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
   # Pass ALL node IPs and Names to each node so they know their peers
   parameter {
     name  = "NodeIPs"
-    value = join(",", [for k, v in module.sql_vm : v.virtual_machine_azurerm.private_ip_address])
+    value = join(",", [for name in local.vm_names : module.sql_vm[name].virtual_machine_azurerm.private_ip_address])
   }
 
   parameter {
     name  = "NodeNames"
-    value = join(",", values(module.sql_vm)[*].name)
+    value = join(",", local.vm_names)
   }
 
   parameter {
@@ -349,14 +379,9 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
   }
 
   parameter {
-    name  = "ClusterIP"
+    name  = "ClusterIPs"
     value = azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
   }
-
-  # parameter {
-  #   name = "ClusterNameDNS"
-  #   value = "${var.failover_cluster_name}.${var.dns_zone_name}"
-  # }
 
   tags = var.tags
 }

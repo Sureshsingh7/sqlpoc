@@ -116,73 +116,6 @@ function ValidateInputs {
     L "All inputs validated successfully"
 }
 
-function ConfigureVMPrerequisites {
-    L "Configuring VM prerequisites"
-
-    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
-    $domainName = "sqlpoc.local"
-
-    for ($i = 0; $i -lt $NodeIPs.Count; $i++) {
-        $ip = $NodeIPs[$i]
-        $name = $NodeNames[$i]
-        $entry = "$ip`t$name.$domainName`t$name"
-
-        if (-not (Select-String -Path $hostsFile -Pattern $name -Quiet)) {
-            LD "Adding hosts entry: $entry"
-            Add-Content -Path $hostsFile -Value $entry
-        }
-    }
-
-    LD "Setting NV Domain to $domainName"
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\services\Tcpip\Parameters" -Name "NV Domain" -Value $domainName -Force
-
-    LD "Setting LocalAccountTokenFilterPolicy for remote admin"
-    New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "LocalAccountTokenFilterPolicy" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
-
-    LD "Configuring ICMP firewall rule"
-    $existingRule = netsh advfirewall firewall show rule name="Allow ICMPv4" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        netsh advfirewall firewall add rule name="Allow ICMPv4" protocol=icmpv4 dir=in action=allow | Out-Null
-    }
-
-    LD "Installing Failover Clustering feature"
-    Import-Module ServerManager
-    $feature = Get-WindowsFeature -Name Failover-Clustering -ErrorAction SilentlyContinue
-    if ($null -eq $feature -or -not $feature.Installed) {
-        Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools | Out-Null
-        L "Failover Clustering installed"
-    } else {
-        LD "Failover Clustering already installed"
-    }
-
-    LD "Configuring WinRM for Workgroup Auth"
-    Enable-PSRemoting -Force -SkipNetworkProfileCheck -ErrorAction SilentlyContinue | Out-Null
-    Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
-    Restart-Service WinRM
-
-    LD "Creating specific WinRM Firewall rule for cluster node subnet connectivity"
-    # When nodes are in different subnets (e.g. AZs), the default Public profile WinRM rule limits to LocalSubnet.
-    # We explicitly allow traffic from all cluster node IPs.
-    if ($NodeIPs.Count -gt 0) {
-        $ruleName = "Allow_WinRM_Cluster_Nodes"
-        # Remove existing if present to ensure update
-        Remove-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
-
-        New-NetFirewallRule -Name $ruleName `
-            -DisplayName "Allow WinRM from Cluster Nodes" `
-            -Direction Inbound `
-            -Action Allow `
-            -Protocol TCP `
-            -LocalPort 5985,5986 `
-            -RemoteAddress $NodeIPs `
-            -Profile Any `
-            -ErrorAction Stop | Out-Null
-        LD "Firewall rule '$ruleName' created for IPs: $($NodeIPs -join ', ')"
-    }
-
-    L "VM prerequisites configured"
-}
-
 function CheckClusterExists {
     param([string]$Name)
 
@@ -202,35 +135,6 @@ function CheckClusterExists {
         LD "Get-Cluster cmdlet not available"
     }
     return $false
-}
-
-function ConfigureHostsFile {
-    LD "Configuring cluster hosts file entries"
-
-    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
-    $hostsContent = Get-Content $hostsFile -Raw -ErrorAction SilentlyContinue
-    if ($null -eq $hostsContent) { $hostsContent = "" }
-
-    # Add cluster IPs to hosts file
-    foreach ($clusterIP in $ClusterIPs) {
-        $line = "$clusterIP`t$ClusterName"
-        if ($hostsContent -notmatch [regex]::Escape($clusterIP)) {
-            LD "Adding hosts entry: $line"
-            Add-Content -Path $hostsFile -Value $line -Force
-        }
-    }
-
-    # DR: Add Primary Cluster IP to hosts file if provided
-    if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP) -and -not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
-        $line = "$PrimaryClusterIP`t$PrimaryClusterDNS"
-        if ($hostsContent -notmatch [regex]::Escape($PrimaryClusterIP)) {
-            LD "Adding DR hosts entry: $line"
-            Add-Content -Path $hostsFile -Value $line -Force
-        }
-    }
-
-    ipconfig /flushdns | Out-Null
-    LD "Hosts file configured, DNS cache flushed"
 }
 
 function ValidateNodeConnectivity {
@@ -263,41 +167,6 @@ function ValidateNodeConnectivity {
         }
     }
     L "All nodes are reachable"
-}
-
-function CreateClusterAdminLocal {
-    param(
-        [string]$Username,
-        [string]$Password
-    )
-
-    L "Creating local cluster admin user '$Username' on $env:COMPUTERNAME"
-
-    try {
-        $existingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
-        if ($existingUser) {
-            LD "User '$Username' already exists locally"
-            # Update password to ensure it matches
-            $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-            Set-LocalUser -Name $Username -Password $securePassword -ErrorAction Stop
-        } else {
-            $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-            New-LocalUser -Name $Username -Password $securePassword -FullName "Cluster Admin User" -Description "User for failover cluster operations" -PasswordNeverExpires -ErrorAction Stop
-            L "User '$Username' created locally"
-        }
-
-        $adminGroup = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*\$Username" }
-        if (-not $adminGroup) {
-            Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
-            L "User '$Username' added to Administrators group"
-        } else {
-            LD "User '$Username' already in Administrators group"
-        }
-        return $true
-    } catch {
-        LE "Failed to create/update local admin user: $_"
-        throw
-    }
 }
 
 function WaitForOtherNodes {
@@ -552,13 +421,9 @@ function Main {
     L "Host: $env:COMPUTERNAME | Cluster: $ClusterName"
 
     ValidateInputs
-    ConfigureVMPrerequisites
-    ConfigureHostsFile
+    # VM Prerequisites and Hosts files are now configured in disk_setup.ps1
+    # We still validate connectivity explicitly
     ValidateNodeConnectivity
-
-    if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
-        CreateClusterAdminLocal -Username $ClusterAdminUsername -Password $ClusterAdminPassword
-    }
 
     EnableSqlAlwaysOn
 
