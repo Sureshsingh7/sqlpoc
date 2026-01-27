@@ -7,18 +7,13 @@ location                = "swedencentral"
 sql_resource_group_name = "rg-fnz-poc-sql-se"
 
 # SQL VM configuration (map of objects)
+# Note: For Mono deployment, only defining primary.
 sql_vms = {
   "sql-primary" = {
     private_ip        = "10.10.0.10"
     subnet_id         = "primary"
     availability_zone = "1"
     cluster_ip        = "10.10.0.11"
-  }
-  "sql-secondary" = {
-    private_ip        = "10.10.0.74"
-    subnet_id         = "secondary"
-    availability_zone = "2"
-    cluster_ip        = "10.10.0.75"
   }
 }
 

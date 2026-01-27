@@ -52,7 +52,7 @@ variable "sql_vms" {
     tempdb_disk_size_gb = optional(number)
     tags                = optional(map(string), {})
   }))
-  description = "Map of SQL Server VM configurations. Key is the VM name (max 15 chars)."
+  description = "Map of SQL Server VM configurations. Key is the VM name (max 15 chars). Note: Used only for legacy compat; new sql-iaas module auto-generates names."
   default = {
     "sqlpoc-primary" = {
       private_ip        = "10.10.0.10"
@@ -60,16 +60,6 @@ variable "sql_vms" {
       availability_zone = "1"
       cluster_ip        = "10.10.0.12"
     }
-    "sqlpoc-secondary" = {
-      private_ip        = "10.10.0.74"
-      subnet_id         = "secondary"
-      availability_zone = "2"
-      cluster_ip        = "10.10.0.76"
-    }
-  }
-  validation {
-    condition     = alltrue([for name, vm in var.sql_vms : length(name) > 0 && length(name) <= 15])
-    error_message = "Each VM name (map key) must be between 1 and 15 characters."
   }
 }
 
