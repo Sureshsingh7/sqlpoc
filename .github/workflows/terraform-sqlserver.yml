@@ -2,6 +2,15 @@ name: terraform-sql-iaas
 
 on:
   workflow_dispatch:
+    inputs:
+      deployment_preset:
+        description: 'Deployment Configuration Preset'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - 'dev'
+          - 'dev-ha'
 
 # Prevent two runs from fighting over the same ARM resources (SQL IaaS create/update is not concurrency-safe).
 concurrency:
@@ -30,8 +39,9 @@ jobs:
       ARM_SKIP_AZURECLI_AUTH: "true"
       SQL_RG: rg-fnz-poc-sql-se
       
-      # Deployment Configuration
-      IS_HA: "false" # Set to "true" for HA (Dual VM), "false" for Mono (Single VM)
+      # Defaults (overridden in "Set Deployment Context" step)
+      TF_VAR_FILE: "env/dev.tfvars"
+      IS_HA: "false" 
       SQL_VM_PRIMARY: sqlpoc-sql-01
       SQL_VM_SECONDARY: sqlpoc-sql-02
 
@@ -57,6 +67,25 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set Deployment Context
+        id: context
+        run: |
+          echo "Selected deployment preset: ${{ github.event.inputs.deployment_preset }}"
+          
+          if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha" ]; then
+            echo "Configuring for HA (Dual VM)"
+            echo "TF_VAR_FILE=env/dev-ha.tfvars" >> $GITHUB_ENV
+            echo "IS_HA=true" >> $GITHUB_ENV
+            echo "SQL_VM_PRIMARY=sqlpoc-ha-sql-01" >> $GITHUB_ENV
+            echo "SQL_VM_SECONDARY=sqlpoc-ha-sql-02" >> $GITHUB_ENV
+          else
+            echo "Configuring for Mono (Single VM)"
+            echo "TF_VAR_FILE=env/dev.tfvars" >> $GITHUB_ENV
+            echo "IS_HA=false" >> $GITHUB_ENV
+            echo "SQL_VM_PRIMARY=sqlpoc-sql-01" >> $GITHUB_ENV
+            echo "SQL_VM_SECONDARY=sqlpoc-sql-02" >> $GITHUB_ENV
+          fi
 
       - name: Show checked-out commit + SQL IaaS timeout
         run: |
@@ -144,7 +173,7 @@ jobs:
               -backend-config="resource_group_name=${TFSTATE_RG}" \
               -backend-config="storage_account_name=${TFSTATE_SA}" \
               -backend-config="container_name=${TFSTATE_CONTAINER}" \
-              -backend-config="key=${TFSTATE_KEY}"; then
+              -backend-config="key=sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"; then
               exit 0
             fi
             sleep 10
@@ -175,7 +204,7 @@ jobs:
                 echo "$addr already in state"
               else
                 echo "Importing $addr"
-                terraform import -var-file=env/dev.tfvars "$addr" "$rid"
+                terraform import -var-file="$TF_VAR_FILE" "$addr" "$rid"
               fi
             else
               echo "Not found in Azure, skipping import"
@@ -216,10 +245,10 @@ jobs:
             exit 0
           fi
 
-          desired_os="$(terraform console -var-file=env/dev.tfvars <<< 'var.os_disk_type' | tr -d '\r' | tr -d '"')"
-          desired_data="$(terraform console -var-file=env/dev.tfvars <<< 'var.data_disk_type' | tr -d '\r' | tr -d '"')"
-          desired_log="$(terraform console -var-file=env/dev.tfvars <<< 'var.log_disk_type' | tr -d '\r' | tr -d '"')"
-          desired_tempdb="$(terraform console -var-file=env/dev.tfvars <<< 'var.tempdb_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_os="$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.os_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_data="$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.data_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_log="$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.log_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_tempdb="$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.tempdb_disk_type' | tr -d '\r' | tr -d '"')"
 
           echo "Desired disk SKUs: os=${desired_os}, data=${desired_data}, log=${desired_log}, tempdb=${desired_tempdb}"
 
@@ -289,7 +318,7 @@ jobs:
           trap on_term SIGINT SIGTERM
 
           # Plan is informational; apply runs in two phases for stability.
-          ( terraform plan -input=false -var-file=env/dev.tfvars 2>&1 | tee "$log_file" ) &
+          ( terraform plan -input=false -var-file="$TF_VAR_FILE" 2>&1 | tee "$log_file" ) &
           pid=$!
 
           # Heartbeat every 60s so slow AzureRM refresh doesn't look hung.
@@ -326,7 +355,7 @@ jobs:
 
           # Phase 1 applies only the VM module. This avoids racing SQL IaaS registration
           # against transient VM restarts/deallocations.
-          ( terraform apply -auto-approve -var-file=env/dev.tfvars -target=module.sql_cluster.module.sql_vm 2>&1 | tee "$log_file" ) &
+          ( terraform apply -auto-approve -var-file="$TF_VAR_FILE" -target=module.sql_cluster.module.sql_vm 2>&1 | tee "$log_file" ) &
           pid=$!
 
           azure_watch_counter=0
@@ -436,7 +465,7 @@ jobs:
             tail -n 50 "$log_file" 2>/dev/null || true
           }
           trap on_term SIGINT SIGTERM
-          ( terraform apply -parallelism=1 -auto-approve -var-file=env/dev.tfvars 2>&1 | tee -a "$log_file" ) &
+          ( terraform apply -parallelism=1 -auto-approve -var-file="$TF_VAR_FILE" 2>&1 | tee -a "$log_file" ) &
           pid=$!
           azure_watch_counter=0
           while kill -0 "$pid" 2>/dev/null; do
