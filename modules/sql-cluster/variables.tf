@@ -100,29 +100,35 @@ variable "failover_cluster_sas" {
   default     = ""
 }
 
-# VM Configuration (optional overrides)
-variable "sql_vm_names" {
-  type        = list(string)
-  description = "Names of SQL Server VMs to deploy"
-  default     = ["sqlpoc-primary", "sqlpoc-secondary"]
-}
-
-variable "sql_private_ips" {
-  type        = list(string)
-  description = "Static private IP addresses for SQL Server VMs"
-  default     = ["10.10.0.10", "10.10.0.74"]
-}
-
-variable "cluster_ips" {
-  type        = list(string)
-  description = "Static IP addresses for the failover cluster [cluster_primary_ip, cluster_secondary_ip]"
-  default     = ["10.10.0.12", "10.10.0.76"]
-}
-
-variable "availability_zones" {
-  type        = list(string)
-  description = "Availability zones for SQL VMs"
-  default     = ["1", "2"]
+# VM Configuration using map of objects (key = VM name)
+variable "sql_vms" {
+  type = map(object({
+    private_ip          = string
+    subnet_id           = string
+    availability_zone   = string
+    vm_size             = optional(string)
+    cluster_ip          = optional(string, "")
+    os_disk_size_gb     = optional(number)
+    data_disk_size_gb   = optional(number)
+    log_disk_size_gb    = optional(number)
+    tempdb_disk_size_gb = optional(number)
+    tags                = optional(map(string), {})
+  }))
+  description = "Map of SQL Server VM configurations. Key is the VM name."
+  default = {
+    "sqlpoc-primary" = {
+      private_ip        = "10.10.0.10"
+      subnet_id         = "primary"
+      availability_zone = "1"
+      cluster_ip        = "10.10.0.12"
+    }
+    "sqlpoc-secondary" = {
+      private_ip        = "10.10.0.74"
+      subnet_id         = "secondary"
+      availability_zone = "2"
+      cluster_ip        = "10.10.0.76"
+    }
+  }
 }
 
 variable "tags" {

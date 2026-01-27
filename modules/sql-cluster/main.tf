@@ -9,9 +9,11 @@ data "azurerm_resource_group" "this" {
 }
 
 locals {
-  sql_vm_count     = length(var.sql_vm_names)
-  sql_vm_map       = { for idx, name in var.sql_vm_names : name => idx }
-  sql_vm_nic_names = [for name in var.sql_vm_names : "nic-${name}"]
+  sql_vm_count    = length(var.sql_vms)
+  sql_vm_names    = keys(var.sql_vms)
+  sql_vm_nic_map  = { for name, vm in var.sql_vms : name => "nic-${name}" }
+  sql_private_ips = [for name, vm in var.sql_vms : vm.private_ip]
+  cluster_ips     = [for name, vm in var.sql_vms : vm.cluster_ip if vm.cluster_ip != ""]
 }
 
 # Cloud Witness storage account (used for WSFC quorum in a workgroup cluster).
@@ -81,22 +83,32 @@ locals {
   # VM and Cluster IPs from variables
   # Support N nodes: Just reference the variables directly in the module resources
 
-  # Disk configuration
-  disks_per_vm = [
-    { name_suffix = "data-01", disk_size_gb = var.data_disk_size_gb, storage_type = var.data_disk_type, lun = 0 },
-    { name_suffix = "log-01", disk_size_gb = var.log_disk_size_gb, storage_type = var.log_disk_type, lun = 1 },
-    { name_suffix = "tempdb-01", disk_size_gb = var.tempdb_disk_size_gb, storage_type = var.tempdb_disk_type, lun = 2 }
-  ]
-
+  # Disk configuration - uses VM-specific sizes if provided, otherwise falls back to module defaults
   all_disks = flatten([
-    for vm_idx in range(local.sql_vm_count) : [
-      for disk in local.disks_per_vm : {
-        key          = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
-        vm_index     = vm_idx
-        name         = "${var.sql_vm_names[vm_idx]}-${disk.name_suffix}"
-        disk_size_gb = disk.disk_size_gb
-        storage_type = disk.storage_type
-        lun          = disk.lun
+    for vm_name, vm in var.sql_vms : [
+      {
+        key          = "${vm_name}-data-01"
+        vm_name      = vm_name
+        name         = "${vm_name}-data-01"
+        disk_size_gb = coalesce(vm.data_disk_size_gb, var.data_disk_size_gb)
+        storage_type = var.data_disk_type
+        lun          = 0
+      },
+      {
+        key          = "${vm_name}-log-01"
+        vm_name      = vm_name
+        name         = "${vm_name}-log-01"
+        disk_size_gb = coalesce(vm.log_disk_size_gb, var.log_disk_size_gb)
+        storage_type = var.log_disk_type
+        lun          = 1
+      },
+      {
+        key          = "${vm_name}-tempdb-01"
+        vm_name      = vm_name
+        name         = "${vm_name}-tempdb-01"
+        disk_size_gb = coalesce(vm.tempdb_disk_size_gb, var.tempdb_disk_size_gb)
+        storage_type = var.tempdb_disk_type
+        lun          = 2
       }
     ]
   ])
@@ -105,17 +117,17 @@ locals {
 }
 
 module "sql_vm" {
-  for_each = local.sql_vm_map
+  for_each = var.sql_vms
   source   = "Azure/avm-res-compute-virtualmachine/azurerm"
   version  = "0.20.0"
 
   name                = each.key
   location            = var.location
   resource_group_name = var.resource_group_name
-  zone                = var.availability_zones[each.value % length(var.availability_zones)]
+  zone                = each.value.availability_zone
 
   os_type  = "Windows"
-  sku_size = var.vm_size
+  sku_size = coalesce(each.value.vm_size, var.vm_size)
 
   patch_assessment_mode                                  = "AutomaticByPlatform"
   patch_mode                                             = "AutomaticByPlatform"
@@ -125,15 +137,15 @@ module "sql_vm" {
 
   network_interfaces = {
     sql_nic = {
-      name                           = local.sql_vm_nic_names[each.value]
+      name                           = local.sql_vm_nic_map[each.key]
       accelerated_networking_enabled = true
       ip_configurations = {
         primary = {
           name                          = "internal"
           private_ip_address_allocation = "Static"
-          private_ip_address            = var.sql_private_ips[each.value]
-          # Select subnet based on VM index (0 -> primary subnet, 1 -> secondary subnet)
-          private_ip_subnet_resource_id = each.value == 0 ? var.subnet_id_primary : var.subnet_id_secondary
+          private_ip_address            = each.value.private_ip
+          # Select subnet based on subnet_id key: "primary" or "secondary" maps to respective variable
+          private_ip_subnet_resource_id = each.value.subnet_id == "primary" ? var.subnet_id_primary : var.subnet_id_secondary
           is_primary_ipconfiguration    = true
         }
       }
@@ -152,7 +164,7 @@ module "sql_vm" {
     name                 = "${each.key}-Os-disk"
     caching              = "ReadWrite"
     storage_account_type = var.os_disk_type
-    disk_size_gb         = var.os_disk_size_gb
+    disk_size_gb         = coalesce(each.value.os_disk_size_gb, var.os_disk_size_gb)
   }
 
   source_image_reference = {
@@ -175,18 +187,17 @@ module "sql_vm" {
       disk_size_gb         = disk.disk_size_gb
       lun                  = disk.lun
       caching              = "ReadOnly"
-    } if disk.vm_index == each.value
+    } if disk.vm_name == each.key
   }
 
   extensions = {}
 
-
-  tags = var.tags
+  tags = merge(var.tags, each.value.tags)
 }
 
 
 resource "azurerm_virtual_machine_run_command" "disk_setup" {
-  for_each = var.manage_disk_setup_extension ? local.sql_vm_map : {}
+  for_each = var.manage_disk_setup_extension ? var.sql_vms : {}
 
   name               = "disk-setup"
   location           = var.location
@@ -200,7 +211,7 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
 }
 
 resource "azurerm_virtual_machine_run_command" "failover_cluster" {
-  for_each = var.enable_failover_cluster ? local.sql_vm_map : {}
+  for_each = var.enable_failover_cluster ? var.sql_vms : {}
 
   name               = "failover-cluster-setup"
   location           = var.location
@@ -224,12 +235,12 @@ resource "azurerm_virtual_machine_run_command" "failover_cluster" {
 
   parameter {
     name  = "NodeIPs"
-    value = join(",", var.sql_private_ips)
+    value = join(",", local.sql_private_ips)
   }
 
   parameter {
     name  = "ClusterIPs"
-    value = join(",", var.cluster_ips)
+    value = join(",", local.cluster_ips)
   }
 
   parameter {
@@ -239,7 +250,7 @@ resource "azurerm_virtual_machine_run_command" "failover_cluster" {
 
   parameter {
     name  = "NodeNames"
-    value = join(",", var.sql_vm_names)
+    value = join(",", local.sql_vm_names)
   }
 
   parameter {
@@ -272,7 +283,7 @@ resource "azurerm_virtual_machine_run_command" "failover_cluster" {
 }
 
 resource "azurerm_mssql_virtual_machine" "sql_vm" {
-  for_each                         = var.enable_sql_extension ? local.sql_vm_map : {}
+  for_each                         = var.enable_sql_extension ? var.sql_vms : {}
   virtual_machine_id               = module.sql_vm[each.key].resource_id
   sql_license_type                 = "PAYG"
   sql_connectivity_port            = 1433

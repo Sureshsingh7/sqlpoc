@@ -1,6 +1,6 @@
 output "sql_vm_ids" {
   description = "IDs of the deployed SQL Server VMs"
-  value       = [for vm in module.sql_vm : vm.resource_id]
+  value       = { for name, vm in module.sql_vm : name => vm.resource_id }
 }
 
 output "witness_storage_account_name" {
@@ -13,10 +13,12 @@ output "cluster_name" {
   description = "Name of the specified failover cluster"
 }
 
-output "cluster_primary_ip" {
-  value = var.cluster_ips[0]
+output "cluster_ips" {
+  description = "Map of VM names to their cluster IPs"
+  value       = { for name, vm in var.sql_vms : name => vm.cluster_ip if vm.cluster_ip != "" }
 }
 
-output "cluster_secondary_ip" {
-  value = var.cluster_ips[1]
+output "sql_vm_private_ips" {
+  description = "Map of VM names to their private IPs"
+  value       = { for name, vm in var.sql_vms : name => vm.private_ip }
 }
