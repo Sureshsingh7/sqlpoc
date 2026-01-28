@@ -24,8 +24,8 @@ jobs:
     timeout-minutes: 600
     runs-on:
       - self-hosted
-#      - linux
-#      - x64
+      - linux
+      - x64
 
     defaults:
       run:
