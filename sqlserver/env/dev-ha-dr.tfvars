@@ -39,7 +39,7 @@ failover_cluster_name   = "sqlpoc-ha-cl"
 # DR Configuration
 enable_dr                  = true
 dr_location                = "norwayeast"
-dr_sql_resource_group_name = "rg-fnz-poc-sql-dr-ss"
+dr_sql_resource_group_name = "rg-fnz-poc-sql-dr-nwe"
 
 # SQL Server image
 image_publisher = "microsoftsqlserver"
