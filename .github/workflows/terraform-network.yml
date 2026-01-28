@@ -16,8 +16,8 @@ jobs:
   terraform-network:
     runs-on:
       - self-hosted
-      - linux
-      - x64
+#      - linux
+#      - x64
 
     defaults:
       run:
