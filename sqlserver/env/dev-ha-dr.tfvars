@@ -6,7 +6,7 @@ location                = "swedencentral"
 sql_resource_group_name = "rg-fnz-poc-sql-se"
 
 # Naming Prefix with 'ha'
-sql_name_prefix = "poc-ha"
+sql_name_prefix = "pocha"
 
 sql_admin_username = "sqladmin"
 
@@ -38,7 +38,7 @@ failover_cluster_name   = "sqlpoc-ha-cl"
 
 # DR Configuration
 enable_dr                  = true
-dr_location                = "swedensouth"
+dr_location                = "norwayeast"
 dr_sql_resource_group_name = "rg-fnz-poc-sql-dr-ss"
 
 # SQL Server image
