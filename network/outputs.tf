@@ -70,7 +70,26 @@ output "peering_sql_to_ops_id" {
 output "sql_subnet_sql1_address_prefix" {
   value = var.sql_subnet_sql1_prefix
 }
+# DR Outputs
+output "dr_sql_vnet_id" {
+  value = var.is_dr_enabled ? module.dr_sql_vnet[0].resource_id : null
+}
 
+output "dr_sql_subnet_sql1_id" {
+  value = var.is_dr_enabled ? module.dr_sql_vnet[0].subnets["sql1"].resource_id : null
+}
+
+output "dr_sql_subnet_sql2_id" {
+  value = var.is_dr_enabled ? module.dr_sql_vnet[0].subnets["sql2"].resource_id : null
+}
+
+output "dr_pep_subnet_id" {
+  value = var.is_dr_enabled ? module.dr_sql_vnet[0].subnets["pep"].resource_id : null
+}
+
+output "dr_sql_vnet_address_space" {
+  value = var.is_dr_enabled ? var.dr_sql_vnet_address_space : null
+}
 output "sql_subnet_sql2_address_prefix" {
   value = var.sql_subnet_sql2_prefix
 }

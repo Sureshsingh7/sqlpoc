@@ -260,6 +260,37 @@ variable "tags" {
   default     = {}
 }
 
+variable "enable_dr" {
+  type        = bool
+  description = "Enable Disaster Recovery deployment"
+  default     = false
+}
+
+variable "dr_location" {
+  type        = string
+  description = "Azure region for DR"
+  default     = "swedensouth"
+}
+
+variable "dr_sql_resource_group_name" {
+  type        = string
+  description = "Resource Group for DR SQL resources"
+  default     = "rg-fnz-poc-sql-dr-ss"
+}
+
+# Used to configure DR node to talk to Primary Cluster
+variable "primary_cluster_dns" {
+  type        = string
+  description = "DNS Name of the Primary Cluster (for DR setup)"
+  default     = ""
+}
+
+variable "primary_cluster_ip" {
+  type        = string
+  description = "IP Address of the Primary Cluster Load Balancer (for DR setup)"
+  default     = ""
+}
+
 variable "sql_name_prefix" {
   type        = string
   description = "Prefix used for naming SQL resources (VMs, LB, etc.). Defaults to 'sqlpoc'. Override for HA variants (e.g. 'sqlpoc-ha')."

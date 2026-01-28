@@ -64,3 +64,24 @@ output "load_balancer_ip" {
   description = "Frontend IP of the Internal Load Balancer"
 }
 
+
+output "dr_sql_vm_ids" {
+  value       = var.enable_dr ? module.sql_cluster_dr[0].sql_vm_ids : null
+  description = "Map of DR VM names to their resource IDs"
+}
+
+output "dr_sql_vm_private_ips" {
+  value       = var.enable_dr ? module.sql_cluster_dr[0].sql_vm_ips : null
+  description = "Map of DR VM names to their private IPs"
+}
+
+output "dr_cluster_name" {
+  value       = var.enable_dr ? module.sql_cluster_dr[0].cluster_name : null
+  description = "Name of the DR failover cluster"
+}
+
+output "dr_load_balancer_ip" {
+  value       = var.enable_dr ? module.sql_cluster_dr[0].load_balancer_ip : null
+  description = "Frontend IP of the DR Internal Load Balancer"
+}
+

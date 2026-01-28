@@ -76,6 +76,48 @@ variable "subnet_bastion_prefix" {
   default     = "10.20.0.64/26"
 }
 
+variable "is_dr_enabled" {
+  type        = bool
+  description = "Enable Disaster Recovery deployment"
+  default     = false
+}
+
+variable "dr_location" {
+  type        = string
+  description = "Azure region for DR"
+  default     = "swedensouth"
+}
+
+variable "dr_sql_resource_group_name" {
+  type        = string
+  description = "Resource Group for DR SQL resources"
+  default     = ""
+}
+
+variable "dr_sql_vnet_address_space" {
+  type        = list(string)
+  description = "DR VNet address space"
+  default     = ["10.11.0.0/24"]
+}
+
+variable "dr_sql_subnet_sql1_prefix" {
+  type        = string
+  description = "DR Subnet prefix for SQL VM(s)"
+  default     = "10.11.0.0/26"
+}
+
+variable "dr_sql_subnet_sql2_prefix" {
+  type        = string
+  description = "DR Subnet prefix for SQL VM(s)"
+  default     = "10.11.0.64/26"
+}
+
+variable "dr_sql_subnet_pep_prefix" {
+  type        = string
+  description = "DR Subnet prefix for Private Endpoints"
+  default     = "10.11.0.128/27"
+}
+
 variable "tags" {
   type        = map(string)
   description = "Extra tags"
