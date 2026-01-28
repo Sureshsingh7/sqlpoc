@@ -33,13 +33,13 @@ backup_disk_size_gb = 512
 manage_disk_setup_extension = true
 
 # Primary HA
-enable_failover_cluster     = true
-failover_cluster_name       = "sqlpoc-ha-cl"
+enable_failover_cluster = true
+failover_cluster_name   = "sqlpoc-ha-cl"
 
 # DR Configuration
-enable_dr                   = true
-dr_location                 = "swedensouth"
-dr_sql_resource_group_name  = "rg-fnz-poc-sql-dr-ss"
+enable_dr                  = true
+dr_location                = "swedensouth"
+dr_sql_resource_group_name = "rg-fnz-poc-sql-dr-ss"
 
 # SQL Server image
 image_publisher = "microsoftsqlserver"

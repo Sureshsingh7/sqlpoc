@@ -250,9 +250,9 @@ locals {
 
   # --- DR Locals ---
   dr_sql_vnet_name = "${var.sql_name_prefix}-dr-vnet"
-  
-  dr_nsg_sql1_name   = "${var.sql_name_prefix}-dr-nsg-sql1"
-  dr_nsg_sql2_name   = "${var.sql_name_prefix}-dr-nsg-sql2"
+
+  dr_nsg_sql1_name = "${var.sql_name_prefix}-dr-nsg-sql1"
+  dr_nsg_sql2_name = "${var.sql_name_prefix}-dr-nsg-sql2"
 
   dr_snet_sql1_name = "${var.sql_name_prefix}-dr-snet-sql1"
   dr_snet_sql2_name = "${var.sql_name_prefix}-dr-snet-sql2"
