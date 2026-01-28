@@ -85,7 +85,7 @@ variable "is_dr_enabled" {
 variable "dr_location" {
   type        = string
   description = "Azure region for DR"
-  default     = "swedensouth"
+  default     = "northeurope"
 }
 
 variable "dr_sql_resource_group_name" {

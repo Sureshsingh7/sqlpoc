@@ -22,6 +22,6 @@ tags = {
 subscription_id = "51595cc9-4191-4785-a757-15e45165d2a4"
 # DR Configuration
 is_dr_enabled              = true
-dr_location                = "swedensouth"
+dr_location                = "northeurope"
 dr_sql_resource_group_name = "rg-fnz-poc-sql-dr-ss"
 

@@ -18,7 +18,7 @@ locals {
   ops_snet_bastion_name = "AzureBastionSubnet"
 
   bastion_pip_name = "${var.ops_name_prefix}-pip-bastion"
-  bastion_name     = "${var.ops_name_prefix}-bastion"
+  bastion_name     = "${var.ops_name_prefix}-vnet-bastion"
 
   nat_gateway_pip_name = "${var.ops_name_prefix}-pip-natgw"
   nat_gateway_name     = "${var.ops_name_prefix}-natgw"
