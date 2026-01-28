@@ -90,10 +90,10 @@ jobs:
             echo "TF_VAR_FILE=env/dev-ha-dr.tfvars" >> $GITHUB_ENV
             echo "IS_HA=true" >> $GITHUB_ENV
             echo "IS_DR=true" >> $GITHUB_ENV
-            echo "SQL_VM_PRIMARY=poc-ha-sql-01" >> $GITHUB_ENV
-            echo "SQL_VM_SECONDARY=poc-ha-sql-02" >> $GITHUB_ENV
-            echo "SQL_VM_DR_PRIMARY=poc-ha-dr-sql-01" >> $GITHUB_ENV
-            echo "SQL_VM_DR_SECONDARY=poc-ha-dr-sql-02" >> $GITHUB_ENV
+            echo "SQL_VM_PRIMARY=pocha-sql01" >> $GITHUB_ENV
+            echo "SQL_VM_SECONDARY=pocha-sql02" >> $GITHUB_ENV
+            echo "SQL_VM_DR_PRIMARY=pocha-dr-sql01" >> $GITHUB_ENV
+            echo "SQL_VM_DR_SECONDARY=pocha-dr-sql02" >> $GITHUB_ENV
           else
             echo "Configuring for Mono (Single VM)"
             echo "TF_VAR_FILE=env/dev.tfvars" >> $GITHUB_ENV
