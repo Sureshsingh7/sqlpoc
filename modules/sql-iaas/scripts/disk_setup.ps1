@@ -1,4 +1,3 @@
-```powershell
 param(
     [Parameter(Mandatory=$false)]
     [string[]]$NodeIPs = @(),
@@ -432,4 +431,3 @@ try{
   if($e.ScriptStackTrace){Add-Content -Path $err -Value $e.ScriptStackTrace}
   exit 1
 }
-```
