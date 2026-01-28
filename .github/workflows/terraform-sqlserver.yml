@@ -143,13 +143,22 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Use dev-ha state for dev-ha-dr to preserve primary resources
+          STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
+          if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha-dr" ]; then
+            STATE_KEY="sqlserver-dev-ha.tfstate"
+            echo "⚠️  Using dev-ha state file for dev-ha-dr preset to preserve Primary infrastructure"
+          fi
+
+          echo "State file: ${STATE_KEY}"
+
           for attempt in 1 2 3; do
             echo "terraform init attempt ${attempt}/3"
             if terraform init -reconfigure -upgrade \
               -backend-config="resource_group_name=${TFSTATE_RG}" \
               -backend-config="storage_account_name=${TFSTATE_SA}" \
               -backend-config="container_name=${TFSTATE_CONTAINER}" \
-              -backend-config="key=sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"; then
+              -backend-config="key=${STATE_KEY}"; then
               exit 0
             fi
             sleep 10
