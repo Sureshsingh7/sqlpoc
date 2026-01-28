@@ -6,7 +6,7 @@ location                = "swedencentral"
 sql_resource_group_name = "rg-fnz-poc-sql-se"
 
 # Naming Prefix with 'ha'
-sql_name_prefix = "pocha"
+sql_name_prefix = "poc-ha"
 
 sql_admin_username = "sqladmin"
 

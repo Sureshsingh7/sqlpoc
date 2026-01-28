@@ -16,7 +16,7 @@ locals {
   # Naming convention: {prefix}-sql-{01,02} for Primary (legacy), {prefix}-sql{01,02} for DR (compact)
   vm_separator = var.is_dr ? "" : "-"
   vm_names     = [for i in range(1, local.vm_count + 1) : "${var.name_prefix}-sql${local.vm_separator}${format("%02d", i)}"]
-  vm_map   = { for idx, name in local.vm_count > 0 ? range(local.vm_count) : [] : local.vm_names[idx] => idx }
+  vm_map       = { for idx, name in local.vm_count > 0 ? range(local.vm_count) : [] : local.vm_names[idx] => idx }
 
   # Storage configuration
   disks_per_vm = [

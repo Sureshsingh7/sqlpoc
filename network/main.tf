@@ -113,19 +113,19 @@ resource "azurerm_subnet" "ops_bastion" {
 # Peering (Global)
 # -----------------------------------------------------------------------------
 resource "azurerm_virtual_network_peering" "ops_to_sql" {
-  name                      = "${local.ops_vnet_name}-to-${local.sql_vnet_name}"
-  resource_group_name       = var.ops_resource_group_name
-  virtual_network_name      = azurerm_virtual_network.ops.name
-  remote_virtual_network_id = azurerm_virtual_network.sql.id
+  name                         = "${local.ops_vnet_name}-to-${local.sql_vnet_name}"
+  resource_group_name          = var.ops_resource_group_name
+  virtual_network_name         = azurerm_virtual_network.ops.name
+  remote_virtual_network_id    = azurerm_virtual_network.sql.id
   allow_virtual_network_access = true
   allow_forwarded_traffic      = true
 }
 
 resource "azurerm_virtual_network_peering" "sql_to_ops" {
-  name                      = "${local.sql_vnet_name}-to-${local.ops_vnet_name}"
-  resource_group_name       = var.sql_resource_group_name
-  virtual_network_name      = azurerm_virtual_network.sql.name
-  remote_virtual_network_id = azurerm_virtual_network.ops.id
+  name                         = "${local.sql_vnet_name}-to-${local.ops_vnet_name}"
+  resource_group_name          = var.sql_resource_group_name
+  virtual_network_name         = azurerm_virtual_network.sql.name
+  remote_virtual_network_id    = azurerm_virtual_network.ops.id
   allow_virtual_network_access = true
   allow_forwarded_traffic      = true
 }
@@ -367,7 +367,7 @@ resource "azurerm_bastion_host" "this" {
   location            = var.location
   resource_group_name = var.ops_resource_group_name
   sku                 = "Standard"
-  
+
   # Standard features
   copy_paste_enabled     = true
   file_copy_enabled      = false
@@ -397,12 +397,12 @@ resource "azurerm_public_ip" "nat" {
 }
 
 resource "azurerm_nat_gateway" "ops" {
-  name                = local.nat_gateway_name
-  location            = var.location
-  resource_group_name = var.ops_resource_group_name
-  sku_name            = "Standard"
+  name                    = local.nat_gateway_name
+  location                = var.location
+  resource_group_name     = var.ops_resource_group_name
+  sku_name                = "Standard"
   idle_timeout_in_minutes = 4
-  tags                = local.tags
+  tags                    = local.tags
 }
 
 resource "azurerm_nat_gateway_public_ip_association" "ops" {
@@ -426,12 +426,12 @@ resource "azurerm_public_ip" "sql_nat" {
 }
 
 resource "azurerm_nat_gateway" "sql" {
-  name                = local.sql_nat_gateway_name
-  location            = var.location
-  resource_group_name = var.sql_resource_group_name
-  sku_name            = "Standard"
+  name                    = local.sql_nat_gateway_name
+  location                = var.location
+  resource_group_name     = var.sql_resource_group_name
+  sku_name                = "Standard"
   idle_timeout_in_minutes = 4
-  tags                = local.tags
+  tags                    = local.tags
 }
 
 resource "azurerm_nat_gateway_public_ip_association" "sql" {
@@ -486,51 +486,51 @@ resource "azurerm_subnet" "dr_sql_sql2" {
 }
 
 resource "azurerm_subnet" "dr_sql_pep" {
-  count                = var.is_dr_enabled ? 1 : 0
-  name                 = local.dr_snet_pep_name
-  resource_group_name  = azurerm_resource_group.dr_sql[0].name
-  virtual_network_name = azurerm_virtual_network.dr_sql[0].name
-  address_prefixes     = [var.dr_sql_subnet_pep_prefix]
+  count                             = var.is_dr_enabled ? 1 : 0
+  name                              = local.dr_snet_pep_name
+  resource_group_name               = azurerm_resource_group.dr_sql[0].name
+  virtual_network_name              = azurerm_virtual_network.dr_sql[0].name
+  address_prefixes                  = [var.dr_sql_subnet_pep_prefix]
   private_endpoint_network_policies = "Enabled"
 }
 
 # DR Peerings
 resource "azurerm_virtual_network_peering" "dr_to_primary" {
-  count                     = var.is_dr_enabled ? 1 : 0
-  name                      = "${local.dr_sql_vnet_name}-to-${local.sql_vnet_name}"
-  resource_group_name       = azurerm_resource_group.dr_sql[0].name
-  virtual_network_name      = azurerm_virtual_network.dr_sql[0].name
-  remote_virtual_network_id = azurerm_virtual_network.sql.id
+  count                        = var.is_dr_enabled ? 1 : 0
+  name                         = "${local.dr_sql_vnet_name}-to-${local.sql_vnet_name}"
+  resource_group_name          = azurerm_resource_group.dr_sql[0].name
+  virtual_network_name         = azurerm_virtual_network.dr_sql[0].name
+  remote_virtual_network_id    = azurerm_virtual_network.sql.id
   allow_virtual_network_access = true
   allow_forwarded_traffic      = true
 }
 
 resource "azurerm_virtual_network_peering" "primary_to_dr" {
-  count                     = var.is_dr_enabled ? 1 : 0
-  name                      = "${local.sql_vnet_name}-to-${local.dr_sql_vnet_name}"
-  resource_group_name       = var.sql_resource_group_name
-  virtual_network_name      = azurerm_virtual_network.sql.name
-  remote_virtual_network_id = azurerm_virtual_network.dr_sql[0].id
+  count                        = var.is_dr_enabled ? 1 : 0
+  name                         = "${local.sql_vnet_name}-to-${local.dr_sql_vnet_name}"
+  resource_group_name          = var.sql_resource_group_name
+  virtual_network_name         = azurerm_virtual_network.sql.name
+  remote_virtual_network_id    = azurerm_virtual_network.dr_sql[0].id
   allow_virtual_network_access = true
   allow_forwarded_traffic      = true
 }
 
 resource "azurerm_virtual_network_peering" "dr_to_ops" {
-  count                     = var.is_dr_enabled ? 1 : 0
-  name                      = "${local.dr_sql_vnet_name}-to-${local.ops_vnet_name}"
-  resource_group_name       = azurerm_resource_group.dr_sql[0].name
-  virtual_network_name      = azurerm_virtual_network.dr_sql[0].name
-  remote_virtual_network_id = azurerm_virtual_network.ops.id
+  count                        = var.is_dr_enabled ? 1 : 0
+  name                         = "${local.dr_sql_vnet_name}-to-${local.ops_vnet_name}"
+  resource_group_name          = azurerm_resource_group.dr_sql[0].name
+  virtual_network_name         = azurerm_virtual_network.dr_sql[0].name
+  remote_virtual_network_id    = azurerm_virtual_network.ops.id
   allow_virtual_network_access = true
   allow_forwarded_traffic      = true
 }
 
 resource "azurerm_virtual_network_peering" "ops_to_dr" {
-  count                     = var.is_dr_enabled ? 1 : 0
-  name                      = "${local.ops_vnet_name}-to-${local.dr_sql_vnet_name}"
-  resource_group_name       = var.ops_resource_group_name
-  virtual_network_name      = azurerm_virtual_network.ops.name
-  remote_virtual_network_id = azurerm_virtual_network.dr_sql[0].id
+  count                        = var.is_dr_enabled ? 1 : 0
+  name                         = "${local.ops_vnet_name}-to-${local.dr_sql_vnet_name}"
+  resource_group_name          = var.ops_resource_group_name
+  virtual_network_name         = azurerm_virtual_network.ops.name
+  remote_virtual_network_id    = azurerm_virtual_network.dr_sql[0].id
   allow_virtual_network_access = true
   allow_forwarded_traffic      = true
 }
