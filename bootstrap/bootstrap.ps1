@@ -11,7 +11,8 @@ param (
   [string]$BootstrapRg = 'rg-fnz-poc-tfstate-se',
   [string]$TfstateContainer = 'tfstate',
   [string]$TfstateKey = 'fnz-poc-se.tfstate',
-  [string]$SQLRg = 'rg-fnz-poc-sql-se',
+  [string]$SqlDrRg = 'rg-fnz-poc-sql-dr-nwe',
+  [string]$SqlDrLocation = 'norwayeast',  # Adding DR location for bootstrapping DR RG
   [string]$OpsRg = 'rg-fnz-poc-ops-se',
   [string]$UamiName = 'uami-fnz-poc-tf-se',
 
@@ -191,6 +192,7 @@ Write-Host "Container ensured: $TfstateContainer"
 Write-Host "`n== SQL RG / UAMI =="
 
 Invoke-Az @('group','create','-n',$SQLRg,  '-l',$Location) | Out-Null
+Invoke-Az @('group','create','-n',$SqlDrRg,  '-l',$SqlDrLocation) | Out-Null # Ensure DR RG is created
 Invoke-Az @('group','create','-n',$OpsRg,  '-l',$Location) | Out-Null
 
 $uami = Invoke-AzJson @('identity','create','-g',$SQLRg,'-n',$UamiName,'-l',$Location)
@@ -209,12 +211,17 @@ Write-Host "`n== RBAC Assignments =="
 
 $SQLRgId = ((Invoke-Az @('group','show','-n',$SQLRg,'--query','id','-o','tsv')).Output | Out-String).Trim()
 if ([string]::IsNullOrWhiteSpace($SQLRgId)) { throw "Could not resolve SQL RG ID." }
+$SqlDrRgId = ((Invoke-Az @('group','show','-n',$SqlDrRg,'--query','id','-o','tsv')).Output | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($SqlDrRgId)) { throw "Could not resolve SQL DR RG ID." }
 $OpsRgId = ((Invoke-Az @('group','show','-n',$OpsRg,'--query','id','-o','tsv')).Output | Out-String).Trim()
 if ([string]::IsNullOrWhiteSpace($OpsRgId)) { throw "Could not resolve OPS RG ID." }
 
 # Contributor on SQL RG
 Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $SQLRgId
 Write-Host "RBAC OK: Contributor on $SQLRg"
+# Contributor on SQL DR RG
+Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $SqlDrRgId
+Write-Host "RBAC OK: Contributor on $SqlDrRg"
 # Contributor on OPS RG
 Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $OpsRgId
 Write-Host "RBAC OK: Contributor on $OpsRg"
@@ -246,6 +253,7 @@ Write-Host "`n== Writing $OutEnvPs1 =="
 # Defaults
 `$env:TF_LOCATION             = "$Location"
 `$env:TF_SQL_RG               = "$SQLRg"
+`$env:TF_SQL_DR_RG            = "$SqlDrRg"
 `$env:TF_OPS_RG               = "$OpsRg"
 
 # UAMI for later pipelines / automation
