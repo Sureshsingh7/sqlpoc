@@ -319,6 +319,37 @@ resource "azurerm_network_security_rule" "runner_outbound_https" {
   network_security_group_name = azurerm_network_security_group.nsg_runner.name
 }
 
+# --- Cross-Region Rules (Primary) ---
+resource "azurerm_network_security_rule" "allow_dr_inbound_sql1" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-DR-Inbound"
+  priority                    = 130
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.dr_sql_vnet_address_space[0]
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.nsg_sql1.name
+}
+
+resource "azurerm_network_security_rule" "allow_dr_inbound_sql2" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-DR-Inbound"
+  priority                    = 130
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.dr_sql_vnet_address_space[0]
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.nsg_sql2.name
+}
+
 # -----------------------------------------------------------------------------
 # Bastion Host
 # -----------------------------------------------------------------------------
@@ -533,8 +564,11 @@ resource "azurerm_subnet_network_security_group_association" "dr_sql2" {
   network_security_group_id = azurerm_network_security_group.dr_nsg_sql2[0].id
 }
 
-# DR NSG Rules (Example subset)
-resource "azurerm_network_security_rule" "dr_rdp_from_bastion" {
+# DR NSG Rules
+
+# --- DR SQL1 Rules ---
+
+resource "azurerm_network_security_rule" "dr_rdp_to_sql1_from_bastion" {
   count                       = var.is_dr_enabled ? 1 : 0
   name                        = "Allow-RDP-From-Bastion"
   priority                    = 100
@@ -544,7 +578,145 @@ resource "azurerm_network_security_rule" "dr_rdp_from_bastion" {
   source_port_range           = "*"
   destination_port_range      = "3389"
   source_address_prefix       = var.subnet_bastion_prefix
-  destination_address_prefix  = "*"
+  destination_address_prefix  = var.dr_sql_subnet_sql1_prefix
   resource_group_name         = azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
 }
+
+resource "azurerm_network_security_rule" "dr_outbound_https_sql1" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-Outbound-HTTPS"
+  priority                    = 110
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "443"
+  source_address_prefix       = var.dr_sql_subnet_sql1_prefix
+  destination_address_prefix  = "Internet"
+  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
+}
+
+resource "azurerm_network_security_rule" "dr_outbound_kms_sql1" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-Outbound-KMS"
+  priority                    = 100
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "1688"
+  source_address_prefix       = var.dr_sql_subnet_sql1_prefix
+  destination_address_prefix  = "AzureCloud"
+  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
+}
+
+resource "azurerm_network_security_rule" "dr_wsfc_heartbeat_sql1" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-WSFC-Heartbeat"
+  priority                    = 120
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "3343"
+  source_address_prefix       = var.dr_sql_subnet_sql2_prefix
+  destination_address_prefix  = var.dr_sql_subnet_sql1_prefix
+  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
+}
+
+resource "azurerm_network_security_rule" "dr_primary_inbound_sql1" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-Primary-Inbound"
+  priority                    = 130
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*" # Allow full communication for mirroring/AG
+  source_address_prefix       = var.sql_vnet_address_space[0]
+  destination_address_prefix  = var.dr_sql_subnet_sql1_prefix
+  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
+}
+
+# --- DR SQL2 Rules ---
+
+resource "azurerm_network_security_rule" "dr_rdp_to_sql2_from_bastion" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-RDP-From-Bastion"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "3389"
+  source_address_prefix       = var.subnet_bastion_prefix
+  destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
+  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
+}
+
+resource "azurerm_network_security_rule" "dr_outbound_https_sql2" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-Outbound-HTTPS"
+  priority                    = 110
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "443"
+  source_address_prefix       = var.dr_sql_subnet_sql2_prefix
+  destination_address_prefix  = "Internet"
+  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
+}
+
+resource "azurerm_network_security_rule" "dr_outbound_kms_sql2" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-Outbound-KMS"
+  priority                    = 100
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "1688"
+  source_address_prefix       = var.dr_sql_subnet_sql2_prefix
+  destination_address_prefix  = "AzureCloud"
+  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
+}
+
+resource "azurerm_network_security_rule" "dr_wsfc_heartbeat_sql2" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-WSFC-Heartbeat"
+  priority                    = 120
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "3343"
+  source_address_prefix       = var.dr_sql_subnet_sql1_prefix
+  destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
+  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
+}
+
+resource "azurerm_network_security_rule" "dr_primary_inbound_sql2" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-Primary-Inbound"
+  priority                    = 130
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*" # Allow full communication for mirroring/AG
+  source_address_prefix       = var.sql_vnet_address_space[0]
+  destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
+  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
+}
+
