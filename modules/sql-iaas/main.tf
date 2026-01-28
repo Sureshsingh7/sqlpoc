@@ -13,10 +13,9 @@ locals {
   is_ha_dr_deployment = var.is_ha
   vm_count            = local.is_ha_dr_deployment ? 2 : 1
 
-  # Naming convention: {prefix}-sql{01,02} (Modified to stay under 15 char limit for DR)
-  # For DR, we might want to continue the sequence or use a suffix? 
-  # Assuming unique name_prefix per deployment:
-  vm_names = [for i in range(1, local.vm_count + 1) : "${var.name_prefix}-sql${format("%02d", i)}"]
+  # Naming convention: {prefix}-sql-{01,02} for Primary (legacy), {prefix}-sql{01,02} for DR (compact)
+  vm_separator = var.is_dr ? "" : "-"
+  vm_names     = [for i in range(1, local.vm_count + 1) : "${var.name_prefix}-sql${local.vm_separator}${format("%02d", i)}"]
   vm_map   = { for idx, name in local.vm_count > 0 ? range(local.vm_count) : [] : local.vm_names[idx] => idx }
 
   # Storage configuration
