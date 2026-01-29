@@ -463,7 +463,7 @@ resource "azurerm_virtual_network" "dr_sql" {
   count               = var.is_dr_enabled ? 1 : 0
   name                = local.dr_sql_vnet_name
   location            = var.dr_location
-  resource_group_name = data.data.azurerm_resource_group.dr_sql[0].name
+  resource_group_name = data.azurerm_resource_group.dr_sql[0].name
   address_space       = var.dr_sql_vnet_address_space
   tags                = local.tags
 }
@@ -471,7 +471,7 @@ resource "azurerm_virtual_network" "dr_sql" {
 resource "azurerm_subnet" "dr_sql_sql1" {
   count                = var.is_dr_enabled ? 1 : 0
   name                 = local.dr_snet_sql1_name
-  resource_group_name  = data.data.azurerm_resource_group.dr_sql[0].name
+  resource_group_name  = data.azurerm_resource_group.dr_sql[0].name
   virtual_network_name = azurerm_virtual_network.dr_sql[0].name
   address_prefixes     = [var.dr_sql_subnet_sql1_prefix]
 }
@@ -479,7 +479,7 @@ resource "azurerm_subnet" "dr_sql_sql1" {
 resource "azurerm_subnet" "dr_sql_sql2" {
   count                = var.is_dr_enabled ? 1 : 0
   name                 = local.dr_snet_sql2_name
-  resource_group_name  = data.data.azurerm_resource_group.dr_sql[0].name
+  resource_group_name  = data.azurerm_resource_group.dr_sql[0].name
   virtual_network_name = azurerm_virtual_network.dr_sql[0].name
   address_prefixes     = [var.dr_sql_subnet_sql2_prefix]
 }
@@ -487,7 +487,7 @@ resource "azurerm_subnet" "dr_sql_sql2" {
 resource "azurerm_subnet" "dr_sql_pep" {
   count                             = var.is_dr_enabled ? 1 : 0
   name                              = local.dr_snet_pep_name
-  resource_group_name               = data.data.azurerm_resource_group.dr_sql[0].name
+  resource_group_name               = data.azurerm_resource_group.dr_sql[0].name
   virtual_network_name              = azurerm_virtual_network.dr_sql[0].name
   address_prefixes                  = [var.dr_sql_subnet_pep_prefix]
   private_endpoint_network_policies = "Enabled"
@@ -497,7 +497,7 @@ resource "azurerm_subnet" "dr_sql_pep" {
 resource "azurerm_virtual_network_peering" "dr_to_primary" {
   count                        = var.is_dr_enabled ? 1 : 0
   name                         = "${local.dr_sql_vnet_name}-to-${local.sql_vnet_name}"
-  resource_group_name          = data.data.azurerm_resource_group.dr_sql[0].name
+  resource_group_name          = data.azurerm_resource_group.dr_sql[0].name
   virtual_network_name         = azurerm_virtual_network.dr_sql[0].name
   remote_virtual_network_id    = azurerm_virtual_network.sql.id
   allow_virtual_network_access = true
@@ -539,7 +539,7 @@ resource "azurerm_network_security_group" "dr_nsg_sql1" {
   count               = var.is_dr_enabled ? 1 : 0
   name                = local.dr_nsg_sql1_name
   location            = var.dr_location
-  resource_group_name = data.data.azurerm_resource_group.dr_sql[0].name
+  resource_group_name = data.azurerm_resource_group.dr_sql[0].name
   tags                = local.tags
 }
 
@@ -547,7 +547,7 @@ resource "azurerm_network_security_group" "dr_nsg_sql2" {
   count               = var.is_dr_enabled ? 1 : 0
   name                = local.dr_nsg_sql2_name
   location            = var.dr_location
-  resource_group_name = data.data.azurerm_resource_group.dr_sql[0].name
+  resource_group_name = data.azurerm_resource_group.dr_sql[0].name
   tags                = local.tags
 }
 
@@ -718,4 +718,5 @@ resource "azurerm_network_security_rule" "dr_primary_inbound_sql2" {
   resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
 }
+
 
