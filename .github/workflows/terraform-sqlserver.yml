@@ -260,6 +260,41 @@ jobs:
              done
           fi
 
+      - name: Remove DR resources with old resource group from state
+        if: ${{ github.event.inputs.deployment_preset == 'dev-ha-dr' }}
+        run: |
+          set -euo pipefail
+          
+          echo "Checking for DR resources with old resource group in state..."
+          
+          # List all DR module resources
+          if terraform state list 2>/dev/null | grep -q 'module.sql_cluster_dr'; then
+            echo "Found DR resources in state. Checking resource group configuration..."
+            
+            # Try to get a DR resource and check its RG
+            sample_disk=$(terraform state list 2>/dev/null | grep 'module.sql_cluster_dr.*azurerm_managed_disk' | head -n 1 || true)
+            
+            if [ -n "$sample_disk" ]; then
+              disk_rg=$(terraform state show "$sample_disk" 2>/dev/null | grep 'resource_group_name' | head -n 1 | awk -F'"' '{print $2}' || true)
+              
+              if [ -n "$disk_rg" ] && [ "$disk_rg" != "$SQL_DR_RG" ]; then
+                echo "⚠️  State contains DR resources from old RG: $disk_rg (expected: $SQL_DR_RG)"
+                echo "Removing all DR module resources from state to allow fresh creation..."
+                
+                terraform state list | grep 'module.sql_cluster_dr' | while read -r resource; do
+                  echo "Removing: $resource"
+                  terraform state rm "$resource" || true
+                done
+                
+                echo "✅ DR resources removed from state. They will be recreated in the correct RG."
+              else
+                echo "DR resources are already in the correct RG: $SQL_DR_RG"
+              fi
+            fi
+          else
+            echo "No DR resources in state (fresh deployment)"
+          fi
+
       - name: "Preflight: fail fast on disk SKU drift (prevents VM replacement)"
         run: |
           set -euo pipefail
