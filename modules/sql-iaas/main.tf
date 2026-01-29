@@ -144,7 +144,7 @@ module "sql_vm" {
   os_disk = {
     name                 = "${each.key}-os"
     caching              = "ReadWrite"
-    storage_account_type = "Premium_LRS"
+    storage_account_type = "Standard_LRS"
     disk_size_gb         = 128
   }
 

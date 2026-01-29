@@ -98,7 +98,7 @@ variable "data_disk_size_gb" {
 
 variable "data_disk_type" {
   type    = string
-  default = "Premium_LRS"
+  default = "Standard_LRS"
 }
 
 variable "log_disk_size_gb" {
@@ -108,7 +108,7 @@ variable "log_disk_size_gb" {
 
 variable "log_disk_type" {
   type    = string
-  default = "Premium_LRS"
+  default = "Standard_LRS"
 }
 
 variable "tempdb_disk_size_gb" {
@@ -118,7 +118,7 @@ variable "tempdb_disk_size_gb" {
 
 variable "tempdb_disk_type" {
   type    = string
-  default = "Premium_LRS"
+  default = "Standard_LRS"
 }
 
 variable "failover_cluster_name" {

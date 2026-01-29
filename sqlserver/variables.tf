@@ -118,7 +118,7 @@ variable "witness_storage_security_control_tag_value" {
 variable "os_disk_type" {
   type        = string
   description = "OS disk storage type"
-  default     = "Premium_LRS"
+  default     = "Standard_LRS"
 }
 
 variable "os_disk_size_gb" {
@@ -129,8 +129,8 @@ variable "os_disk_size_gb" {
 
 variable "data_disk_type" {
   type        = string
-  description = "SQL data disk storage type (Premium_LRS for production)"
-  default     = "Premium_LRS"
+  description = "SQL data disk storage type (Standard_LRS for production)"
+  default     = "Standard_LRS"
 }
 
 variable "data_disk_count" {
@@ -151,8 +151,8 @@ variable "data_disk_size_gb" {
 
 variable "log_disk_type" {
   type        = string
-  description = "SQL log disk storage type (Premium_LRS recommended for production)"
-  default     = "Premium_LRS"
+  description = "SQL log disk storage type (Standard_LRS recommended for production)"
+  default     = "Standard_LRS"
 }
 
 variable "log_disk_size_gb" {
@@ -163,8 +163,8 @@ variable "log_disk_size_gb" {
 
 variable "tempdb_disk_type" {
   type        = string
-  description = "SQL tempdb disk storage type (Premium_LRS recommended for production)"
-  default     = "Premium_LRS"
+  description = "SQL tempdb disk storage type (Standard_LRS recommended for production)"
+  default     = "Standard_LRS"
 }
 
 variable "tempdb_disk_size_gb" {
