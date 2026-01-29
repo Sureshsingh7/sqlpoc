@@ -453,18 +453,17 @@ resource "azurerm_subnet_nat_gateway_association" "sql2" {
 # DR Resources (Conditional)
 # -----------------------------------------------------------------------------
 
-resource "azurerm_resource_group" "dr_sql" {
-  count    = var.is_dr_enabled ? 1 : 0
-  name     = var.dr_sql_resource_group_name
-  location = var.dr_location
-  tags     = local.tags
+# Use existing resource group for DR (created by bootstrap)
+data "azurerm_resource_group" "dr_sql" {
+  count = var.is_dr_enabled ? 1 : 0
+  name  = var.dr_sql_resource_group_name
 }
 
 resource "azurerm_virtual_network" "dr_sql" {
   count               = var.is_dr_enabled ? 1 : 0
   name                = local.dr_sql_vnet_name
   location            = var.dr_location
-  resource_group_name = azurerm_resource_group.dr_sql[0].name
+  resource_group_name = data.data.azurerm_resource_group.dr_sql[0].name
   address_space       = var.dr_sql_vnet_address_space
   tags                = local.tags
 }
@@ -472,7 +471,7 @@ resource "azurerm_virtual_network" "dr_sql" {
 resource "azurerm_subnet" "dr_sql_sql1" {
   count                = var.is_dr_enabled ? 1 : 0
   name                 = local.dr_snet_sql1_name
-  resource_group_name  = azurerm_resource_group.dr_sql[0].name
+  resource_group_name  = data.data.azurerm_resource_group.dr_sql[0].name
   virtual_network_name = azurerm_virtual_network.dr_sql[0].name
   address_prefixes     = [var.dr_sql_subnet_sql1_prefix]
 }
@@ -480,7 +479,7 @@ resource "azurerm_subnet" "dr_sql_sql1" {
 resource "azurerm_subnet" "dr_sql_sql2" {
   count                = var.is_dr_enabled ? 1 : 0
   name                 = local.dr_snet_sql2_name
-  resource_group_name  = azurerm_resource_group.dr_sql[0].name
+  resource_group_name  = data.data.azurerm_resource_group.dr_sql[0].name
   virtual_network_name = azurerm_virtual_network.dr_sql[0].name
   address_prefixes     = [var.dr_sql_subnet_sql2_prefix]
 }
@@ -488,7 +487,7 @@ resource "azurerm_subnet" "dr_sql_sql2" {
 resource "azurerm_subnet" "dr_sql_pep" {
   count                             = var.is_dr_enabled ? 1 : 0
   name                              = local.dr_snet_pep_name
-  resource_group_name               = azurerm_resource_group.dr_sql[0].name
+  resource_group_name               = data.data.azurerm_resource_group.dr_sql[0].name
   virtual_network_name              = azurerm_virtual_network.dr_sql[0].name
   address_prefixes                  = [var.dr_sql_subnet_pep_prefix]
   private_endpoint_network_policies = "Enabled"
@@ -498,7 +497,7 @@ resource "azurerm_subnet" "dr_sql_pep" {
 resource "azurerm_virtual_network_peering" "dr_to_primary" {
   count                        = var.is_dr_enabled ? 1 : 0
   name                         = "${local.dr_sql_vnet_name}-to-${local.sql_vnet_name}"
-  resource_group_name          = azurerm_resource_group.dr_sql[0].name
+  resource_group_name          = data.data.azurerm_resource_group.dr_sql[0].name
   virtual_network_name         = azurerm_virtual_network.dr_sql[0].name
   remote_virtual_network_id    = azurerm_virtual_network.sql.id
   allow_virtual_network_access = true
@@ -518,7 +517,7 @@ resource "azurerm_virtual_network_peering" "primary_to_dr" {
 resource "azurerm_virtual_network_peering" "dr_to_ops" {
   count                        = var.is_dr_enabled ? 1 : 0
   name                         = "${local.dr_sql_vnet_name}-to-${local.ops_vnet_name}"
-  resource_group_name          = azurerm_resource_group.dr_sql[0].name
+  resource_group_name          = data.azurerm_resource_group.dr_sql[0].name
   virtual_network_name         = azurerm_virtual_network.dr_sql[0].name
   remote_virtual_network_id    = azurerm_virtual_network.ops.id
   allow_virtual_network_access = true
@@ -540,7 +539,7 @@ resource "azurerm_network_security_group" "dr_nsg_sql1" {
   count               = var.is_dr_enabled ? 1 : 0
   name                = local.dr_nsg_sql1_name
   location            = var.dr_location
-  resource_group_name = azurerm_resource_group.dr_sql[0].name
+  resource_group_name = data.data.azurerm_resource_group.dr_sql[0].name
   tags                = local.tags
 }
 
@@ -548,7 +547,7 @@ resource "azurerm_network_security_group" "dr_nsg_sql2" {
   count               = var.is_dr_enabled ? 1 : 0
   name                = local.dr_nsg_sql2_name
   location            = var.dr_location
-  resource_group_name = azurerm_resource_group.dr_sql[0].name
+  resource_group_name = data.data.azurerm_resource_group.dr_sql[0].name
   tags                = local.tags
 }
 
@@ -579,7 +578,7 @@ resource "azurerm_network_security_rule" "dr_rdp_to_sql1_from_bastion" {
   destination_port_range      = "3389"
   source_address_prefix       = var.subnet_bastion_prefix
   destination_address_prefix  = var.dr_sql_subnet_sql1_prefix
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
 }
 
@@ -594,7 +593,7 @@ resource "azurerm_network_security_rule" "dr_outbound_https_sql1" {
   destination_port_range      = "443"
   source_address_prefix       = var.dr_sql_subnet_sql1_prefix
   destination_address_prefix  = "Internet"
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
 }
 
@@ -609,7 +608,7 @@ resource "azurerm_network_security_rule" "dr_outbound_kms_sql1" {
   destination_port_range      = "1688"
   source_address_prefix       = var.dr_sql_subnet_sql1_prefix
   destination_address_prefix  = "AzureCloud"
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
 }
 
@@ -624,7 +623,7 @@ resource "azurerm_network_security_rule" "dr_wsfc_heartbeat_sql1" {
   destination_port_range      = "3343"
   source_address_prefix       = var.dr_sql_subnet_sql2_prefix
   destination_address_prefix  = var.dr_sql_subnet_sql1_prefix
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
 }
 
@@ -639,7 +638,7 @@ resource "azurerm_network_security_rule" "dr_primary_inbound_sql1" {
   destination_port_range      = "*" # Allow full communication for mirroring/AG
   source_address_prefix       = var.sql_vnet_address_space[0]
   destination_address_prefix  = var.dr_sql_subnet_sql1_prefix
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
 }
 
@@ -656,7 +655,7 @@ resource "azurerm_network_security_rule" "dr_rdp_to_sql2_from_bastion" {
   destination_port_range      = "3389"
   source_address_prefix       = var.subnet_bastion_prefix
   destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
 }
 
@@ -671,7 +670,7 @@ resource "azurerm_network_security_rule" "dr_outbound_https_sql2" {
   destination_port_range      = "443"
   source_address_prefix       = var.dr_sql_subnet_sql2_prefix
   destination_address_prefix  = "Internet"
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
 }
 
@@ -686,7 +685,7 @@ resource "azurerm_network_security_rule" "dr_outbound_kms_sql2" {
   destination_port_range      = "1688"
   source_address_prefix       = var.dr_sql_subnet_sql2_prefix
   destination_address_prefix  = "AzureCloud"
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
 }
 
@@ -701,7 +700,7 @@ resource "azurerm_network_security_rule" "dr_wsfc_heartbeat_sql2" {
   destination_port_range      = "3343"
   source_address_prefix       = var.dr_sql_subnet_sql1_prefix
   destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
 }
 
@@ -716,7 +715,7 @@ resource "azurerm_network_security_rule" "dr_primary_inbound_sql2" {
   destination_port_range      = "*" # Allow full communication for mirroring/AG
   source_address_prefix       = var.sql_vnet_address_space[0]
   destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
-  resource_group_name         = azurerm_resource_group.dr_sql[0].name
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
 }
 
