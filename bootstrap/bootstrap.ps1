@@ -11,8 +11,9 @@ param (
   [string]$BootstrapRg = 'rg-fnz-poc-tfstate-se',
   [string]$TfstateContainer = 'tfstate',
   [string]$TfstateKey = 'fnz-poc-se.tfstate',
-  [string]$SqlDrRg = 'rg-fnz-poc-sql-dr-nwe',
-  [string]$SqlDrLocation = 'norwayeast',  # Adding DR location for bootstrapping DR RG
+  [string]$SQLRg = 'rg-fnz-poc-sql-se',
+  [string]$SqlDrRg = 'rg-fnz-poc-sql-dr-swc',  # DR RG name
+  [string]$SqlDrLocation = 'swedencentral',  # Adding DR location for bootstrapping DR RG
   [string]$OpsRg = 'rg-fnz-poc-ops-se',
   [string]$UamiName = 'uami-fnz-poc-tf-se',
 
@@ -189,12 +190,11 @@ Write-Host "Container ensured: $TfstateContainer"
 # -------------------------
 # 3) SQL RG + UAMI
 # -------------------------
-Write-Host "`n== SQL RG / UAMI =="
+Write-Host "`n== All SQL RG / UAMI =="
 
 Invoke-Az @('group','create','-n',$SQLRg,  '-l',$Location) | Out-Null
 Invoke-Az @('group','create','-n',$SqlDrRg,  '-l',$SqlDrLocation) | Out-Null # Ensure DR RG is created
 Invoke-Az @('group','create','-n',$OpsRg,  '-l',$Location) | Out-Null
-
 $uami = Invoke-AzJson @('identity','create','-g',$SQLRg,'-n',$UamiName,'-l',$Location)
 $UamiClientId    = $uami.clientId
 $UamiPrincipalId = $uami.principalId
@@ -255,6 +255,7 @@ Write-Host "`n== Writing $OutEnvPs1 =="
 `$env:TF_SQL_RG               = "$SQLRg"
 `$env:TF_SQL_DR_RG            = "$SqlDrRg"
 `$env:TF_OPS_RG               = "$OpsRg"
+`$env:TF_SQL_DR_LOCATION      = "$SqlDrLocation"
 
 # UAMI for later pipelines / automation
 `$env:TF_UAMI_NAME            = "$UamiName"

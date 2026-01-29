@@ -269,13 +269,13 @@ variable "enable_dr" {
 variable "dr_location" {
   type        = string
   description = "Azure region for DR"
-  default     = "swedensouth"
+  default     = "swedencentral"
 }
 
 variable "dr_sql_resource_group_name" {
   type        = string
   description = "Resource Group for DR SQL resources"
-  default     = "rg-fnz-poc-sql-dr-ss"
+  default     = "rg-fnz-poc-sql-dr-swc"
 }
 
 # Used to configure DR node to talk to Primary Cluster
