@@ -12,7 +12,7 @@ param (
   [string]$TfstateContainer = 'tfstate',
   [string]$TfstateKey = 'fnz-poc-se.tfstate',
   [string]$SQLRg = 'rg-fnz-poc-sql-se',
-  [string]$SqlDrRg = 'rg-fnz-poc-sql-dr-swc',  # DR RG name
+  [string]$SqlDrRg = 'rg-fnz-poc-sql-dr-swc',  # DR RG name (VMs and Network)
   [string]$SqlDrLocation = 'swedencentral',  # Adding DR location for bootstrapping DR RG
   [string]$OpsRg = 'rg-fnz-poc-ops-se',
   [string]$UamiName = 'uami-fnz-poc-tf-se',
@@ -193,7 +193,7 @@ Write-Host "Container ensured: $TfstateContainer"
 Write-Host "`n== All SQL RG / UAMI =="
 
 Invoke-Az @('group','create','-n',$SQLRg,  '-l',$Location) | Out-Null
-Invoke-Az @('group','create','-n',$SqlDrRg,  '-l',$SqlDrLocation) | Out-Null # Ensure DR RG is created
+Invoke-Az @('group','create','-n',$SqlDrRg,  '-l',$SqlDrLocation) | Out-Null # Ensure DR RG is created (VMs and Network)
 Invoke-Az @('group','create','-n',$OpsRg,  '-l',$Location) | Out-Null
 $uami = Invoke-AzJson @('identity','create','-g',$SQLRg,'-n',$UamiName,'-l',$Location)
 $UamiClientId    = $uami.clientId
@@ -219,7 +219,7 @@ if ([string]::IsNullOrWhiteSpace($OpsRgId)) { throw "Could not resolve OPS RG ID
 # Contributor on SQL RG
 Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $SQLRgId
 Write-Host "RBAC OK: Contributor on $SQLRg"
-# Contributor on SQL DR RG
+# Contributor on SQL DR RG (covers VMs and Network resources)
 Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Contributor' -Scope $SqlDrRgId
 Write-Host "RBAC OK: Contributor on $SqlDrRg"
 # Contributor on OPS RG
