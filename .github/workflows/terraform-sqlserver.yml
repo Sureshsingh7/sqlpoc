@@ -39,7 +39,7 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
       ARM_SKIP_AZURECLI_AUTH: "true"
       SQL_RG: rg-fnz-poc-sql-se
-      SQL_DR_RG: rg-fnz-poc-sql-dr-nwe
+      SQL_DR_RG: rg-fnz-poc-sql-dr-swc
 
       # Defaults (overridden in "Set Deployment Context" step)
       TF_VAR_FILE: "env/dev.tfvars"
