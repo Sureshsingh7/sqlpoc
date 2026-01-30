@@ -57,7 +57,7 @@ terraform apply tfplan
 Via GitHub Actions:
 ```
 Workflow: terraform-ops
-Preset: primary
+Preset: dev
 ```
 
 Or locally:
@@ -80,7 +80,7 @@ cd ..\bootstrap
 Via GitHub Actions:
 ```
 Workflow: terraform-ops
-Preset: primary-dr
+Preset: dev-ha-dr
 ```
 
 Or locally:
@@ -90,7 +90,7 @@ terraform plan -var="enable_dr=true" -out=tfplan
 terraform apply tfplan
 ```
 
-**Important:** The `primary-dr` preset uses targeted apply to ONLY deploy DR Key Vault resources. It will not touch the existing PRIMARY Key Vault, avoiding unnecessary updates and RBAC errors.
+**Important:** The `dev-ha-dr` preset uses targeted apply to ONLY deploy DR Key Vault resources. It will not touch the existing PRIMARY Key Vault, avoiding unnecessary updates and RBAC errors.
 
 **Step 4: Grant UAMI Access to DR Key Vault**
 

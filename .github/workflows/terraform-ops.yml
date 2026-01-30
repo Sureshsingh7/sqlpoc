@@ -6,11 +6,11 @@ on:
       deployment_preset:
         description: 'Deployment Configuration Preset'
         required: true
-        default: 'primary'
+        default: 'dev'
         type: choice
         options:
-          - 'primary'
-          - 'primary-dr'
+          - 'dev'
+          - 'dev-ha-dr'
 
 jobs:
   terraform-ops:
@@ -42,11 +42,11 @@ jobs:
         run: |
           echo "Selected deployment preset: ${{ github.event.inputs.deployment_preset }}"
 
-          if [ "${{ github.event.inputs.deployment_preset }}" == "primary-dr" ]; then
+          if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha-dr" ]; then
             echo "Configuring for PRIMARY + DR Key Vaults"
             echo "TF_VAR_enable_dr=true" >> $GITHUB_ENV
           else
-            echo "Configuring for PRIMARY only"
+            echo "Configuring for PRIMARY only (dev)"
             echo "TF_VAR_enable_dr=false" >> $GITHUB_ENV
           fi
 
