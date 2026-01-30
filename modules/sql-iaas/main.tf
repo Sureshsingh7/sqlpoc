@@ -326,6 +326,12 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
     value = var.is_ha ? base64encode(var.sql_vm_admin_password) : ""
   }
 
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "10m"
+  }
+
   tags = var.tags
 }
 
@@ -380,6 +386,12 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
   parameter {
     name  = "ClusterIPs"
     value = azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
+  }
+
+  timeouts {
+    create = "60m"
+    update = "60m"
+    delete = "30m"
   }
 
   tags = var.tags
