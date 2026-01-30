@@ -242,8 +242,8 @@ function EnableSqlAlwaysOn {
     L "Enabling SQL Server Always On"
 
     try {
-        # Try to install NuGet and dbatools with timeout (may require internet access)
-        LD "Attempting to install NuGet provider and dbatools (timeout: 2 minutes)"
+        # Install NuGet and dbatools with timeout to prevent infinite hang
+        LD "Installing NuGet provider and dbatools (timeout: 2 minutes)"
         
         $job = Start-Job -ScriptBlock {
             Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers -ErrorAction Stop | Out-Null
@@ -255,18 +255,17 @@ function EnableSqlAlwaysOn {
         if ($null -eq $completed) {
             Stop-Job $job
             Remove-Job $job -Force
-            LW "NuGet/dbatools installation timed out (no internet or network issue). Skipping Always On enablement."
-            LW "You can enable Always On manually later if needed."
-            return
+            LE "NuGet/dbatools installation timed out after 2 minutes (network/internet access issue)"
+            throw "Failed to install required PowerShell modules for Always On enablement"
         }
         
-        $jobError = Receive-Job $job -ErrorAction SilentlyContinue
+        $jobResult = Receive-Job $job -ErrorAction SilentlyContinue
+        $jobError = $job.ChildJobs[0].Error
         Remove-Job $job -Force
         
         if ($jobError) {
-            LW "Failed to install dbatools: $jobError"
-            LW "Skipping Always On enablement - you can enable it manually later."
-            return
+            LE "Failed to install dbatools: $($jobError | Out-String)"
+            throw "Failed to install required PowerShell modules: $jobError"
         }
 
         Import-Module dbatools -Force -ErrorAction Stop
@@ -278,9 +277,8 @@ function EnableSqlAlwaysOn {
         Start-Sleep -Seconds 30
         L "Always On enabled on $env:COMPUTERNAME"
     } catch {
-        LW "Failed to enable Always On: $_"
-        LW "This is non-critical - you can enable Always On manually later if needed"
-        $_ | Out-File -FilePath $err -Append
+        LE "Failed to enable Always On: $_"
+        throw
     }
 }
 
