@@ -161,13 +161,23 @@ jobs:
       - name: Grant UAMI Key Vault access on DR resource group
         if: env.TF_VAR_enable_dr == 'true'
         run: |
-          echo "Granting UAMI 'Key Vault Secrets Officer' role on DR resource group..."
+          echo "Granting UAMI Key Vault roles on DR resource group..."
+          
+          # Secrets Officer - allows creating/updating secrets during ops deployment
           az role assignment create \
             --role "Key Vault Secrets Officer" \
             --assignee-object-id ${{ secrets.TERRAFORM_UAMI_OBJECT_ID }} \
             --assignee-principal-type ServicePrincipal \
             --scope /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/rg-fnz-poc-sql-dr-swc \
-            --only-show-errors || echo "Role assignment may already exist"
+            --only-show-errors || echo "Secrets Officer role may already exist"
+          
+          # Secrets User - allows reading secrets via Terraform data sources  
+          az role assignment create \
+            --role "Key Vault Secrets User" \
+            --assignee-object-id ${{ secrets.TERRAFORM_UAMI_OBJECT_ID }} \
+            --assignee-principal-type ServicePrincipal \
+            --scope /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/rg-fnz-poc-sql-dr-swc \
+            --only-show-errors || echo "Secrets User role may already exist"
           
           echo "Waiting 10 seconds for RBAC to propagate..."
           sleep 10

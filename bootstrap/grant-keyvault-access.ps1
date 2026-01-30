@@ -1,10 +1,12 @@
 # grant-keyvault-access.ps1
-# Grants Terraform UAMI "Key Vault Secrets Officer" role on PRIMARY and DR Key Vaults
+# Grants Terraform UAMI "Key Vault Secrets Officer" and "Key Vault Secrets User" roles on PRIMARY and DR Key Vaults
 #
 # REQUIRED: Run this script AFTER deploying the PRIMARY Key Vault (terraform-ops, preset: dev)
 #
-# Why needed: The Terraform UAMI needs "Key Vault Secrets Officer" to create and manage 
-# secrets, but cannot grant itself this role (would require "User Access Administrator" 
+# Why needed: The Terraform UAMI needs:
+# - "Key Vault Secrets Officer" to create and manage secrets
+# - "Key Vault Secrets User" to read secrets via Terraform data sources
+# The UAMI cannot grant itself these roles (would require "User Access Administrator" 
 # privilege, which is a security risk). This script grants the access manually for PRIMARY.
 # For DR, the workflow automatically grants access via Azure CLI.
 
@@ -64,7 +66,8 @@ $primaryKvCheck = Invoke-Az @('keyvault','show','-n',$PrimaryKvName,'-g',$OpsRg,
 if ($primaryKvCheck.ExitCode -eq 0) {
   $primaryScope = ($primaryKvCheck.Output | Out-String).Trim()
   Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Key Vault Secrets Officer' -Scope $primaryScope
-  Write-Host "✓ PRIMARY Key Vault access granted"
+  Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Key Vault Secrets User' -Scope $primaryScope
+  Write-Host "✓ PRIMARY Key Vault access granted (Officer + User)"
 } else {
   Write-Warning "PRIMARY Key Vault not found: $PrimaryKvName (may not be deployed yet)"
 }
@@ -75,7 +78,8 @@ $drKvCheck = Invoke-Az @('keyvault','show','-n',$DrKvName,'-g',$DrRg,'--query','
 if ($drKvCheck.ExitCode -eq 0) {
   $drScope = ($drKvCheck.Output | Out-String).Trim()
   Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Key Vault Secrets Officer' -Scope $drScope
-  Write-Host "✓ DR Key Vault access granted"
+  Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Key Vault Secrets User' -Scope $drScope
+  Write-Host "✓ DR Key Vault access granted (Officer + User)"
 } else {
   Write-Warning "DR Key Vault not found: $DrKvName (deploy ops module first)"
 }
