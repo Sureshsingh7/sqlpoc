@@ -108,6 +108,19 @@ variable "cluster_local_admin_username" {
   default     = "clusteradmin"
 }
 
+variable "dr_cluster_local_admin_username" {
+  type        = string
+  description = "Local user to create on DR SQL VMs for workgroup WSFC administration (defaults to cluster_local_admin_username if not set)"
+  default     = ""
+}
+
+variable "dr_sql_admin_password_override" {
+  type        = string
+  description = "Optional: DR-specific SQL admin password. If not provided, uses primary password (not recommended for production DR)"
+  sensitive   = true
+  default     = ""
+}
+
 variable "witness_storage_security_control_tag_value" {
   type        = string
   description = "Value for the SecurityControl tag to bypass the org policy that disables Shared Key access on storage accounts"

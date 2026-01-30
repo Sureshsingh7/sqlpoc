@@ -10,6 +10,9 @@ sql_name_prefix = "poc-ha"
 
 sql_admin_username = "sqladmin"
 
+# Cluster admin username for WSFC
+cluster_local_admin_username = "clusteradmin"
+
 # VM sizing
 vm_size = "Standard_D4s_v4"
 
