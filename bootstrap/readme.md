@@ -70,14 +70,9 @@ terraform apply tfplan
 
 **Verify:** Plan should show PRIMARY Key Vault, Runner VM, and Jumpbox creation.
 
-**Step 2: Grant UAMI Access to PRIMARY Key Vault**
+**Note:** Terraform automatically grants the UAMI "Key Vault Secrets Officer" role through `azurerm_role_assignment` resources. No manual steps required!
 
-```powershell
-cd ..\bootstrap
-.\grant-keyvault-access.ps1
-```
-
-**Step 3: Deploy DR Key Vault (when needed)**
+**Step 2: Deploy DR Key Vault (when needed)**
 
 Via GitHub Actions:
 ```
@@ -100,16 +95,8 @@ terraform apply tfplan
 - DR Key Vault creation
 - DR password generation  
 - DR VNet link to shared DNS zone
+- RBAC role assignment for UAMI
 - PRIMARY resources show as "No changes"
-
-**Step 4: Grant UAMI Access to DR Key Vault**
-
-```powershell
-cd ..\bootstrap
-.\grant-keyvault-access.ps1
-```
-
-The script automatically detects both PRIMARY and DR Key Vaults and grants access to any that exist.
 
 ### 3.3 SQL Server (PRIMARY HA + DR)
 

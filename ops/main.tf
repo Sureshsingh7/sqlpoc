@@ -129,6 +129,15 @@ module "kv_private_dns" {
 # -----------------------------------------------------------------------------
 # PRIMARY Key Vault (with private endpoint)
 # -----------------------------------------------------------------------------
+
+# Grant UAMI Key Vault Secrets Officer role on OPS RG (for secret management)
+resource "azurerm_role_assignment" "ops_kv_uami_secrets_officer" {
+  scope                = data.azurerm_resource_group.ops.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = var.terraform_uami_principal_id
+  principal_type       = "ServicePrincipal"
+}
+
 module "ops_kv" {
   source  = "Azure/avm-res-keyvault-vault/azurerm"
   version = "0.10.2"
@@ -144,14 +153,9 @@ module "ops_kv" {
   network_acls                  = null
   tags                          = local.tags
 
-  # Note: Terraform UAMI needs "Key Vault Secrets User" role but cannot assign it to itself
-  # (requires User Access Administrator or Owner permission)
-  # Grant UAMI access manually after Key Vault creation using bootstrap/grant-keyvault-access.ps1
+  # Note: Terraform UAMI gets "Key Vault Secrets Officer" via azurerm_role_assignment above
+  # User access configured here
   role_assignments = var.manage_role_assignments ? {
-    terraform_secrets_officer = {
-      role_definition_id_or_name = "Key Vault Secrets Officer"
-      principal_id               = var.terraform_uami_principal_id
-    }
     suresh_secrets_user = {
       role_definition_id_or_name = "Key Vault Secrets User"
       principal_id               = var.suresh_principal_id
@@ -169,6 +173,9 @@ module "ops_kv" {
       private_dns_zone_resource_ids = [module.kv_private_dns.resource_id]
     }
   }
+
+  # Ensure RBAC is established before creating secrets
+  depends_on = [azurerm_role_assignment.ops_kv_uami_secrets_officer]
 }
 
 # -----------------------------------------------------------------------------
@@ -177,6 +184,15 @@ module "ops_kv" {
 data "azurerm_resource_group" "dr" {
   count = var.enable_dr ? 1 : 0
   name  = var.dr_resource_group_name
+}
+
+# Grant UAMI Key Vault Secrets Officer role on DR RG (for secret management)
+resource "azurerm_role_assignment" "dr_kv_uami_secrets_officer" {
+  count                = var.enable_dr ? 1 : 0
+  scope                = data.azurerm_resource_group.dr[0].id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = var.terraform_uami_principal_id
+  principal_type       = "ServicePrincipal"
 }
 
 module "ops_kv_dr" {
@@ -195,13 +211,9 @@ module "ops_kv_dr" {
   network_acls                  = null
   tags                          = merge(local.tags, { environment = "dr" })
 
-  # Note: Terraform UAMI needs "Key Vault Secrets User" role but cannot assign it to itself
-  # Grant UAMI access manually after Key Vault creation using bootstrap/grant-keyvault-access.ps1
+  # Note: Terraform UAMI gets "Key Vault Secrets Officer" via azurerm_role_assignment above
+  # User access configured here
   role_assignments = var.manage_role_assignments ? {
-    terraform_secrets_officer = {
-      role_definition_id_or_name = "Key Vault Secrets Officer"
-      principal_id               = var.terraform_uami_principal_id
-    }
     suresh_secrets_user = {
       role_definition_id_or_name = "Key Vault Secrets User"
       principal_id               = var.suresh_principal_id
@@ -227,6 +239,9 @@ module "ops_kv_dr" {
       private_dns_zone_resource_ids = [module.kv_private_dns.resource_id]
     }
   }
+
+  # Ensure RBAC is established before creating secrets
+  depends_on = [azurerm_role_assignment.dr_kv_uami_secrets_officer]
 }
 
 # -----------------------------------------------------------------------------
