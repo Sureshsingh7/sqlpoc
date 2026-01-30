@@ -309,9 +309,3 @@ variable "failover_cluster_name" {
   description = "Name of the SQL Server Failover Cluster"
   default     = "sqlpoc-cluster"
 }
-
-variable "skip_cluster_setup" {
-  type        = bool
-  description = "Skip automated cluster setup (deploy VMs only, configure cluster manually later)"
-  default     = false
-}

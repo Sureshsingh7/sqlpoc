@@ -336,7 +336,7 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
 }
 
 resource "azurerm_virtual_machine_run_command" "cluster_setup" {
-  for_each = var.is_ha && !var.skip_cluster_setup ? local.vm_map : {}
+  for_each = var.is_ha ? local.vm_map : {}
 
   name               = "failover-cluster-setup"
   location           = var.location

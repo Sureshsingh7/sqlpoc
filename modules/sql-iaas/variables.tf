@@ -144,8 +144,3 @@ variable "user_assigned_identity_ids" {
   default     = []
 }
 
-variable "skip_cluster_setup" {
-  description = "Skip the automated cluster setup run command. Set to true to deploy VMs only and configure cluster manually."
-  type        = bool
-  default     = false
-}
