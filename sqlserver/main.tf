@@ -9,10 +9,10 @@ locals {
     data.terraform_remote_state.ops.outputs.sql_vm_admin_password,
     data.azurerm_key_vault_secret.sql_vm_admin.value
   )
-  
+
   # DR password: use DR Key Vault secret if DR enabled, otherwise use primary password
   dr_sql_vm_admin_password = var.enable_dr ? data.azurerm_key_vault_secret.dr_sql_vm_admin[0].value : local.sql_vm_admin_password
-  
+
   # DR cluster admin username: use override if provided, otherwise use primary username  
   dr_cluster_local_admin_username = var.dr_cluster_local_admin_username != "" ? var.dr_cluster_local_admin_username : var.cluster_local_admin_username
 }

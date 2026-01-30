@@ -41,6 +41,6 @@ manage_role_assignments = false
 # Controlled by workflow input (TF_VAR_enable_dr)
 # Default: false (PRIMARY only deployment)
 # Set via GitHub Actions workflow parameter when deploying DR resources
-enable_dr              = false  # Override via TF_VAR_enable_dr in workflow
+enable_dr              = false # Override via TF_VAR_enable_dr in workflow
 dr_location            = "swedencentral"
 dr_resource_group_name = "rg-fnz-poc-sql-dr-swc"
