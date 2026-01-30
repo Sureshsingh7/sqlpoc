@@ -164,8 +164,9 @@ jobs:
 
           if [ "$TF_VAR_enable_dr" == "true" ]; then
             echo "DR deployment: Only applying DR Key Vault resources (PRIMARY already exists)"
-            TARGETS="-target=module.ops_kv_dr[0] -target=module.kv_private_dns_dr[0] -target=random_password.dr_sql_vm_admin[0] -target=data.azurerm_resource_group.dr[0]"
+            TARGETS="-target=module.ops_kv_dr[0] -target=module.kv_private_dns -target=random_password.dr_sql_vm_admin[0] -target=data.azurerm_resource_group.dr[0]"
             echo "Applying targets: $TARGETS"
+            echo "Note: Shared DNS zone will be updated to add DR VNet link"
             terraform apply -auto-approve $TARGETS tfplan
           else
             echo "PRIMARY deployment: Applying all resources"

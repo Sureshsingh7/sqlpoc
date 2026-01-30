@@ -94,7 +94,13 @@ terraform apply tfplan
 
 **Important:** The `dev-ha-dr` preset uses targeted apply to ONLY deploy DR Key Vault resources. It will not touch the existing PRIMARY Key Vault, avoiding unnecessary updates and RBAC errors.
 
-**Verify:** Plan should show DR Key Vault, DR Private DNS zone, and DR password creation (3 resources). PRIMARY resources should show as "No changes".
+**Note:** The Private DNS zone `privatelink.vaultcore.azure.net` is shared between PRIMARY and DR Key Vaults. The DR deployment adds a VNet link to this existing zone for the DR VNet.
+
+**Verify:** Plan should show:
+- DR Key Vault creation
+- DR password generation  
+- DR VNet link to shared DNS zone
+- PRIMARY resources show as "No changes"
 
 **Step 4: Grant UAMI Access to DR Key Vault**
 

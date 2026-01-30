@@ -98,7 +98,7 @@ resource "random_password" "jumpbox" {
 }
 
 # -----------------------------------------------------------------------------
-# Private DNS Zone for Key Vault (PRIMARY)
+# Private DNS Zone for Key Vault (shared by PRIMARY and DR)
 # -----------------------------------------------------------------------------
 module "kv_private_dns" {
   source  = "Azure/avm-res-network-privatednszone/azurerm"
@@ -108,39 +108,22 @@ module "kv_private_dns" {
   parent_id   = data.azurerm_resource_group.ops.id
   tags        = local.tags
 
-  virtual_network_links = {
-    ops_vnet = {
-      name               = "link-kv-ops-vnet"
-      virtual_network_id = data.terraform_remote_state.network.outputs.ops_vnet_id
-      autoregistration   = false
-    }
-  }
-}
-
-# -----------------------------------------------------------------------------
-# Private DNS Zone for Key Vault (DR)
-# -----------------------------------------------------------------------------
-module "kv_private_dns_dr" {
-  count   = var.enable_dr ? 1 : 0
-  source  = "Azure/avm-res-network-privatednszone/azurerm"
-  version = "0.4.4"
-
-  domain_name = "privatelink.vaultcore.azure.net"
-  parent_id   = data.azurerm_resource_group.ops.id
-  tags        = merge(local.tags, { environment = "dr" })
-
-  virtual_network_links = {
-    ops_vnet = {
-      name               = "link-kv-dr-ops-vnet"
-      virtual_network_id = data.terraform_remote_state.network.outputs.ops_vnet_id
-      autoregistration   = false
-    }
-    dr_vnet = {
-      name               = "link-kv-dr-sql-vnet"
-      virtual_network_id = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
-      autoregistration   = false
-    }
-  }
+  virtual_network_links = merge(
+    {
+      ops_vnet = {
+        name               = "link-kv-ops-vnet"
+        virtual_network_id = data.terraform_remote_state.network.outputs.ops_vnet_id
+        autoregistration   = false
+      }
+    },
+    var.enable_dr ? {
+      dr_vnet = {
+        name               = "link-kv-dr-sql-vnet"
+        virtual_network_id = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
+        autoregistration   = false
+      }
+    } : {}
+  )
 }
 
 # -----------------------------------------------------------------------------
@@ -241,7 +224,7 @@ module "ops_kv_dr" {
       name                          = "pep-kv-fnz-poc-dr"
       subnet_resource_id            = data.terraform_remote_state.network.outputs.dr_pep_subnet_id
       subresource_name              = "vault"
-      private_dns_zone_resource_ids = [module.kv_private_dns_dr[0].resource_id]
+      private_dns_zone_resource_ids = [module.kv_private_dns.resource_id]
     }
   }
 }
