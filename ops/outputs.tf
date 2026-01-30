@@ -30,7 +30,7 @@ output "dr_key_vault_id" {
 }
 
 output "dr_key_vault_name" {
-  value       = var.enable_dr ? module.ops_kv_dr[0].resource.name : null
+  value       = var.enable_dr ? "kv-fnz-poc-dr-swc" : null
   description = "Name of the DR Key Vault (null if DR disabled)"
 }
 

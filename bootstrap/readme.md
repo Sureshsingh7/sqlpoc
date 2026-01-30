@@ -52,6 +52,7 @@ terraform apply tfplan
 
 ### 3.2 OPS (Key Vaults: PRIMARY + DR, Runner VM, Jumpbox)
 
+**PRIMARY Deployment** (Key Vault, Runner, Jumpbox):
 ```powershell
 cd ..\ops
 terraform init -reconfigure
@@ -59,7 +60,18 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
+**DR Deployment** (DR Key Vault with separate password):
+```powershell
+cd ..\ops
+terraform plan -var="enable_dr=true" -out=tfplan
+terraform apply tfplan
+```
+
 **Note:** Terraform automatically grants the UAMI "Key Vault Secrets User" role on both Key Vaults through the AVM module's built-in RBAC management. No manual post-deployment steps required.
+
+**GitHub Actions:** Use the `enable_dr` workflow input parameter:
+- `enable_dr=false` (default): Deploys only PRIMARY Key Vault
+- `enable_dr=true`: Deploys both PRIMARY and DR Key Vaults
 
 ### 3.3 SQL Server (PRIMARY HA + DR)
 

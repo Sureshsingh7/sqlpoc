@@ -2,6 +2,15 @@ name: terraform-ops
 
 on:
   workflow_dispatch:
+    inputs:
+      enable_dr:
+        description: 'Deploy DR Key Vault resources (true/false)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   terraform-ops:
@@ -125,7 +134,11 @@ jobs:
           fi
 
       - name: Terraform Plan
+        env:
+          TF_VAR_enable_dr: ${{ github.event.inputs.enable_dr || 'false' }}
         run: terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
+        env:
+          TF_VAR_enable_dr: ${{ github.event.inputs.enable_dr || 'false' }}
         run: terraform apply -auto-approve tfplan
