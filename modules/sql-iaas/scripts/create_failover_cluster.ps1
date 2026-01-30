@@ -242,13 +242,34 @@ function EnableSqlAlwaysOn {
     L "Enabling SQL Server Always On"
 
     try {
-        LD "Installing NuGet provider"
-        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers -ErrorAction SilentlyContinue | Out-Null
-        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+        # Try to install NuGet and dbatools with timeout (may require internet access)
+        LD "Attempting to install NuGet provider and dbatools (timeout: 2 minutes)"
+        
+        $job = Start-Job -ScriptBlock {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers -ErrorAction Stop | Out-Null
+            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction Stop
+            Install-Module dbatools -Force -Scope AllUsers -AllowClobber -SkipPublisherCheck -ErrorAction Stop
+        }
+        
+        $completed = Wait-Job $job -Timeout 120
+        if ($null -eq $completed) {
+            Stop-Job $job
+            Remove-Job $job -Force
+            LW "NuGet/dbatools installation timed out (no internet or network issue). Skipping Always On enablement."
+            LW "You can enable Always On manually later if needed."
+            return
+        }
+        
+        $jobError = Receive-Job $job -ErrorAction SilentlyContinue
+        Remove-Job $job -Force
+        
+        if ($jobError) {
+            LW "Failed to install dbatools: $jobError"
+            LW "Skipping Always On enablement - you can enable it manually later."
+            return
+        }
 
-        LD "Installing dbatools module"
-        Install-Module dbatools -Force -Scope AllUsers -AllowClobber -SkipPublisherCheck -ErrorAction SilentlyContinue
-        Import-Module dbatools -Force
+        Import-Module dbatools -Force -ErrorAction Stop
 
         LD "Enabling Always On via dbatools"
         Enable-DbaAgHadr -SqlInstance $env:COMPUTERNAME -Force -Confirm:$false
@@ -257,8 +278,9 @@ function EnableSqlAlwaysOn {
         Start-Sleep -Seconds 30
         L "Always On enabled on $env:COMPUTERNAME"
     } catch {
-        LE "Failed to enable Always On: $_"
-        throw
+        LW "Failed to enable Always On: $_"
+        LW "This is non-critical - you can enable Always On manually later if needed"
+        $_ | Out-File -FilePath $err -Append
     }
 }
 
