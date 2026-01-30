@@ -148,15 +148,15 @@ jobs:
       - name: Terraform Plan
         run: |
           set -euo pipefail
-          
+
           # When deploying DR, show full plan but we'll only apply DR resources
           if [ "$TF_VAR_enable_dr" == "true" ]; then
             echo "Planning PRIMARY + DR deployment (will only apply DR resources to avoid touching PRIMARY)"
+            terraform plan -input=false -var="enable_dr=true" -out=tfplan
           else
             echo "Planning PRIMARY-only deployment"
+            terraform plan -input=false -var="enable_dr=false" -out=tfplan
           fi
-          
-          terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
         run: |

@@ -64,9 +64,11 @@ Or locally:
 ```powershell
 cd ..\ops
 terraform init -reconfigure
-terraform plan -out=tfplan
+terraform plan -var="enable_dr=false" -out=tfplan
 terraform apply tfplan
 ```
+
+**Verify:** Plan should show PRIMARY Key Vault, Runner VM, and Jumpbox creation.
 
 **Step 2: Grant UAMI Access to PRIMARY Key Vault**
 
@@ -91,6 +93,8 @@ terraform apply tfplan
 ```
 
 **Important:** The `dev-ha-dr` preset uses targeted apply to ONLY deploy DR Key Vault resources. It will not touch the existing PRIMARY Key Vault, avoiding unnecessary updates and RBAC errors.
+
+**Verify:** Plan should show DR Key Vault, DR Private DNS zone, and DR password creation (3 resources). PRIMARY resources should show as "No changes".
 
 **Step 4: Grant UAMI Access to DR Key Vault**
 
