@@ -52,7 +52,15 @@ terraform apply tfplan
 
 ### 3.2 OPS (Key Vaults: PRIMARY + DR, Runner VM, Jumpbox)
 
-**PRIMARY Deployment** (Key Vault, Runner, Jumpbox):
+**Step 1: Deploy PRIMARY Key Vault**
+
+Via GitHub Actions:
+```
+Workflow: terraform-ops
+Preset: primary
+```
+
+Or locally:
 ```powershell
 cd ..\ops
 terraform init -reconfigure
@@ -60,29 +68,40 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-**DR Deployment** (DR Key Vault with separate password):
-```powershell
-cd ..\ops
-terraform plan -var="enable_dr=true" -out=tfplan
-terraform apply tfplan
-```
-
-**GitHub Actions:** Use the `deployment_preset` input:
-- `primary` (default): Deploys PRIMARY Key Vault only
-- `primary-dr`: Deploys PRIMARY + DR Key Vaults
-
-### 3.3 Grant Key Vault Access to Terraform UAMI
-
-**CRITICAL:** After ops deployment, grant UAMI read access to Key Vaults:
+**Step 2: Grant UAMI Access to PRIMARY Key Vault**
 
 ```powershell
 cd ..\bootstrap
 .\grant-keyvault-access.ps1
 ```
 
-**Why required?** The Terraform UAMI cannot grant itself "Key Vault Secrets User" role (requires elevated permissions). The sqlserver module needs this access to read passwords from Key Vault through remote state.
+**Step 3: Deploy DR Key Vault (when needed)**
 
-### 3.4 SQL Server (PRIMARY HA + DR)
+Via GitHub Actions:
+```
+Workflow: terraform-ops
+Preset: primary-dr
+```
+
+Or locally:
+```powershell
+cd ..\ops
+terraform plan -var="enable_dr=true" -out=tfplan
+terraform apply tfplan
+```
+
+**Important:** The `primary-dr` preset uses targeted apply to ONLY deploy DR Key Vault resources. It will not touch the existing PRIMARY Key Vault, avoiding unnecessary updates and RBAC errors.
+
+**Step 4: Grant UAMI Access to DR Key Vault**
+
+```powershell
+cd ..\bootstrap
+.\grant-keyvault-access.ps1
+```
+
+The script automatically detects both PRIMARY and DR Key Vaults and grants access to any that exist.
+
+### 3.3 SQL Server (PRIMARY HA + DR)
 
 ```powershell
 cd ..\sqlserver

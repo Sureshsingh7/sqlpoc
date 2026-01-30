@@ -41,7 +41,7 @@ jobs:
       - name: Set Deployment Context
         run: |
           echo "Selected deployment preset: ${{ github.event.inputs.deployment_preset }}"
-          
+
           if [ "${{ github.event.inputs.deployment_preset }}" == "primary-dr" ]; then
             echo "Configuring for PRIMARY + DR Key Vaults"
             echo "TF_VAR_enable_dr=true" >> $GITHUB_ENV
@@ -116,7 +116,7 @@ jobs:
             -o tsv)"
 
           echo "::add-mask::${sas}"
-          
+
           if [ -z "${sas}" ]; then
             echo "Failed to generate user-delegation SAS."
             exit 1
@@ -146,7 +146,28 @@ jobs:
           fi
 
       - name: Terraform Plan
-        run: terraform plan -input=false -out=tfplan
+        run: |
+          set -euo pipefail
+          
+          # When deploying DR, show full plan but we'll only apply DR resources
+          if [ "$TF_VAR_enable_dr" == "true" ]; then
+            echo "Planning PRIMARY + DR deployment (will only apply DR resources to avoid touching PRIMARY)"
+          else
+            echo "Planning PRIMARY-only deployment"
+          fi
+          
+          terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+        run: |
+          set -euo pipefail
+          
+          if [ "$TF_VAR_enable_dr" == "true" ]; then
+            echo "DR deployment: Only applying DR Key Vault resources (PRIMARY already exists)"
+            TARGETS="-target=module.ops_kv_dr[0] -target=module.kv_private_dns_dr[0] -target=random_password.dr_sql_vm_admin[0] -target=data.azurerm_resource_group.dr[0]"
+            echo "Applying targets: $TARGETS"
+            terraform apply -auto-approve $TARGETS tfplan
+          else
+            echo "PRIMARY deployment: Applying all resources"
+            terraform apply -auto-approve tfplan
+          fi
