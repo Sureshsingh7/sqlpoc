@@ -26,18 +26,15 @@ data "terraform_remote_state" "ops" {
   }
 }
 
-# TODO: Add DR ops remote state when DR Key Vault is deployed
-# For now, DR will use the PRIMARY Key Vault password
-# This is not ideal for true DR but acceptable for POC
-# data "terraform_remote_state" "ops_dr" {
-#   count   = var.enable_dr ? 1 : 0
-#   backend = "azurerm"
-#   config = {
-#     resource_group_name  = "rg-fnz-poc-tfstate-se"
-#     storage_account_name = "stfnzpocdj522c"
-#     container_name       = "tfstate"
-#     key                  = "sqlpoc.ops-dr.tfstate"
-#     use_azuread_auth     = true
-#     use_msi              = var.use_msi
-#   }
-# }
+# DR Key Vault lookup (pulled from ops remote state outputs)
+data "azurerm_key_vault" "dr_ops" {
+  count               = var.enable_dr ? 1 : 0
+  name                = data.terraform_remote_state.ops.outputs.dr_key_vault_name
+  resource_group_name = var.dr_sql_resource_group_name
+}
+
+data "azurerm_key_vault_secret" "dr_sql_vm_admin" {
+  count        = var.enable_dr ? 1 : 0
+  name         = "dr-sql-vm-admin-password"
+  key_vault_id = data.azurerm_key_vault.dr_ops[0].id
+}

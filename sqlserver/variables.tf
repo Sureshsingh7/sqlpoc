@@ -114,13 +114,6 @@ variable "dr_cluster_local_admin_username" {
   default     = ""
 }
 
-variable "dr_sql_admin_password_override" {
-  type        = string
-  description = "Optional: DR-specific SQL admin password. If not provided, uses primary password (not recommended for production DR)"
-  sensitive   = true
-  default     = ""
-}
-
 variable "witness_storage_security_control_tag_value" {
   type        = string
   description = "Value for the SecurityControl tag to bypass the org policy that disables Shared Key access on storage accounts"

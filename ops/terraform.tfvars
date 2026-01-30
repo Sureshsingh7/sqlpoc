@@ -36,3 +36,8 @@ jumpbox_size   = "Standard_B2ms"
 # The Terraform identity needs 'User Access Administrator' or 'Owner' to create RBAC role assignments.
 # Keep this off unless that permission is granted.
 manage_role_assignments = false
+
+# --- DR Configuration ---
+enable_dr              = true
+dr_location            = "swedencentral"
+dr_resource_group_name = "rg-fnz-poc-sql-dr-swc"

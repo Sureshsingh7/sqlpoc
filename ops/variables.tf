@@ -76,3 +76,23 @@ variable "install_ssms_sas" {
   sensitive   = true
   default     = ""
 }
+
+# --- DR Configuration ---
+
+variable "enable_dr" {
+  description = "Whether to create DR Key Vault resources"
+  type        = bool
+  default     = false
+}
+
+variable "dr_location" {
+  description = "Azure region for DR Key Vault (e.g., swedencentral)"
+  type        = string
+  default     = ""
+}
+
+variable "dr_resource_group_name" {
+  description = "Resource group name for DR resources"
+  type        = string
+  default     = ""
+}

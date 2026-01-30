@@ -10,9 +10,8 @@ locals {
     data.azurerm_key_vault_secret.sql_vm_admin.value
   )
   
-  # DR password: use override if provided, otherwise use primary password
-  # NOTE: For production DR, you should create a separate DR Key Vault with its own password
-  dr_sql_vm_admin_password = var.dr_sql_admin_password_override != "" ? var.dr_sql_admin_password_override : local.sql_vm_admin_password
+  # DR password: use DR Key Vault secret if DR enabled, otherwise use primary password
+  dr_sql_vm_admin_password = var.enable_dr ? data.azurerm_key_vault_secret.dr_sql_vm_admin[0].value : local.sql_vm_admin_password
   
   # DR cluster admin username: use override if provided, otherwise use primary username  
   dr_cluster_local_admin_username = var.dr_cluster_local_admin_username != "" ? var.dr_cluster_local_admin_username : var.cluster_local_admin_username
