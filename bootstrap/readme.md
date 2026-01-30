@@ -67,13 +67,22 @@ terraform plan -var="enable_dr=true" -out=tfplan
 terraform apply tfplan
 ```
 
-**Note:** Terraform automatically grants the UAMI "Key Vault Secrets User" role on both Key Vaults through the AVM module's built-in RBAC management. No manual post-deployment steps required.
+**GitHub Actions:** Use the `deployment_preset` input:
+- `primary` (default): Deploys PRIMARY Key Vault only
+- `primary-dr`: Deploys PRIMARY + DR Key Vaults
 
-**GitHub Actions:** Use the `enable_dr` workflow input parameter:
-- `enable_dr=false` (default): Deploys only PRIMARY Key Vault
-- `enable_dr=true`: Deploys both PRIMARY and DR Key Vaults
+### 3.3 Grant Key Vault Access to Terraform UAMI
 
-### 3.3 SQL Server (PRIMARY HA + DR)
+**CRITICAL:** After ops deployment, grant UAMI read access to Key Vaults:
+
+```powershell
+cd ..\bootstrap
+.\grant-keyvault-access.ps1
+```
+
+**Why required?** The Terraform UAMI cannot grant itself "Key Vault Secrets User" role (requires elevated permissions). The sqlserver module needs this access to read passwords from Key Vault through remote state.
+
+### 3.4 SQL Server (PRIMARY HA + DR)
 
 ```powershell
 cd ..\sqlserver
@@ -132,15 +141,25 @@ Bootstrap guarantees the following environment variables:
 ## Troubleshooting
 
 ### Key Vault Access Denied
-Terraform RBAC is managed automatically through the AVM Key Vault module. If you see Key Vault access errors:
+If sqlserver deployment fails with Key Vault access errors:
 
-1. **Check ops deployment logs**: Ensure role assignments were created successfully
-2. **Wait for RBAC propagation**: Azure RBAC can take 5-10 minutes to propagate
-3. **Verify UAMI exists**: Confirm `uami-fnz-poc-tf-se` exists in the SQL resource group
-4. **Manual recovery** (if needed):
-   ```powershell
-   .\bootstrap\grant-keyvault-access.ps1
-   ```
+**Root Cause:** The Terraform UAMI doesn't have "Key Vault Secrets User" role on the Key Vaults.
+
+**Solution:** Run the grant access script:
+```powershell
+.\bootstrap\grant-keyvault-access.ps1
+```
+
+This grants the UAMI read access to both PRIMARY and DR Key Vaults. The UAMI cannot grant itself this permission (requires User Access Administrator or Owner role).
+
+**Verification:**
+```powershell
+# Check PRIMARY Key Vault
+az role assignment list --scope /subscriptions/.../resourceGroups/rg-fnz-poc-ops-se/providers/Microsoft.KeyVault/vaults/kv-fnz-poc-se
+
+# Check DR Key Vault (if deployed)
+az role assignment list --scope /subscriptions/.../resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.KeyVault/vaults/kv-fnz-poc-dr-swc
+```
 
 ### DR Key Vault Not Found
 Ensure ops module has been deployed with `enable_dr = true` in `ops/terraform.tfvars`.

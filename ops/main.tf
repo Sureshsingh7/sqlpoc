@@ -161,26 +161,19 @@ module "ops_kv" {
   network_acls                  = null
   tags                          = local.tags
 
-  role_assignments = merge(
-    var.manage_role_assignments ? {
-      terraform_secrets_officer = {
-        role_definition_id_or_name = "Key Vault Secrets Officer"
-        principal_id               = var.terraform_uami_principal_id
-      }
-      suresh_secrets_user = {
-        role_definition_id_or_name = "Key Vault Secrets User"
-        principal_id               = var.suresh_principal_id
-      }
-    } : {},
-    # Terraform UAMI always needs read access (for sqlserver module remote state)
-    {
-      terraform_secrets_reader = {
-        role_definition_id_or_name = "Key Vault Secrets User"
-        principal_id               = var.terraform_uami_principal_id
-        description                = "Terraform UAMI read access for remote state password lookup"
-      }
+  # Note: Terraform UAMI needs "Key Vault Secrets User" role but cannot assign it to itself
+  # (requires User Access Administrator or Owner permission)
+  # Grant UAMI access manually after Key Vault creation using bootstrap/grant-keyvault-access.ps1
+  role_assignments = var.manage_role_assignments ? {
+    terraform_secrets_officer = {
+      role_definition_id_or_name = "Key Vault Secrets Officer"
+      principal_id               = var.terraform_uami_principal_id
     }
-  )
+    suresh_secrets_user = {
+      role_definition_id_or_name = "Key Vault Secrets User"
+      principal_id               = var.suresh_principal_id
+    }
+  } : {}
 
   secrets       = local.kv_secrets
   secrets_value = local.kv_secrets_value
@@ -219,26 +212,18 @@ module "ops_kv_dr" {
   network_acls                  = null
   tags                          = merge(local.tags, { environment = "dr" })
 
-  role_assignments = merge(
-    var.manage_role_assignments ? {
-      terraform_secrets_officer = {
-        role_definition_id_or_name = "Key Vault Secrets Officer"
-        principal_id               = var.terraform_uami_principal_id
-      }
-      suresh_secrets_user = {
-        role_definition_id_or_name = "Key Vault Secrets User"
-        principal_id               = var.suresh_principal_id
-      }
-    } : {},
-    # Terraform UAMI always needs read access (for sqlserver module remote state)
-    {
-      terraform_secrets_reader = {
-        role_definition_id_or_name = "Key Vault Secrets User"
-        principal_id               = var.terraform_uami_principal_id
-        description                = "Terraform UAMI read access for DR password lookup"
-      }
+  # Note: Terraform UAMI needs "Key Vault Secrets User" role but cannot assign it to itself
+  # Grant UAMI access manually after Key Vault creation using bootstrap/grant-keyvault-access.ps1
+  role_assignments = var.manage_role_assignments ? {
+    terraform_secrets_officer = {
+      role_definition_id_or_name = "Key Vault Secrets Officer"
+      principal_id               = var.terraform_uami_principal_id
     }
-  )
+    suresh_secrets_user = {
+      role_definition_id_or_name = "Key Vault Secrets User"
+      principal_id               = var.suresh_principal_id
+    }
+  } : {}
 
   secrets = {
     dr_sql_vm_admin = {

@@ -540,9 +540,9 @@ jobs:
         if: ${{ github.event.inputs.deployment_preset == 'dev-ha-dr' && steps.tf_apply_vms.outputs.exitcode == '0' }}
         run: |
           set -euo pipefail
-          
+
           echo "DR deployment detected - ensuring PRIMARY VMs are running for state refresh"
-          
+
           wait_running_strict() {
             local vm="$1"
             local rg="${2:-$SQL_RG}"
@@ -560,7 +560,7 @@ jobs:
               echo "Waiting for $vm... (attempt $i/30)"
               sleep 10
             done
-            
+
             echo "Warning: $vm did not reach running state, continuing anyway"
             return 0
           }

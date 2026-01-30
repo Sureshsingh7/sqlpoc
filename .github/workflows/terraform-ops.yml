@@ -3,14 +3,14 @@ name: terraform-ops
 on:
   workflow_dispatch:
     inputs:
-      enable_dr:
-        description: 'Deploy DR Key Vault resources (true/false)'
-        required: false
-        default: 'false'
+      deployment_preset:
+        description: 'Deployment Configuration Preset'
+        required: true
+        default: 'primary'
         type: choice
         options:
-          - 'false'
-          - 'true'
+          - 'primary'
+          - 'primary-dr'
 
 jobs:
   terraform-ops:
@@ -37,6 +37,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set Deployment Context
+        run: |
+          echo "Selected deployment preset: ${{ github.event.inputs.deployment_preset }}"
+          
+          if [ "${{ github.event.inputs.deployment_preset }}" == "primary-dr" ]; then
+            echo "Configuring for PRIMARY + DR Key Vaults"
+            echo "TF_VAR_enable_dr=true" >> $GITHUB_ENV
+          else
+            echo "Configuring for PRIMARY only"
+            echo "TF_VAR_enable_dr=false" >> $GITHUB_ENV
+          fi
 
       - name: Set Az Login with UAMI
         run: |
@@ -134,11 +146,7 @@ jobs:
           fi
 
       - name: Terraform Plan
-        env:
-          TF_VAR_enable_dr: ${{ github.event.inputs.enable_dr || 'false' }}
         run: terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
-        env:
-          TF_VAR_enable_dr: ${{ github.event.inputs.enable_dr || 'false' }}
         run: terraform apply -auto-approve tfplan
