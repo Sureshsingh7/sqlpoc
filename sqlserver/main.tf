@@ -55,6 +55,7 @@ module "sql_cluster" {
 
   failover_cluster_name = var.failover_cluster_name
   dns_zone_name         = "sql.internal"
+  skip_cluster_setup    = var.skip_cluster_setup
 
   tags = var.tags
 }
@@ -100,6 +101,7 @@ module "sql_cluster_dr" {
 
   failover_cluster_name = "${var.failover_cluster_name}-dr"
   dns_zone_name         = "sql.internal"
+  skip_cluster_setup    = var.skip_cluster_setup
 
   tags = merge(
     { for k, v in var.tags : k => v if lower(k) != "environment" },
