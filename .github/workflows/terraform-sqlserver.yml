@@ -536,40 +536,6 @@ jobs:
             wait_running_strict "$SQL_VM_DR_SECONDARY" "$SQL_DR_RG"
           fi
 
-      - name: Ensure PRIMARY SQL VMs are running (for DR deployment state refresh)
-        if: ${{ github.event.inputs.deployment_preset == 'dev-ha-dr' && steps.tf_apply_vms.outputs.exitcode == '0' }}
-        run: |
-          set -euo pipefail
-
-          echo "DR deployment detected - ensuring PRIMARY VMs are running for state refresh"
-
-          wait_running_strict() {
-            local vm="$1"
-            local rg="${2:-$SQL_RG}"
-            echo "Ensuring VM is running: $vm in $rg"
-
-            timeout 30s az vm start -g "$rg" -n "$vm" -o none 2>/dev/null || true
-
-            for i in $(seq 1 30); do
-              state="$(timeout 30s az vm get-instance-view -g "$rg" -n "$vm" \
-                --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
-              if [ "$state" = "PowerState/running" ]; then
-                echo "$vm is running"
-                return 0
-              fi
-              echo "Waiting for $vm... (attempt $i/30)"
-              sleep 10
-            done
-
-            echo "Warning: $vm did not reach running state, continuing anyway"
-            return 0
-          }
-
-          wait_running_strict "$SQL_VM_PRIMARY"
-          if [ "${IS_HA}" = "true" ]; then
-            wait_running_strict "$SQL_VM_SECONDARY"
-          fi
-
       - name: "Terraform Apply (Phase 2: SQL IaaS + remaining resources)"
         id: tf_apply
         continue-on-error: true
