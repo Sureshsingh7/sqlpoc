@@ -80,8 +80,8 @@ module "sql_cluster_dr" {
   vnet_id = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
 
   sql_admin_username           = var.sql_admin_username
-  sql_vm_admin_password        = local.dr_sql_vm_admin_password
-  cluster_local_admin_username = local.dr_cluster_local_admin_username
+  sql_vm_admin_password        = local.sql_vm_admin_password
+  cluster_local_admin_username = var.cluster_local_admin_username
   user_assigned_identity_ids   = var.sql_vm_user_assigned_identity_ids
 
   # Disk configuration

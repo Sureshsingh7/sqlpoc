@@ -242,7 +242,7 @@ function EnableSqlAlwaysOn {
     L "Enabling SQL Server Always On"
 
     try {
-        # Install NuGet and dbatools with timeout to prevent infinite hang
+        # Install NuGet and dbatools with timeout (requires internet access)
         LD "Installing NuGet provider and dbatools (timeout: 2 minutes)"
         
         $job = Start-Job -ScriptBlock {
@@ -255,17 +255,19 @@ function EnableSqlAlwaysOn {
         if ($null -eq $completed) {
             Stop-Job $job
             Remove-Job $job -Force
-            LE "NuGet/dbatools installation timed out after 2 minutes (network/internet access issue)"
-            throw "Failed to install required PowerShell modules for Always On enablement"
+            LW "NuGet/dbatools installation timed out after 2 minutes"
+            LW "This typically means VMs don't have internet access to PowerShell Gallery"
+            LW "Always On can be enabled manually later using: Enable-SqlAlwaysOn -ServerName localhost -Force"
+            return $false
         }
         
-        $jobResult = Receive-Job $job -ErrorAction SilentlyContinue
         $jobError = $job.ChildJobs[0].Error
         Remove-Job $job -Force
         
         if ($jobError) {
-            LE "Failed to install dbatools: $($jobError | Out-String)"
-            throw "Failed to install required PowerShell modules: $jobError"
+            LW "Failed to install dbatools: $($jobError | Out-String)"
+            LW "Always On can be enabled manually later using: Enable-SqlAlwaysOn -ServerName localhost -Force"
+            return $false
         }
 
         Import-Module dbatools -Force -ErrorAction Stop
@@ -276,9 +278,12 @@ function EnableSqlAlwaysOn {
         LD "Waiting 30s for SQL Server restart"
         Start-Sleep -Seconds 30
         L "Always On enabled on $env:COMPUTERNAME"
+        return $true
     } catch {
-        LE "Failed to enable Always On: $_"
-        throw
+        LW "Failed to enable Always On: $_"
+        LW "Always On can be enabled manually later using: Enable-SqlAlwaysOn -ServerName localhost -Force"
+        $_ | Out-File -FilePath $err -Append
+        return $false
     }
 }
 
