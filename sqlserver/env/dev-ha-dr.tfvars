@@ -1,25 +1,19 @@
-# SQL Server Deployment - Development Environment Variables
-# This file is automatically loaded by Terraform (due to .auto.tfvars suffix)
+# SQL Server Deployment - Development Environment Variables (HA + DR Variant)
 
 # Azure context
 subscription_id         = "51595cc9-4191-4785-a757-15e45165d2a4"
 location                = "swedencentral"
 sql_resource_group_name = "rg-fnz-poc-sql-se"
 
-# SQL VM configuration (map of objects)
-# Note: For Mono deployment, only defining primary.
-sql_vms = {
-  "sql-primary" = {
-    private_ip        = "10.10.0.10"
-    subnet_id         = "primary"
-    availability_zone = "1"
-    cluster_ip        = "10.10.0.11"
-  }
-}
+# Naming Prefix with 'ha'
+sql_name_prefix = "poc-ha"
 
 sql_admin_username = "sqladmin"
 
-# VM sizing (default for all VMs, can be overridden per-VM in sql_vms)
+# Cluster admin username for WSFC
+cluster_local_admin_username = "clusteradmin"
+
+# VM sizing
 vm_size = "Standard_D4s_v4"
 
 # Storage configuration
@@ -40,7 +34,15 @@ backup_disk_type    = "Standard_LRS"
 backup_disk_size_gb = 512
 
 manage_disk_setup_extension = true
-enable_failover_cluster     = false
+
+# Primary HA
+enable_failover_cluster = true
+failover_cluster_name   = "sqlpoc-ha-cl"
+
+# DR Configuration
+enable_dr                  = true
+dr_location                = "swedencentral"
+dr_sql_resource_group_name = "rg-fnz-poc-sql-dr-swc"
 
 # SQL Server image
 image_publisher = "microsoftsqlserver"
@@ -62,4 +64,7 @@ tags = {
   environment = "dev"
   project     = "SQLPOC"
   managed_by  = "terraform"
+  tier        = "database"
+  ha_enabled  = "true"
+  dr_enabled  = "true"
 }

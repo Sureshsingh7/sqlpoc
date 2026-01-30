@@ -2,6 +2,16 @@ name: terraform-sql-iaas
 
 on:
   workflow_dispatch:
+    inputs:
+      deployment_preset:
+        description: 'Deployment Configuration Preset'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - 'dev'
+          - 'dev-ha'
+          - 'dev-ha-dr'
 
 # Prevent two runs from fighting over the same ARM resources (SQL IaaS create/update is not concurrency-safe).
 concurrency:
@@ -29,8 +39,17 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
       ARM_SKIP_AZURECLI_AUTH: "true"
       SQL_RG: rg-fnz-poc-sql-se
-      SQL_VM_PRIMARY: sql-primary
-      SQL_VM_SECONDARY: sql-secondary
+      SQL_DR_RG: rg-fnz-poc-sql-dr-swc
+
+      # Defaults (overridden in "Set Deployment Context" step)
+      TF_VAR_FILE: "env/dev.tfvars"
+      IS_HA: "false"
+      IS_DR: "false"
+      SQL_VM_PRIMARY: sqlpoc-sql-01
+      SQL_VM_SECONDARY: sqlpoc-sql-02
+      # DR Defaults (will be set if IS_DR=true)
+      SQL_VM_DR_PRIMARY: ""
+      SQL_VM_DR_SECONDARY: ""
 
       # Provider downloads (esp. azapi) sometimes hit slow GitHub release endpoints.
       TF_REGISTRY_CLIENT_TIMEOUT: "300"
@@ -55,6 +74,34 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set Deployment Context
+        id: context
+        run: |
+          echo "Selected deployment preset: ${{ github.event.inputs.deployment_preset }}"
+
+          if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha" ]; then
+            echo "Configuring for HA (Dual VM)"
+            echo "TF_VAR_FILE=env/dev-ha.tfvars" >> $GITHUB_ENV
+            echo "IS_HA=true" >> $GITHUB_ENV
+            echo "SQL_VM_PRIMARY=poc-ha-sql-01" >> $GITHUB_ENV
+            echo "SQL_VM_SECONDARY=poc-ha-sql-02" >> $GITHUB_ENV
+          elif [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha-dr" ]; then
+            echo "Configuring for HA + DR (Quad VM)"
+            echo "TF_VAR_FILE=env/dev-ha-dr.tfvars" >> $GITHUB_ENV
+            echo "IS_HA=true" >> $GITHUB_ENV
+            echo "IS_DR=true" >> $GITHUB_ENV
+            echo "SQL_VM_PRIMARY=poc-ha-sql-01" >> $GITHUB_ENV
+            echo "SQL_VM_SECONDARY=poc-ha-sql-02" >> $GITHUB_ENV
+            echo "SQL_VM_DR_PRIMARY=poc-ha-dr-sql01" >> $GITHUB_ENV
+            echo "SQL_VM_DR_SECONDARY=poc-ha-dr-sql02" >> $GITHUB_ENV
+          else
+            echo "Configuring for Mono (Single VM)"
+            echo "TF_VAR_FILE=env/dev.tfvars" >> $GITHUB_ENV
+            echo "IS_HA=false" >> $GITHUB_ENV
+            echo "SQL_VM_PRIMARY=sqlpoc-sql-01" >> $GITHUB_ENV
+            echo "SQL_VM_SECONDARY=sqlpoc-sql-02" >> $GITHUB_ENV
+          fi
+
       - name: Show checked-out commit + SQL IaaS timeout
         run: |
           set -euo pipefail
@@ -73,43 +120,6 @@ jobs:
           set -euo pipefail
           mkdir -p "${TF_PLUGIN_CACHE_DIR}"
           echo "TF_PLUGIN_CACHE_DIR=${TF_PLUGIN_CACHE_DIR}"
-
-      - name: Ensure SQL VMs are running (best-effort)
-        run: |
-          set -euo pipefail
-
-          echo "Microsoft.SqlVirtualMachine RP registrationState:"
-          timeout 20s az provider show -n Microsoft.SqlVirtualMachine --query "registrationState" -o tsv 2>/dev/null || true
-
-          wait_running() {
-            local vm="$1"
-            echo "Ensuring VM is running: $vm"
-
-            # VM may not exist yet on first deploy; ignore start errors.
-            timeout 20s az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
-
-            # If it exists, wait until PowerState/running.
-            for i in $(seq 1 12); do
-              state="$(timeout 20s az vm get-instance-view -g "$SQL_RG" -n "$vm" \
-                --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
-
-              if [ -z "$state" ]; then
-                echo "[$i/30] $vm: not found yet (or no instance-view)"
-              else
-                echo "[$i/30] $vm: $state"
-                if [ "$state" = "PowerState/running" ]; then
-                  return 0
-                fi
-              fi
-              sleep 10
-            done
-            # Don't hard-fail here; Terraform can still be creating the VM.
-            echo "$vm did not reach PowerState/running within wait window (continuing)"
-            return 0
-          }
-
-          wait_running "$SQL_VM_PRIMARY"
-          wait_running "$SQL_VM_SECONDARY"
 
       # 2️⃣ Force clean workspace
       - name: Ensure clean workspace
@@ -133,13 +143,22 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Use dev-ha state for dev-ha-dr to preserve primary resources
+          STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
+          if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha-dr" ]; then
+            STATE_KEY="sqlserver-dev-ha.tfstate"
+            echo "⚠️  Using dev-ha state file for dev-ha-dr preset to preserve Primary infrastructure"
+          fi
+
+          echo "State file: ${STATE_KEY}"
+
           for attempt in 1 2 3; do
             echo "terraform init attempt ${attempt}/3"
             if terraform init -reconfigure -upgrade \
               -backend-config="resource_group_name=${TFSTATE_RG}" \
               -backend-config="storage_account_name=${TFSTATE_SA}" \
               -backend-config="container_name=${TFSTATE_CONTAINER}" \
-              -backend-config="key=${TFSTATE_KEY}"; then
+              -backend-config="key=${STATE_KEY}"; then
               exit 0
             fi
             sleep 10
@@ -151,110 +170,16 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Publish disk_setup.ps1 to TFSTATE + generate SAS
-        env:
-          TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
-          TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
-          DISK_SETUP_SAS: ${{ secrets.DISK_SETUP_SAS }}
-        run: |
-          set -euo pipefail
-
-          echo "Uploading disk_setup.ps1 to: ${TFSTATE_SA}/${TFSTATE_CONTAINER}/scripts/disk_setup.ps1"
-          az storage blob upload \
-            --auth-mode login \
-            --account-name "${TFSTATE_SA}" \
-            --container-name "${TFSTATE_CONTAINER}" \
-            --name "scripts/disk_setup.ps1" \
-            --file "disk_setup.ps1" \
-            --overwrite true \
-            --only-show-errors
-
-          # Upload create_failover_cluster.ps1
-          echo "Uploading create_failover_cluster.ps1 to: ${TFSTATE_SA}/${TFSTATE_CONTAINER}/scripts/create_failover_cluster.ps1"
-          az storage blob upload \
-            --auth-mode login \
-            --account-name "${TFSTATE_SA}" \
-            --container-name "${TFSTATE_CONTAINER}" \
-            --name "scripts/create_failover_cluster.ps1" \
-            --file "create_failover_cluster.ps1" \
-            --overwrite true \
-            --only-show-errors
-
-
-          if [ "${DISK_SETUP_USE_SAS}" != "true" ]; then
-            echo "DISK_SETUP_USE_SAS=false; using managed identity (no SAS)"
-            sas=""
-            failover_sas=""
-          elif [ -n "${DISK_SETUP_SAS:-}" ]; then
-            echo "Using pre-provided DISK_SETUP_SAS from secrets (stable; avoids extension churn)"
-            sas="${DISK_SETUP_SAS}"
-            # Generate SAS for failover cluster script
-            expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
-            failover_sas="$(az storage blob generate-sas \
-              --auth-mode login \
-              --as-user \
-              --account-name "${TFSTATE_SA}" \
-              --container-name "${TFSTATE_CONTAINER}" \
-              --name "scripts/create_failover_cluster.ps1" \
-              --permissions r \
-              --expiry "${expiry}" \
-              --https-only \
-              -o tsv)"
-          else
-            # Short-lived user delegation SAS (AAD-based, no account keys)
-            expiry="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%MZ)"
-            sas="$(az storage blob generate-sas \
-              --auth-mode login \
-              --as-user \
-              --account-name "${TFSTATE_SA}" \
-              --container-name "${TFSTATE_CONTAINER}" \
-              --name "scripts/disk_setup.ps1" \
-              --permissions r \
-              --expiry "${expiry}" \
-              --https-only \
-              -o tsv)"
-            failover_sas="$(az storage blob generate-sas \
-              --auth-mode login \
-              --as-user \
-              --account-name "${TFSTATE_SA}" \
-              --container-name "${TFSTATE_CONTAINER}" \
-              --name "scripts/create_failover_cluster.ps1" \
-              --permissions r \
-              --expiry "${expiry}" \
-              --https-only \
-              -o tsv)"
-          fi
-
-          # Mask the SAS tokens so they don't appear in later step env dumps.
-          echo "::add-mask::${sas}"
-          echo "::add-mask::${failover_sas}"
-
-          if [ "${DISK_SETUP_USE_SAS}" = "true" ] && [ -z "${sas}" ]; then
-            echo "Failed to generate user-delegation SAS for disk_setup.ps1 (empty output)."
-            echo "Ensure the runner identity can generate SAS via AAD (often requires Storage Blob Data Contributor + Blob Delegator on the storage account)."
-            exit 1
-          fi
-
-          if [ "${DISK_SETUP_USE_SAS}" = "true" ] && [ -z "${failover_sas}" ]; then
-            echo "Failed to generate user-delegation SAS for create_failover_cluster.ps1 (empty output)."
-            echo "Ensure the runner identity can generate SAS via AAD (often requires Storage Blob Data Contributor + Blob Delegator on the storage account)."
-            exit 1
-          fi
-
-          # Export for Terraform (sensitive; avoid echoing the SAS)
-          echo "TF_VAR_disk_setup_sas=${sas}" >> "$GITHUB_ENV"
-          echo "TF_VAR_failover_cluster_sas=${failover_sas}" >> "$GITHUB_ENV"
-
       - name: Import existing SQL IaaS resources (if any)
         run: |
           set -euo pipefail
-          for idx in 0 1; do
-            if [ "$idx" = "0" ]; then
-              vm="$SQL_VM_PRIMARY"
-            else
-              vm="$SQL_VM_SECONDARY"
-            fi
 
+          vms=("$SQL_VM_PRIMARY")
+          if [ "${IS_HA}" = "true" ]; then
+            vms+=("$SQL_VM_SECONDARY")
+          fi
+
+          for vm in "${vms[@]}"; do
             addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
@@ -264,23 +189,43 @@ jobs:
                 echo "$addr already in state"
               else
                 echo "Importing $addr"
-                terraform import -var-file=env/dev.tfvars "$addr" "$rid"
+                terraform import -var-file="$TF_VAR_FILE" "$addr" "$rid"
               fi
             else
               echo "Not found in Azure, skipping import"
             fi
           done
 
+          if [ "${IS_DR}" = "true" ]; then
+             dr_vms=("$SQL_VM_DR_PRIMARY" "$SQL_VM_DR_SECONDARY")
+             for vm in "${dr_vms[@]}"; do
+                addr="module.sql_cluster_dr[0].azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+                rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_DR_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+
+                echo "Checking DR SQL IaaS resource: $rid"
+                if az resource show --ids "$rid" -o none 2>/dev/null; then
+                  if terraform state show "$addr" >/dev/null 2>&1; then
+                    echo "$addr already in state"
+                  else
+                    echo "Importing $addr"
+                    terraform import -var-file="$TF_VAR_FILE" "$addr" "$rid"
+                  fi
+                else
+                  echo "DR Resource Not found in Azure, skipping import"
+                fi
+             done
+          fi
+
       - name: Prune missing SQL IaaS resources from state (best-effort)
         run: |
           set -euo pipefail
-          for idx in 0 1; do
-            if [ "$idx" = "0" ]; then
-              vm="$SQL_VM_PRIMARY"
-            else
-              vm="$SQL_VM_SECONDARY"
-            fi
 
+          vms=("$SQL_VM_PRIMARY")
+          if [ "${IS_HA}" = "true" ]; then
+            vms+=("$SQL_VM_SECONDARY")
+          fi
+
+          for vm in "${vms[@]}"; do
             addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
@@ -296,6 +241,60 @@ jobs:
             fi
           done
 
+          if [ "${IS_DR}" = "true" ]; then
+             dr_vms=("$SQL_VM_DR_PRIMARY" "$SQL_VM_DR_SECONDARY")
+             for vm in "${dr_vms[@]}"; do
+                addr="module.sql_cluster_dr[0].azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+                rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_DR_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+
+                if terraform state show "$addr" >/dev/null 2>&1; then
+                  if az resource show --ids "$rid" -o none 2>/dev/null; then
+                    echo "$addr exists in Azure; keeping in state"
+                  else
+                    echo "Azure DR resource missing; removing from state: $addr"
+                    terraform state rm "$addr"
+                  fi
+                else
+                  echo "$addr not in state; nothing to prune"
+                fi
+             done
+          fi
+
+      - name: Remove DR resources with old resource group from state
+        if: ${{ github.event.inputs.deployment_preset == 'dev-ha-dr' }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking for DR resources with old resource group in state..."
+
+          # List all DR module resources
+          if terraform state list 2>/dev/null | grep -q 'module.sql_cluster_dr'; then
+            echo "Found DR resources in state. Checking resource group configuration..."
+
+            # Try to get a DR resource and check its RG
+            sample_disk=$(terraform state list 2>/dev/null | grep 'module.sql_cluster_dr.*azurerm_managed_disk' | head -n 1 || true)
+
+            if [ -n "$sample_disk" ]; then
+              disk_rg=$(terraform state show "$sample_disk" 2>/dev/null | grep 'resource_group_name' | head -n 1 | awk -F'"' '{print $2}' || true)
+
+              if [ -n "$disk_rg" ] && [ "$disk_rg" != "$SQL_DR_RG" ]; then
+                echo "⚠️  State contains DR resources from old RG: $disk_rg (expected: $SQL_DR_RG)"
+                echo "Removing all DR module resources from state to allow fresh creation..."
+
+                terraform state list | grep 'module.sql_cluster_dr' | while read -r resource; do
+                  echo "Removing: $resource"
+                  terraform state rm "$resource" || true
+                done
+
+                echo "✅ DR resources removed from state. They will be recreated in the correct RG."
+              else
+                echo "DR resources are already in the correct RG: $SQL_DR_RG"
+              fi
+            fi
+          else
+            echo "No DR resources in state (fresh deployment)"
+          fi
+
       - name: "Preflight: fail fast on disk SKU drift (prevents VM replacement)"
         run: |
           set -euo pipefail
@@ -305,36 +304,36 @@ jobs:
             exit 0
           fi
 
-          desired_os="$(terraform console -var-file=env/dev.tfvars <<< 'var.os_disk_type' | tr -d '\r' | tr -d '"')"
-          desired_data="$(terraform console -var-file=env/dev.tfvars <<< 'var.data_disk_type' | tr -d '\r' | tr -d '"')"
-          desired_log="$(terraform console -var-file=env/dev.tfvars <<< 'var.log_disk_type' | tr -d '\r' | tr -d '"')"
-          desired_tempdb="$(terraform console -var-file=env/dev.tfvars <<< 'var.tempdb_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_os="$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.os_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_data="$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.data_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_log="$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.log_disk_type' | tr -d '\r' | tr -d '"')"
+          desired_tempdb="$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.tempdb_disk_type' | tr -d '\r' | tr -d '"')"
 
           echo "Desired disk SKUs: os=${desired_os}, data=${desired_data}, log=${desired_log}, tempdb=${desired_tempdb}"
 
           check_vm() {
             local vm="$1"
-            echo "== Disk SKU preflight for ${vm} =="
+            local rg="${2:-$SQL_RG}"
+            echo "== Disk SKU preflight for ${vm} in ${rg} =="
 
-            if ! az vm show -g "$SQL_RG" -n "$vm" -o none 2>/dev/null; then
+            if ! az vm show -g "$rg" -n "$vm" -o none 2>/dev/null; then
               echo "VM ${vm} not found (ok on first deploy)"
               return 0
             fi
 
-            os_sku="$(az vm show -g "$SQL_RG" -n "$vm" --query "storageProfile.osDisk.managedDisk.storageAccountType" -o tsv)"
-            data_skus="$(az vm show -g "$SQL_RG" -n "$vm" --query "storageProfile.dataDisks[].managedDisk.storageAccountType" -o tsv | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
+            os_sku="$(az vm show -g "$rg" -n "$vm" --query "storageProfile.osDisk.managedDisk.storageAccountType" -o tsv)"
+            data_skus="$(az vm show -g "$rg" -n "$vm" --query "storageProfile.dataDisks[].managedDisk.storageAccountType" -o tsv | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
             echo "Azure osDisk SKU: ${os_sku}"
             echo "Azure dataDisks SKUs: ${data_skus:-<none>}"
 
+            # ... checks ...
             mismatched="false"
-
             if [ -n "${desired_os}" ] && [ "${os_sku}" != "${desired_os}" ]; then
-              echo "Mismatch: osDisk is ${os_sku} but desired is ${desired_os}"
-              mismatched="true"
+               echo "Mismatch: osDisk is ${os_sku} but desired is ${desired_os}"
+               mismatched="true"
             fi
-
-            # If any data disk SKU differs from the desired SKU, treat as drift.
+             # If any data disk SKU differs from the desired SKU, treat as drift.
             if [ -n "${data_skus}" ] && [ -n "${desired_data}" ]; then
               for s in ${data_skus}; do
                 if [ "${s}" != "${desired_data}" ]; then
@@ -345,19 +344,20 @@ jobs:
             fi
 
             if [ "${mismatched}" = "true" ]; then
-              echo ""
-              echo "Disk SKU drift detected on ${vm}."
-              echo "This commonly forces VM replacement in the AVM VM module, which triggers long SQL IaaS deletes (and can time out)."
-              echo "Fix by converting the existing managed disks to the desired SKU in Azure first, THEN rerun Terraform."
-              echo "(Or re-run the workflow with ALLOW_DISK_SKU_DRIFT=true to proceed anyway.)"
-              return 1
+                echo "Disk SKU drift detected on ${vm}."
+                return 1
             fi
-
             return 0
           }
 
           check_vm "$SQL_VM_PRIMARY"
-          check_vm "$SQL_VM_SECONDARY"
+          if [ "${IS_HA}" = "true" ]; then
+            check_vm "$SQL_VM_SECONDARY"
+          fi
+          if [ "${IS_DR}" = "true" ]; then
+             check_vm "$SQL_VM_DR_PRIMARY" "$SQL_DR_RG"
+             check_vm "$SQL_VM_DR_SECONDARY" "$SQL_DR_RG"
+          fi
 
       - name: Terraform Plan
         id: tf_plan
@@ -376,7 +376,7 @@ jobs:
           trap on_term SIGINT SIGTERM
 
           # Plan is informational; apply runs in two phases for stability.
-          ( terraform plan -input=false -var-file=env/dev.tfvars 2>&1 | tee "$log_file" ) &
+          ( terraform plan -input=false -var-file="$TF_VAR_FILE" 2>&1 | tee "$log_file" ) &
           pid=$!
 
           # Heartbeat every 60s so slow AzureRM refresh doesn't look hung.
@@ -413,7 +413,16 @@ jobs:
 
           # Phase 1 applies only the VM module. This avoids racing SQL IaaS registration
           # against transient VM restarts/deallocations.
-          ( terraform apply -auto-approve -var-file=env/dev.tfvars -target=module.sql_cluster.module.sql_vm 2>&1 | tee "$log_file" ) &
+          # When deploying DR, only target DR resources to avoid touching primary
+          if [ "${IS_DR}" = "true" ]; then
+            TARGETS="-target=module.sql_cluster_dr[0].module.sql_vm -target=module.sql_cluster_dr[0].module.witness_storage -target=module.sql_cluster_dr[0].module.witness_blob_dns"
+            echo "DR deployment: Only targeting DR resources"
+          else
+            TARGETS="-target=module.sql_cluster.module.sql_vm"
+          fi
+
+          echo "Applying targets: $TARGETS"
+          ( terraform apply -auto-approve -var-file="$TF_VAR_FILE" $TARGETS 2>&1 | tee "$log_file" ) &
           pid=$!
 
           azure_watch_counter=0
@@ -428,7 +437,13 @@ jobs:
             azure_watch_counter=$((azure_watch_counter + 1))
             if [ $((azure_watch_counter % 5)) -eq 0 ]; then
               echo "[$ts] Azure status snapshot (every ~10 minutes)"
-              for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+
+              vms=("$SQL_VM_PRIMARY")
+              if [ "${IS_HA}" = "true" ]; then
+                vms+=("$SQL_VM_SECONDARY")
+              fi
+
+              for vm in "${vms[@]}"; do
                 echo "-- $vm power state --"
                 az vm get-instance-view -g "$SQL_RG" -n "$vm" \
                   --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
@@ -452,6 +467,19 @@ jobs:
                   --query "[].{name:name, publisher:publisher, type:typePropertiesType, provisioningState:provisioningState, status:instanceView.statuses[0].displayStatus}" \
                   -o table 2>/dev/null || true
               done
+
+              if [ "${IS_DR}" = "true" ]; then
+                dr_vms=("$SQL_VM_DR_PRIMARY" "$SQL_VM_DR_SECONDARY")
+                for vm in "${dr_vms[@]}"; do
+                  echo "-- $vm (DR) power state --"
+                  az vm get-instance-view -g "$SQL_DR_RG" -n "$vm" \
+                    --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
+
+                  echo "-- $vm (DR) SQL IaaS provisioningState --"
+                  rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_DR_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+                  az resource show --ids "$rid" --query "properties.provisioningState" -o tsv 2>/dev/null || true
+                done
+              fi
             fi
             sleep 120
           done
@@ -477,13 +505,14 @@ jobs:
 
           wait_running_strict() {
             local vm="$1"
-            echo "Ensuring VM is running (strict): $vm"
+            local rg="${2:-$SQL_RG}"
+            echo "Ensuring VM is running (strict): $vm in $rg"
 
             # Try to start (ignore errors if currently provisioning)
-            timeout 30s az vm start -g "$SQL_RG" -n "$vm" -o none 2>/dev/null || true
+            timeout 30s az vm start -g "$rg" -n "$vm" -o none 2>/dev/null || true
 
             for i in $(seq 1 60); do
-              state="$(timeout 30s az vm get-instance-view -g "$SQL_RG" -n "$vm" \
+              state="$(timeout 30s az vm get-instance-view -g "$rg" -n "$vm" \
                 --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true)"
               ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
               echo "[$ts] [$i/60] $vm powerState=${state:-<unknown>}"
@@ -494,12 +523,18 @@ jobs:
             done
 
             echo "$vm did not reach PowerState/running in time"
-            timeout 30s az vm get-instance-view -g "$SQL_RG" -n "$vm" -o jsonc 2>/dev/null || true
+            timeout 30s az vm get-instance-view -g "$rg" -n "$vm" -o jsonc 2>/dev/null || true
             return 1
           }
 
           wait_running_strict "$SQL_VM_PRIMARY"
-          wait_running_strict "$SQL_VM_SECONDARY"
+          if [ "${IS_HA}" = "true" ]; then
+            wait_running_strict "$SQL_VM_SECONDARY"
+          fi
+          if [ "${IS_DR}" = "true" ]; then
+            wait_running_strict "$SQL_VM_DR_PRIMARY" "$SQL_DR_RG"
+            wait_running_strict "$SQL_VM_DR_SECONDARY" "$SQL_DR_RG"
+          fi
 
       - name: "Terraform Apply (Phase 2: SQL IaaS + remaining resources)"
         id: tf_apply
@@ -515,7 +550,7 @@ jobs:
             tail -n 50 "$log_file" 2>/dev/null || true
           }
           trap on_term SIGINT SIGTERM
-          ( terraform apply -parallelism=1 -auto-approve -var-file=env/dev.tfvars 2>&1 | tee -a "$log_file" ) &
+          ( terraform apply -parallelism=1 -auto-approve -var-file="$TF_VAR_FILE" 2>&1 | tee -a "$log_file" ) &
           pid=$!
           azure_watch_counter=0
           while kill -0 "$pid" 2>/dev/null; do
@@ -525,7 +560,13 @@ jobs:
             azure_watch_counter=$((azure_watch_counter + 1))
             if [ $((azure_watch_counter % 5)) -eq 0 ]; then
               echo "[$ts] Azure status snapshot (every ~10 minutes)"
-              for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+
+              vms=("$SQL_VM_PRIMARY")
+              if [ "${IS_HA}" = "true" ]; then
+                vms+=("$SQL_VM_SECONDARY")
+              fi
+
+              for vm in "${vms[@]}"; do
                 echo "-- $vm power state --"
                 az vm get-instance-view -g "$SQL_RG" -n "$vm" \
                   --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
@@ -533,6 +574,19 @@ jobs:
                 rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
                 az resource show --ids "$rid" --query "properties.provisioningState" -o tsv 2>/dev/null || true
               done
+
+              if [ "${IS_DR}" = "true" ]; then
+                dr_vms=("$SQL_VM_DR_PRIMARY" "$SQL_VM_DR_SECONDARY")
+                for vm in "${dr_vms[@]}"; do
+                  echo "-- $vm (DR) power state --"
+                  az vm get-instance-view -g "$SQL_DR_RG" -n "$vm" \
+                    --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv 2>/dev/null || true
+
+                  echo "-- $vm (DR) SQL IaaS provisioningState --"
+                  rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_DR_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+                  az resource show --ids "$rid" --query "properties.provisioningState" -o tsv 2>/dev/null || true
+                done
+              fi
             fi
             sleep 120
           done
@@ -562,106 +616,158 @@ jobs:
           set -e
           echo "== sql-primary extension instance-view =="
           az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_PRIMARY" -n configure-sql-disks --instance-view -o jsonc || true
-          echo "== sql-secondary extension instance-view =="
-          az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_SECONDARY" -n configure-sql-disks --instance-view -o jsonc || true
+
+          if [ "${IS_HA}" = "true" ]; then
+            echo "== sql-secondary extension instance-view =="
+            az vm extension show -g "$SQL_RG" --vm-name "$SQL_VM_SECONDARY" -n configure-sql-disks --instance-view -o jsonc || true
+          fi
+
+          if [ "${IS_DR}" = "true" ]; then
+             echo "== sql-dr-primary extension instance-view =="
+             az vm extension show -g "$SQL_DR_RG" --vm-name "$SQL_VM_DR_PRIMARY" -n configure-sql-disks --instance-view -o jsonc || true
+             echo "== sql-dr-secondary extension instance-view =="
+             az vm extension show -g "$SQL_DR_RG" --vm-name "$SQL_VM_DR_SECONDARY" -n configure-sql-disks --instance-view -o jsonc || true
+          fi
 
       - name: Diagnostics (SQL IaaS provisioning state)
         if: steps.tf_apply.outputs.exitcode != '0'
         run: |
           set -e
-          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+
+          vms=("$SQL_VM_PRIMARY")
+          if [ "${IS_HA}" = "true" ]; then
+            vms+=("$SQL_VM_SECONDARY")
+          fi
+
+          for vm in "${vms[@]}"; do
             rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
             echo "== $vm SQL IaaS resource =="
             az resource show --ids "$rid" -o jsonc || true
           done
 
+          if [ "${IS_DR}" = "true" ]; then
+             dr_vms=("$SQL_VM_DR_PRIMARY" "$SQL_VM_DR_SECONDARY")
+             for vm in "${dr_vms[@]}"; do
+                rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_DR_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+                echo "== $vm (DR) SQL IaaS resource =="
+                az resource show --ids "$rid" -o jsonc || true
+             done
+          fi
+
       - name: Diagnostics (pull on-VM logs)
         if: steps.tf_apply.outputs.exitcode != '0'
         run: |
           set -e
-          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+
+          # Helper for dumping logs
+          dump_logs() {
+             local vm="$1"
+             local rg="$2"
+
             echo "== $vm disk inventory =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Disk | Select Number,PartitionStyle,IsOffline,IsReadOnly,OperationalStatus,Size,Location | Format-Table -AutoSize | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm temp log file list =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-ChildItem 'C:\\Windows\\Temp\\configure-sql-disks*' -ErrorAction SilentlyContinue | Select Name,Length,LastWriteTime | Format-Table -AutoSize | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm configure-sql-disks.err.txt =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.err.txt' -ErrorAction SilentlyContinue | Select-Object -Last 400 | Out-String" \
               --query "value[0].message" -o tsv || true
             echo "== $vm configure-sql-disks.log (tail) =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Content 'C:\\Windows\\Temp\\configure-sql-disks.log' -ErrorAction SilentlyContinue | Select-Object -Last 400 | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm enable-alwayson.log (tail) =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Content 'C:\\Windows\\Temp\\enable-alwayson.log' -ErrorAction SilentlyContinue | Select-Object -Last 400 | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm CustomScriptExtension status files (tail) =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "(Get-ChildItem 'C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\Status\\*.status' -ErrorAction SilentlyContinue; Get-ChildItem 'C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\Status\\*.status' -ErrorAction SilentlyContinue) | Sort-Object LastWriteTime | Select-Object -Last 3 | ForEach-Object { '--- ' + $_.FullName; Get-Content $_.FullName -Tail 200 } | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm CustomScriptHandler.log (tail) =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "(Get-ChildItem 'C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\CustomScriptHandler.log' -ErrorAction SilentlyContinue; Get-ChildItem 'C:\\Packages\\Plugins\\Microsoft.Compute.CustomScriptExtension\\*\\CustomScriptHandler.log' -ErrorAction SilentlyContinue) | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { '--- ' + $_.FullName; Get-Content $_.FullName -Tail 400 } | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm SqlIaasExtension instance-view =="
-            az vm extension show -g "$SQL_RG" --vm-name "$vm" -n SqlIaasExtension --instance-view -o jsonc || true
-          echo "== sql-primary run-command disk-setup =="
-          az vm run-command show -g "$SQL_RG" --vm-name "$SQL_VM_PRIMARY" --run-command-name disk-setup --instance-view -o jsonc || true
-          echo "== sql-secondary run-command disk-setup =="
-          az vm run-command show -g "$SQL_RG" --vm-name "$SQL_VM_SECONDARY" --run-command-name disk-setup --instance-view -o jsonc || true
+            az vm extension show -g "$rg" --vm-name "$vm" -n SqlIaasExtension --instance-view -o jsonc || true
+
+            echo "== $vm run-command disk-setup =="
+            az vm run-command show -g "$rg" --vm-name "$vm" --run-command-name disk-setup --instance-view -o jsonc || true
 
             echo "== $vm SQL IaaS extension logs (tail) =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "$paths=@('C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.SqlServer.Management.SqlIaasExtension','C:\\Packages\\Plugins\\Microsoft.SqlServer.Management.SqlIaasExtension','C:\\WindowsAzure\\Logs\\Plugins\\Microsoft.SqlServer.Management.SqlIaaSAgent','C:\\Packages\\Plugins\\Microsoft.SqlServer.Management.SqlIaaSAgent'); foreach($p in $paths){ if(Test-Path $p){ Write-Host ('--- ' + $p); Get-ChildItem $p -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 6 | ForEach-Object { '### ' + $_.FullName; Get-Content $_.FullName -Tail 200 -ErrorAction SilentlyContinue } } } | Out-String" \
               --query "value[0].message" -o tsv || true
-          done
+          }
+
+          dump_logs "$SQL_VM_PRIMARY" "$SQL_RG"
+          if [ "${IS_HA}" = "true" ]; then
+            dump_logs "$SQL_VM_SECONDARY" "$SQL_RG"
+          fi
+          if [ "${IS_DR}" = "true" ]; then
+             dump_logs "$SQL_VM_DR_PRIMARY" "$SQL_DR_RG"
+             dump_logs "$SQL_VM_DR_SECONDARY" "$SQL_DR_RG"
+          fi
 
       - name: Diagnostics (disk + drive-letter mapping)
         if: steps.tf_apply.outputs.exitcode != '0'
         run: |
           set -e
-          for vm in "$SQL_VM_PRIMARY" "$SQL_VM_SECONDARY"; do
+
+          check_drives() {
+             local vm="$1"
+             local rg="$2"
+
             echo "== $vm drive letters / volumes =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-PSDrive -PSProvider FileSystem | Sort-Object Name | Format-Table -AutoSize | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm Get-Volume =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Volume | Sort-Object DriveLetter | Select DriveLetter,FileSystemLabel,FileSystem,HealthStatus,Size,SizeRemaining,Path | Format-Table -AutoSize | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm Get-Partition (data disks only) =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem } | ForEach-Object { $dn=$_.Number; Get-Partition -DiskNumber $dn -ErrorAction SilentlyContinue | Select DiskNumber,PartitionNumber,DriveLetter,Type,Size,AccessPaths } | Format-Table -Wrap -AutoSize | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm mountvol output =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "cmd /c 'mountvol' | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm diskpart list volume =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "$t=Join-Path $env:TEMP 'diskpart-listvol.txt'; Set-Content -Path $t -Value 'list volume' -Encoding ASCII; cmd /c \"diskpart /s $t\" 2^>^&1 | Out-String" \
               --query "value[0].message" -o tsv || true
 
             echo "== $vm MountedDevices (F/G/T) =="
-            az vm run-command invoke -g "$SQL_RG" -n "$vm" --command-id RunPowerShellScript \
+            az vm run-command invoke -g "$rg" -n "$vm" --command-id RunPowerShellScript \
               --scripts "$p='HKLM:\\SYSTEM\\MountedDevices'; $names='\\DosDevices\\F:','\\DosDevices\\G:','\\DosDevices\\T:'; foreach($n in $names){ try{ $v=(Get-ItemProperty -Path $p -Name $n -ErrorAction Stop).$n; Write-Host ($n+' = '+([BitConverter]::ToString($v))) } catch { Write-Host ($n+' = <none>') } }" \
               --query "value[0].message" -o tsv || true
-          done
+          }
+
+          check_drives "$SQL_VM_PRIMARY" "$SQL_RG"
+          if [ "${IS_HA}" = "true" ]; then
+             check_drives "$SQL_VM_SECONDARY" "$SQL_RG"
+          fi
+          if [ "${IS_DR}" = "true" ]; then
+             check_drives "$SQL_VM_DR_PRIMARY" "$SQL_DR_RG"
+             check_drives "$SQL_VM_DR_SECONDARY" "$SQL_DR_RG"
+          fi
+
 
       - name: Fail job if apply failed
         if: steps.tf_apply.outputs.exitcode != '0'

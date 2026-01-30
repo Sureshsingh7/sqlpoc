@@ -81,6 +81,12 @@ resource "random_password" "sql_vm_admin" {
   special = true
 }
 
+resource "random_password" "dr_sql_vm_admin" {
+  count   = var.enable_dr ? 1 : 0
+  length  = 32
+  special = true
+}
+
 # -----------------------------------------------------------------------------
 # Windows jumpbox (reachable via Azure Bastion)
 # -----------------------------------------------------------------------------
@@ -92,7 +98,7 @@ resource "random_password" "jumpbox" {
 }
 
 # -----------------------------------------------------------------------------
-# Private DNS Zone for Key Vault
+# Private DNS Zone for Key Vault (shared by PRIMARY and DR)
 # -----------------------------------------------------------------------------
 module "kv_private_dns" {
   source  = "Azure/avm-res-network-privatednszone/azurerm"
@@ -102,18 +108,28 @@ module "kv_private_dns" {
   parent_id   = data.azurerm_resource_group.ops.id
   tags        = local.tags
 
-  virtual_network_links = {
-    ops_vnet = {
-      name               = "link-kv-ops-vnet"
-      virtual_network_id = data.terraform_remote_state.network.outputs.ops_vnet_id
-      autoregistration   = false
-    }
-  }
+  virtual_network_links = merge(
+    {
+      ops_vnet = {
+        name               = "link-kv-ops-vnet"
+        virtual_network_id = data.terraform_remote_state.network.outputs.ops_vnet_id
+        autoregistration   = false
+      }
+    },
+    var.enable_dr ? {
+      dr_vnet = {
+        name               = "link-kv-dr-sql-vnet"
+        virtual_network_id = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
+        autoregistration   = false
+      }
+    } : {}
+  )
 }
 
 # -----------------------------------------------------------------------------
-# OPS Key Vault (with private endpoint)
+# PRIMARY Key Vault (with private endpoint)
 # -----------------------------------------------------------------------------
+
 module "ops_kv" {
   source  = "Azure/avm-res-keyvault-vault/azurerm"
   version = "0.10.2"
@@ -129,11 +145,9 @@ module "ops_kv" {
   network_acls                  = null
   tags                          = local.tags
 
+  # Note: Terraform UAMI "Key Vault Secrets Officer" must be granted manually/via workflow
+  # UAMI cannot grant its own role assignments without User Access Administrator privilege
   role_assignments = var.manage_role_assignments ? {
-    terraform_secrets_officer = {
-      role_definition_id_or_name = "Key Vault Secrets Officer"
-      principal_id               = var.terraform_uami_principal_id
-    }
     suresh_secrets_user = {
       role_definition_id_or_name = "Key Vault Secrets User"
       principal_id               = var.suresh_principal_id
@@ -147,6 +161,60 @@ module "ops_kv" {
     kv_pep = {
       name                          = "pep-kv-fnz-poc"
       subnet_resource_id            = data.terraform_remote_state.network.outputs.pep_subnet_id
+      subresource_name              = "vault"
+      private_dns_zone_resource_ids = [module.kv_private_dns.resource_id]
+    }
+  }
+}
+
+# -----------------------------------------------------------------------------
+# DR Key Vault (with private endpoint in DR region)
+# -----------------------------------------------------------------------------
+data "azurerm_resource_group" "dr" {
+  count = var.enable_dr ? 1 : 0
+  name  = var.dr_resource_group_name
+}
+
+module "ops_kv_dr" {
+  count   = var.enable_dr ? 1 : 0
+  source  = "Azure/avm-res-keyvault-vault/azurerm"
+  version = "0.10.2"
+
+  name                          = "kv-fnz-poc-dr-swc"
+  location                      = var.dr_location
+  resource_group_name           = var.dr_resource_group_name
+  tenant_id                     = var.tenant_id
+  sku_name                      = "standard"
+  purge_protection_enabled      = true
+  soft_delete_retention_days    = 30
+  public_network_access_enabled = true
+  network_acls                  = null
+  tags                          = merge(local.tags, { environment = "dr" })
+
+  # Note: Terraform UAMI "Key Vault Secrets Officer" must be granted manually/via workflow
+  # UAMI cannot grant its own role assignments without User Access Administrator privilege
+  role_assignments = var.manage_role_assignments ? {
+    suresh_secrets_user = {
+      role_definition_id_or_name = "Key Vault Secrets User"
+      principal_id               = var.suresh_principal_id
+    }
+  } : {}
+
+  secrets = {
+    dr_sql_vm_admin = {
+      name         = "dr-sql-vm-admin-password"
+      content_type = "DR SQL Server VM local admin password"
+    }
+  }
+
+  secrets_value = {
+    dr_sql_vm_admin = random_password.dr_sql_vm_admin[0].result
+  }
+
+  private_endpoints = {
+    kv_dr_pep = {
+      name                          = "pep-kv-fnz-poc-dr"
+      subnet_resource_id            = data.terraform_remote_state.network.outputs.dr_pep_subnet_id
       subresource_name              = "vault"
       private_dns_zone_resource_ids = [module.kv_private_dns.resource_id]
     }

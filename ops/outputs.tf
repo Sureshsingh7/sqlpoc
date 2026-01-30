@@ -21,3 +21,21 @@ output "sql_vm_admin_password" {
   description = "SQL VM admin password generated in ops and stored in Key Vault"
   sensitive   = true
 }
+
+# --- DR Outputs ---
+
+output "dr_key_vault_id" {
+  value       = var.enable_dr ? module.ops_kv_dr[0].resource_id : null
+  description = "Resource ID of the DR Key Vault (null if DR disabled)"
+}
+
+output "dr_key_vault_name" {
+  value       = var.enable_dr ? "kv-fnz-poc-dr-swc" : null
+  description = "Name of the DR Key Vault (null if DR disabled)"
+}
+
+output "dr_sql_vm_admin_password" {
+  value       = var.enable_dr ? random_password.dr_sql_vm_admin[0].result : null
+  description = "DR SQL VM admin password generated in ops and stored in DR Key Vault"
+  sensitive   = true
+}

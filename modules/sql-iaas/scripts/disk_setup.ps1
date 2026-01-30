@@ -1,9 +1,172 @@
+param(
+    [Parameter(Mandatory=$false)]
+    [string[]]$NodeIPs = @(),
+
+    [Parameter(Mandatory=$false)]
+    [string[]]$NodeNames = @(),
+    
+    [Parameter(Mandatory=$false)]
+    [string[]]$ClusterIPs = @(),
+
+    [Parameter(Mandatory=$false)]
+    [string]$ClusterName = "",
+
+    [Parameter(Mandatory=$false)]
+    [string]$ClusterAdminUsername = "",
+
+    [Parameter(Mandatory=$false)]
+    [string]$ClusterAdminPasswordSecure = "",
+
+    [Parameter(Mandatory=$false)]
+    [string]$PrimaryClusterDNS = "",
+
+    [Parameter(Mandatory=$false)]
+    [string]$PrimaryClusterIP = ""
+)
+
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $log='C:\Windows\Temp\configure-sql-disks.log'
 $err='C:\Windows\Temp\configure-sql-disks.err.txt'
 
+# Handle comma-separated strings for array parameters (workaround for RunCommand passing single strings)
+if ($NodeIPs.Count -eq 1 -and $NodeIPs[0] -like "*,*") { $NodeIPs = $NodeIPs[0] -split "," }
+if ($NodeNames.Count -eq 1 -and $NodeNames[0] -like "*,*") { $NodeNames = $NodeNames[0] -split "," }
+if ($ClusterIPs.Count -eq 1 -and $ClusterIPs[0] -like "*,*") { $ClusterIPs = $ClusterIPs[0] -split "," }
+
+# Decode cluster admin password
+$ClusterAdminPassword = ""
+if (-not [string]::IsNullOrWhiteSpace($ClusterAdminPasswordSecure)) {
+    try {
+        $ClusterAdminPassword = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ClusterAdminPasswordSecure))
+    } catch {
+        $ClusterAdminPassword = $ClusterAdminPasswordSecure
+    }
+}
+
 function L([string]$m){Add-Content -Path $log -Value ((Get-Date -Format o)+" "+$m)}
+function LD([string]$m){L "DEBUG: $m"}
+function LE([string]$m){L "ERROR: $m"}
+
+function ConfigureVMPrerequisites {
+    L "Configuring VM prerequisites"
+
+    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
+    $domainName = "sqlpoc.local"
+
+    if ($NodeIPs.Count -gt 0 -and $NodeNames.Count -eq $NodeIPs.Count) {
+        for ($i = 0; $i -lt $NodeIPs.Count; $i++) {
+            $ip = $NodeIPs[$i]
+            $name = $NodeNames[$i]
+            $entry = "$ip`t$name.$domainName`t$name"
+
+            if (-not (Select-String -Path $hostsFile -Pattern $name -Quiet)) {
+                LD "Adding hosts entry: $entry"
+                Add-Content -Path $hostsFile -Value $entry
+            }
+        }
+    }
+
+    LD "Setting NV Domain to $domainName"
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\services\Tcpip\Parameters" -Name "NV Domain" -Value $domainName -Force
+
+    LD "Setting LocalAccountTokenFilterPolicy for remote admin"
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "LocalAccountTokenFilterPolicy" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+
+    LD "Configuring ICMP firewall rule"
+    $existingRule = netsh advfirewall firewall show rule name="Allow ICMPv4" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        netsh advfirewall firewall add rule name="Allow ICMPv4" protocol=icmpv4 dir=in action=allow | Out-Null
+    }
+
+    LD "Installing Failover Clustering feature"
+    Import-Module ServerManager
+    $feature = Get-WindowsFeature -Name Failover-Clustering -ErrorAction SilentlyContinue
+    if ($null -eq $feature -or -not $feature.Installed) {
+        Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools | Out-Null
+        L "Failover Clustering installed"
+    } else {
+        LD "Failover Clustering already installed"
+    }
+
+    LD "Configuring WinRM for Workgroup Auth"
+    Enable-PSRemoting -Force -SkipNetworkProfileCheck -ErrorAction SilentlyContinue | Out-Null
+    Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
+    Restart-Service WinRM
+
+    LD "Creating specific WinRM Firewall rule for cluster node subnet connectivity"
+    if ($NodeIPs.Count -gt 0) {
+        $ruleName = "Allow_WinRM_Cluster_Nodes"
+        Remove-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
+
+        New-NetFirewallRule -Name $ruleName `
+            -DisplayName "Allow WinRM from Cluster Nodes" `
+            -Direction Inbound `
+            -Action Allow `
+            -Protocol TCP `
+            -LocalPort 5985,5986 `
+            -RemoteAddress $NodeIPs `
+            -Profile Any `
+            -ErrorAction Stop | Out-Null
+        LD "Firewall rule '$ruleName' created for IPs: $($NodeIPs -join ', ')"
+    }
+}
+
+function CreateClusterAdminLocal {
+    L "Creating local cluster admin user '$ClusterAdminUsername' on $env:COMPUTERNAME"
+    if ([string]::IsNullOrWhiteSpace($ClusterAdminUsername) -or [string]::IsNullOrWhiteSpace($ClusterAdminPassword)) {
+        L "Skipping user creation (missing credentials)"
+        return
+    }
+
+    try {
+        $existingUser = Get-LocalUser -Name $ClusterAdminUsername -ErrorAction SilentlyContinue
+        $securePassword = ConvertTo-SecureString $ClusterAdminPassword -AsPlainText -Force
+        
+        if ($existingUser) {
+            LD "User '$ClusterAdminUsername' already exists locally"
+            Set-LocalUser -Name $ClusterAdminUsername -Password $securePassword -ErrorAction Stop
+        } else {
+            New-LocalUser -Name $ClusterAdminUsername -Password $securePassword -FullName "Cluster Admin User" -Description "User for failover cluster operations" -PasswordNeverExpires -ErrorAction Stop
+            L "User '$ClusterAdminUsername' created locally"
+        }
+
+        $adminGroup = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*\$ClusterAdminUsername" }
+        if (-not $adminGroup) {
+            Add-LocalGroupMember -Group "Administrators" -Member $ClusterAdminUsername -ErrorAction Stop
+            L "User '$ClusterAdminUsername' added to Administrators group"
+        }
+    } catch {
+        LE "Failed to create/update local admin user: $_"
+        throw
+    }
+}
+
+function ConfigureHostsFile {
+    if ($ClusterIPs.Count -eq 0 -or [string]::IsNullOrWhiteSpace($ClusterName)) { return }
+    
+    LD "Configuring cluster hosts file entries"
+    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
+    $hostsContent = Get-Content $hostsFile -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $hostsContent) { $hostsContent = "" }
+
+    foreach ($clusterIP in $ClusterIPs) {
+        $line = "$clusterIP`t$ClusterName"
+        if ($hostsContent -notmatch [regex]::Escape($clusterIP)) {
+            LD "Adding hosts entry: $line"
+            Add-Content -Path $hostsFile -Value $line -Force
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP) -and -not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
+        $line = "$PrimaryClusterIP`t$PrimaryClusterDNS"
+        if ($hostsContent -notmatch [regex]::Escape($PrimaryClusterIP)) {
+            LD "Adding DR hosts entry: $line"
+            Add-Content -Path $hostsFile -Value $line -Force
+        }
+    }
+    ipconfig /flushdns | Out-Null
+}
 
 function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   try{Set-Disk -Number $n -IsOffline $false -ErrorAction SilentlyContinue|Out-Null}catch{}
@@ -251,6 +414,15 @@ try{
     L ("lun {0} disk {1} -> {2}:" -f $lun,$n,$s.l)
     Ensure $n $s.l $s.b $s.d
   }
+
+  if ($NodeIPs.Count -gt 0) {
+      ConfigureVMPrerequisites
+      ConfigureHostsFile
+  }
+  if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
+      CreateClusterAdminLocal
+  }
+
   L 'ok'
   exit 0
 }catch{

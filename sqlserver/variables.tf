@@ -52,7 +52,7 @@ variable "sql_vms" {
     tempdb_disk_size_gb = optional(number)
     tags                = optional(map(string), {})
   }))
-  description = "Map of SQL Server VM configurations. Key is the VM name (max 15 chars)."
+  description = "Map of SQL Server VM configurations. Key is the VM name (max 15 chars). Note: Used only for legacy compat; new sql-iaas module auto-generates names."
   default = {
     "sqlpoc-primary" = {
       private_ip        = "10.10.0.10"
@@ -60,16 +60,6 @@ variable "sql_vms" {
       availability_zone = "1"
       cluster_ip        = "10.10.0.12"
     }
-    "sqlpoc-secondary" = {
-      private_ip        = "10.10.0.74"
-      subnet_id         = "secondary"
-      availability_zone = "2"
-      cluster_ip        = "10.10.0.76"
-    }
-  }
-  validation {
-    condition     = alltrue([for name, vm in var.sql_vms : length(name) > 0 && length(name) <= 15])
-    error_message = "Each VM name (map key) must be between 1 and 15 characters."
   }
 }
 
@@ -118,6 +108,12 @@ variable "cluster_local_admin_username" {
   default     = "clusteradmin"
 }
 
+variable "dr_cluster_local_admin_username" {
+  type        = string
+  description = "Local user to create on DR SQL VMs for workgroup WSFC administration (defaults to cluster_local_admin_username if not set)"
+  default     = ""
+}
+
 variable "witness_storage_security_control_tag_value" {
   type        = string
   description = "Value for the SecurityControl tag to bypass the org policy that disables Shared Key access on storage accounts"
@@ -128,7 +124,7 @@ variable "witness_storage_security_control_tag_value" {
 variable "os_disk_type" {
   type        = string
   description = "OS disk storage type"
-  default     = "Premium_LRS"
+  default     = "Standard_LRS"
 }
 
 variable "os_disk_size_gb" {
@@ -139,8 +135,8 @@ variable "os_disk_size_gb" {
 
 variable "data_disk_type" {
   type        = string
-  description = "SQL data disk storage type (Premium_LRS for production)"
-  default     = "Premium_LRS"
+  description = "SQL data disk storage type (Standard_LRS for production)"
+  default     = "Standard_LRS"
 }
 
 variable "data_disk_count" {
@@ -161,8 +157,8 @@ variable "data_disk_size_gb" {
 
 variable "log_disk_type" {
   type        = string
-  description = "SQL log disk storage type (Premium_LRS recommended for production)"
-  default     = "Premium_LRS"
+  description = "SQL log disk storage type (Standard_LRS recommended for production)"
+  default     = "Standard_LRS"
 }
 
 variable "log_disk_size_gb" {
@@ -173,8 +169,8 @@ variable "log_disk_size_gb" {
 
 variable "tempdb_disk_type" {
   type        = string
-  description = "SQL tempdb disk storage type (Premium_LRS recommended for production)"
-  default     = "Premium_LRS"
+  description = "SQL tempdb disk storage type (Standard_LRS recommended for production)"
+  default     = "Standard_LRS"
 }
 
 variable "tempdb_disk_size_gb" {
@@ -268,6 +264,43 @@ variable "tags" {
   type        = map(string)
   description = "Additional tags to apply to all resources"
   default     = {}
+}
+
+variable "enable_dr" {
+  type        = bool
+  description = "Enable Disaster Recovery deployment"
+  default     = false
+}
+
+variable "dr_location" {
+  type        = string
+  description = "Azure region for DR"
+  default     = "swedencentral"
+}
+
+variable "dr_sql_resource_group_name" {
+  type        = string
+  description = "Resource Group for DR SQL resources"
+  default     = "rg-fnz-poc-sql-dr-swc"
+}
+
+# Used to configure DR node to talk to Primary Cluster
+variable "primary_cluster_dns" {
+  type        = string
+  description = "DNS Name of the Primary Cluster (for DR setup)"
+  default     = ""
+}
+
+variable "primary_cluster_ip" {
+  type        = string
+  description = "IP Address of the Primary Cluster Load Balancer (for DR setup)"
+  default     = ""
+}
+
+variable "sql_name_prefix" {
+  type        = string
+  description = "Prefix used for naming SQL resources (VMs, LB, etc.). Defaults to 'sqlpoc'. Override for HA variants (e.g. 'sqlpoc-ha')."
+  default     = "sqlpoc"
 }
 
 # Cluster configuration variables

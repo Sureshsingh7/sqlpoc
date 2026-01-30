@@ -2,6 +2,15 @@ name: terraform-network
 
 on:
   workflow_dispatch:
+    inputs:
+      deployment_preset:
+        description: 'Deployment Configuration Preset'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - 'dev'
+          - 'dev-dr'
 
 jobs:
   terraform-network:
@@ -16,6 +25,9 @@ jobs:
         working-directory: network
 
     env:
+      # Pass input as TF Variable
+      TF_VAR_is_dr_enabled: ${{ github.event.inputs.deployment_preset == 'dev-dr' }}
+
       ARM_USE_MSI: true
       ARM_CLIENT_ID: ${{ secrets.TERRAFORM_UAMI_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}

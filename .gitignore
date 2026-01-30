@@ -86,3 +86,7 @@ $RECYCLE.BIN/
 
 *.log
 *.tmp
+
+# Sensitive key files
+key.txt
+**/key.txt
