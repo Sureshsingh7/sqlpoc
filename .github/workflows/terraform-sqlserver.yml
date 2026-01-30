@@ -413,9 +413,12 @@ jobs:
 
           # Phase 1 applies only the VM module. This avoids racing SQL IaaS registration
           # against transient VM restarts/deallocations.
-          TARGETS="-target=module.sql_cluster.module.sql_vm"
+          # When deploying DR, only target DR resources to avoid touching primary
           if [ "${IS_DR}" = "true" ]; then
-            TARGETS="$TARGETS -target=module.sql_cluster_dr[0].module.sql_vm"
+            TARGETS="-target=module.sql_cluster_dr[0].module.sql_vm -target=module.sql_cluster_dr[0].module.witness_storage -target=module.sql_cluster_dr[0].module.witness_blob_dns"
+            echo "DR deployment: Only targeting DR resources"
+          else
+            TARGETS="-target=module.sql_cluster.module.sql_vm"
           fi
 
           echo "Applying targets: $TARGETS"
