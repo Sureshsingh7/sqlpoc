@@ -70,9 +70,16 @@ terraform apply tfplan
 
 **Verify:** Plan should show PRIMARY Key Vault, Runner VM, and Jumpbox creation.
 
-**Note:** Terraform automatically grants the UAMI "Key Vault Secrets Officer" role through `azurerm_role_assignment` resources. No manual steps required!
+**Step 2: Grant UAMI Access to PRIMARY Key Vault**
 
-**Step 2: Deploy DR Key Vault (when needed)**
+```powershell
+cd ..\bootstrap
+.\grant-keyvault-access.ps1
+```
+
+**Important:** The UAMI needs "Key Vault Secrets Officer" role to manage secrets, but it cannot grant itself this role (would need "User Access Administrator" privilege). This step must be done manually or via workflow.
+
+**Step 3: Deploy DR Key Vault (when needed)**
 
 Via GitHub Actions:
 ```
@@ -87,7 +94,7 @@ terraform plan -var="enable_dr=true" -out=tfplan
 terraform apply tfplan
 ```
 
-**Important:** The `dev-ha-dr` preset uses targeted apply to ONLY deploy DR Key Vault resources. It will not touch the existing PRIMARY Key Vault, avoiding unnecessary updates and RBAC errors.
+**Important:** The `dev-ha-dr` preset automatically grants the UAMI access to DR Key Vault via Azure CLI, then uses targeted apply to ONLY deploy DR Key Vault resources. It will not touch the existing PRIMARY Key Vault.
 
 **Note:** The Private DNS zone `privatelink.vaultcore.azure.net` is shared between PRIMARY and DR Key Vaults. The DR deployment adds a VNet link to this existing zone for the DR VNet.
 
@@ -95,7 +102,6 @@ terraform apply tfplan
 - DR Key Vault creation
 - DR password generation  
 - DR VNet link to shared DNS zone
-- RBAC role assignment for UAMI
 - PRIMARY resources show as "No changes"
 
 ### 3.3 SQL Server (PRIMARY HA + DR)

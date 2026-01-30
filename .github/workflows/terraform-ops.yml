@@ -158,15 +158,28 @@ jobs:
             terraform plan -input=false -var="enable_dr=false" -out=tfplan
           fi
 
+      - name: Grant UAMI Key Vault access on DR resource group
+        if: env.TF_VAR_enable_dr == 'true'
+        run: |
+          echo "Granting UAMI 'Key Vault Secrets Officer' role on DR resource group..."
+          az role assignment create \
+            --role "Key Vault Secrets Officer" \
+            --assignee-object-id ${{ secrets.TERRAFORM_UAMI_OBJECT_ID }} \
+            --assignee-principal-type ServicePrincipal \
+            --scope /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/rg-fnz-poc-sql-dr-swc \
+            --only-show-errors || echo "Role assignment may already exist"
+          
+          echo "Waiting 10 seconds for RBAC to propagate..."
+          sleep 10
+
       - name: Terraform Apply
         run: |
           set -euo pipefail
 
           if [ "$TF_VAR_enable_dr" == "true" ]; then
             echo "DR deployment: Applying DR Key Vault resources (PRIMARY already exists)"
-            TARGETS="-target=azurerm_role_assignment.dr_kv_uami_secrets_officer[0] -target=module.ops_kv_dr[0] -target=module.kv_private_dns -target=random_password.dr_sql_vm_admin[0] -target=data.azurerm_resource_group.dr[0]"
+            TARGETS="-target=module.ops_kv_dr[0] -target=module.kv_private_dns -target=random_password.dr_sql_vm_admin[0] -target=data.azurerm_resource_group.dr[0]"
             echo "Applying targets: $TARGETS"
-            echo "Note: Terraform manages RBAC - UAMI will get Key Vault Secrets Officer role automatically"
             terraform apply -auto-approve $TARGETS tfplan
           else
             echo "PRIMARY deployment: Applying all resources"

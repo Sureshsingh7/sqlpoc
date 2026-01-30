@@ -1,11 +1,12 @@
 # grant-keyvault-access.ps1
-# Grants Terraform UAMI "Key Vault Secrets User" role on PRIMARY and DR Key Vaults
+# Grants Terraform UAMI "Key Vault Secrets Officer" role on PRIMARY and DR Key Vaults
 #
-# REQUIRED: Run this script AFTER deploying the ops module
+# REQUIRED: Run this script AFTER deploying the PRIMARY Key Vault (terraform-ops, preset: dev)
 #
-# Why needed: The Terraform UAMI cannot grant itself Key Vault access (requires
-# User Access Administrator or Owner permission). This script grants the access
-# manually using your elevated Azure CLI session.
+# Why needed: The Terraform UAMI needs "Key Vault Secrets Officer" to create and manage 
+# secrets, but cannot grant itself this role (would require "User Access Administrator" 
+# privilege, which is a security risk). This script grants the access manually for PRIMARY.
+# For DR, the workflow automatically grants access via Azure CLI.
 
 param (
   [string]$PrimaryKvName = 'kv-fnz-poc-se',
@@ -62,7 +63,7 @@ Write-Host "`nChecking PRIMARY Key Vault: $PrimaryKvName"
 $primaryKvCheck = Invoke-Az @('keyvault','show','-n',$PrimaryKvName,'-g',$OpsRg,'--query','id','-o','tsv') -AllowFailure
 if ($primaryKvCheck.ExitCode -eq 0) {
   $primaryScope = ($primaryKvCheck.Output | Out-String).Trim()
-  Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Key Vault Secrets User' -Scope $primaryScope
+  Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Key Vault Secrets Officer' -Scope $primaryScope
   Write-Host "✓ PRIMARY Key Vault access granted"
 } else {
   Write-Warning "PRIMARY Key Vault not found: $PrimaryKvName (may not be deployed yet)"
@@ -73,7 +74,7 @@ Write-Host "`nChecking DR Key Vault: $DrKvName"
 $drKvCheck = Invoke-Az @('keyvault','show','-n',$DrKvName,'-g',$DrRg,'--query','id','-o','tsv') -AllowFailure
 if ($drKvCheck.ExitCode -eq 0) {
   $drScope = ($drKvCheck.Output | Out-String).Trim()
-  Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Key Vault Secrets User' -Scope $drScope
+  Set-RoleAssignment -PrincipalId $UamiPrincipalId -RoleName 'Key Vault Secrets Officer' -Scope $drScope
   Write-Host "✓ DR Key Vault access granted"
 } else {
   Write-Warning "DR Key Vault not found: $DrKvName (deploy ops module first)"
