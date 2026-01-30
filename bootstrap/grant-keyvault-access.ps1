@@ -1,6 +1,10 @@
 # grant-keyvault-access.ps1
-# Grants Terraform UAMI "Key Vault Secrets User" role on PRIMARY and DR Key Vaults
-# Run AFTER ops module has deployed the Key Vaults
+# [DEPRECATED] This script is no longer needed!
+# Terraform now automatically grants UAMI Key Vault access through the ops module.
+#
+# Historical purpose: Grants Terraform UAMI "Key Vault Secrets User" role on PRIMARY and DR Key Vaults
+# Current status: The ops module now handles this via role_assignments in the Key Vault configuration
+# Keep this script for reference or emergency manual recovery only.
 
 param (
   [string]$PrimaryKvName = 'kv-fnz-poc-se',

@@ -59,20 +59,9 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-### 3.3 Grant Key Vault Access to Terraform UAMI
+**Note:** Terraform automatically grants the UAMI "Key Vault Secrets User" role on both Key Vaults through the AVM module's built-in RBAC management. No manual post-deployment steps required.
 
-After ops deployment, run this script to grant Key Vault access:
-
-```powershell
-cd ..\bootstrap
-.\grant-keyvault-access.ps1
-```
-
-This grants "Key Vault Secrets User" role to the Terraform UAMI on both PRIMARY and DR Key Vaults.
-
-**Why?** The sqlserver module reads passwords from Key Vault through Terraform remote state. The UAMI needs read access to retrieve these secrets.
-
-### 3.4 SQL Server (PRIMARY HA + DR)
+### 3.3 SQL Server (PRIMARY HA + DR)
 
 ```powershell
 cd ..\sqlserver
@@ -131,10 +120,15 @@ Bootstrap guarantees the following environment variables:
 ## Troubleshooting
 
 ### Key Vault Access Denied
-If sqlserver deployment fails with Key Vault access errors, re-run:
-```powershell
-.\bootstrap\grant-keyvault-access.ps1
-```
+Terraform RBAC is managed automatically through the AVM Key Vault module. If you see Key Vault access errors:
+
+1. **Check ops deployment logs**: Ensure role assignments were created successfully
+2. **Wait for RBAC propagation**: Azure RBAC can take 5-10 minutes to propagate
+3. **Verify UAMI exists**: Confirm `uami-fnz-poc-tf-se` exists in the SQL resource group
+4. **Manual recovery** (if needed):
+   ```powershell
+   .\bootstrap\grant-keyvault-access.ps1
+   ```
 
 ### DR Key Vault Not Found
 Ensure ops module has been deployed with `enable_dr = true` in `ops/terraform.tfvars`.
