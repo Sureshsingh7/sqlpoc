@@ -39,6 +39,9 @@ locals {
   dr_snet_sql1_name = "${var.sql_name_prefix}-dr-snet-sql1"
   dr_snet_sql2_name = "${var.sql_name_prefix}-dr-snet-sql2"
   dr_snet_pep_name  = "${var.sql_name_prefix}-dr-snet-pep"
+
+  dr_nat_gateway_pip_name = "${var.sql_name_prefix}-dr-pip-natgw"
+  dr_nat_gateway_name     = "${var.sql_name_prefix}-dr-natgw"
 }
 
 data "azurerm_resource_group" "sql" {
@@ -491,6 +494,44 @@ resource "azurerm_subnet" "dr_sql_pep" {
   virtual_network_name              = azurerm_virtual_network.dr_sql[0].name
   address_prefixes                  = [var.dr_sql_subnet_pep_prefix]
   private_endpoint_network_policies = "Enabled"
+}
+
+# DR NAT Gateway for internet access (dbatools, Windows Updates, etc.)
+resource "azurerm_public_ip" "dr_sql_nat" {
+  count               = var.is_dr_enabled ? 1 : 0
+  name                = local.dr_nat_gateway_pip_name
+  location            = var.dr_location
+  resource_group_name = data.azurerm_resource_group.dr_sql[0].name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.tags
+}
+
+resource "azurerm_nat_gateway" "dr_sql" {
+  count               = var.is_dr_enabled ? 1 : 0
+  name                = local.dr_nat_gateway_name
+  location            = var.dr_location
+  resource_group_name = data.azurerm_resource_group.dr_sql[0].name
+  sku_name            = "Standard"
+  tags                = local.tags
+}
+
+resource "azurerm_nat_gateway_public_ip_association" "dr_sql" {
+  count                = var.is_dr_enabled ? 1 : 0
+  nat_gateway_id       = azurerm_nat_gateway.dr_sql[0].id
+  public_ip_address_id = azurerm_public_ip.dr_sql_nat[0].id
+}
+
+resource "azurerm_subnet_nat_gateway_association" "dr_sql_sql1" {
+  count          = var.is_dr_enabled ? 1 : 0
+  subnet_id      = azurerm_subnet.dr_sql_sql1[0].id
+  nat_gateway_id = azurerm_nat_gateway.dr_sql[0].id
+}
+
+resource "azurerm_subnet_nat_gateway_association" "dr_sql_sql2" {
+  count          = var.is_dr_enabled ? 1 : 0
+  subnet_id      = azurerm_subnet.dr_sql_sql2[0].id
+  nat_gateway_id = azurerm_nat_gateway.dr_sql[0].id
 }
 
 # DR Peerings
