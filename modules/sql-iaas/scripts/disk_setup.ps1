@@ -50,45 +50,52 @@ function LE([string]$m){L "ERROR: $m"}
 
 # Idempotency check - exit early if everything is already configured
 function Test-AlreadyConfigured {
-    L "Checking if disk configuration already exists..."
-    
-    # Check if all expected volumes exist (E: = data, F: = log, G: = tempdb)
-    $expectedVolumes = @('E', 'F', 'G')
-    $allVolumesExist = $true
-    
-    foreach ($letter in $expectedVolumes) {
-        $volume = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
-        if (-not $volume) {
-            L "Volume ${letter}: not found - configuration needed"
-            $allVolumesExist = $false
-            break
-        } elseif ($volume.FileSystem -ne 'NTFS') {
-            L "Volume ${letter}: exists but not NTFS - reconfiguration needed"
-            $allVolumesExist = $false
-            break
-        } else {
-            L "Volume ${letter}: exists (${volume.FileSystemLabel}, ${volume.SizeRemaining}/${volume.Size} free)"
+    try {
+        L "Checking if disk configuration already exists..."
+        
+        # Quick check: if all expected volumes exist with correct filesystem, we're done
+        $expectedVolumes = @('E', 'F', 'G')
+        $allVolumesExist = $true
+        
+        foreach ($letter in $expectedVolumes) {
+            $volume = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+            if (-not $volume) {
+                L "Volume ${letter}: not found - configuration needed"
+                return $false
+            } elseif ($volume.FileSystem -ne 'NTFS') {
+                L "Volume ${letter}: exists but not NTFS - reconfiguration needed"
+                return $false
+            }
         }
-    }
-    
-    # Check if Failover Clustering feature is installed (for HA deployments)
-    if ($NodeIPs.Count -gt 0) {
-        $feature = Get-WindowsFeature -Name Failover-Clustering -ErrorAction SilentlyContinue
-        if (-not $feature -or -not $feature.Installed) {
-            L "Failover Clustering not installed - configuration needed"
-            $allVolumesExist = $false
-        } else {
-            L "Failover Clustering already installed"
+        
+        L "All volumes (E:, F:, G:) exist and are NTFS formatted"
+        
+        # For HA deployments only: quick check if Failover Clustering is installed
+        if ($NodeIPs.Count -gt 0) {
+            L "HA deployment detected - checking Failover Clustering feature..."
+            try {
+                # Use faster WMI query instead of Get-WindowsFeature
+                $clusterService = Get-Service -Name ClusSvc -ErrorAction SilentlyContinue
+                if ($clusterService) {
+                    L "Failover Clustering service found"
+                } else {
+                    L "Failover Clustering not installed - configuration needed"
+                    return $false
+                }
+            } catch {
+                L "Could not verify Failover Clustering - proceeding with configuration"
+                return $false
+            }
         }
-    }
-    
-    if ($allVolumesExist) {
+        
         L "[OK] All required configuration already exists - skipping disk setup"
         return $true
+        
+    } catch {
+        L "Error during idempotency check: $_"
+        L "Proceeding with full configuration to be safe"
+        return $false
     }
-    
-    L "Configuration incomplete - proceeding with disk setup"
-    return $false
 }
 
 # Check idempotency and exit early if already configured
