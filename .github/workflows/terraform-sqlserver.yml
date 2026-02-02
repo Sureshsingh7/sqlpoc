@@ -203,24 +203,22 @@ jobs:
             echo "No DR resources in state"
           fi
 
-      - name: Safety check - prevent DR destruction
+      - name: Safety warning - DR exists in state
         if: env.DR_IN_STATE == 'true' && env.IS_DR == 'false'
         run: |
-          set -euo pipefail
           echo "========================================" 
-          echo "❌ SAFETY CHECK FAILED"
+          echo "⚠️  SAFETY WARNING"
           echo "========================================"
           echo ""
           echo "DR resources exist in state but deployment preset is '${TF_VAR_FILE}' (enable_dr=false)"
-          echo "This would DESTROY all DR infrastructure!"
           echo ""
-          echo "OPTIONS:"
-          echo "1. Deploy with 'dev-ha-dr' preset to maintain DR resources"
-          echo "2. Use targeted apply to update PRIMARY only: -target=module.sql_cluster"
-          echo "3. Manually remove DR from state if intentional decommission"
+          echo "SAFETY MEASURES ACTIVE:"
+          echo "• Using -target=module.sql_cluster for plan/apply"
+          echo "• DR resources will remain in state but won't be refreshed/modified"
+          echo "• DR VMs can remain stopped during deployment"
           echo ""
-          echo "Preventing accidental DR destruction. Exiting."
-          exit 1
+          echo "NOTE: To deploy DR resources, use 'dev-ha-dr' preset"
+          echo ""
 
       - name: Import existing SQL IaaS resources (if any)
         run: |
@@ -427,8 +425,18 @@ jobs:
           }
           trap on_term SIGINT SIGTERM
 
-          # Plan is informational; apply runs in two phases for stability.
-          ( terraform plan -input=false -var-file="$TF_VAR_FILE" 2>&1 | tee "$log_file" ) &
+          # If DR exists in state but we're deploying PRIMARY only, use targeted refresh
+          # This prevents plan failures when DR VMs are stopped
+          if [ "${DR_IN_STATE}" = "true" ] && [ "${IS_DR}" = "false" ]; then
+            echo "⚠️  DR resources in state but deploying PRIMARY only"
+            echo "Using targeted plan to avoid refreshing stopped DR VMs"
+            PLAN_CMD="terraform plan -input=false -var-file=\"$TF_VAR_FILE\" -target=module.sql_cluster -out=tfplan"
+          else
+            PLAN_CMD="terraform plan -input=false -var-file=\"$TF_VAR_FILE\" -out=tfplan"
+          fi
+
+          echo "Plan command: $PLAN_CMD"
+          ( eval "$PLAN_CMD" 2>&1 | tee "$log_file" ) &
           pid=$!
 
           # Heartbeat every 60s so slow AzureRM refresh doesn't look hung.
@@ -608,8 +616,12 @@ jobs:
             # DR deployment: apply everything (PRIMARY+DR)
             echo "DR deployment: Applying PRIMARY + DR resources"
             APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\""
+          elif [ "${DR_IN_STATE}" = "true" ]; then
+            # PRIMARY-only deployment but DR exists in state: use targeted apply to avoid DR
+            echo "PRIMARY deployment with DR in state: Applying PRIMARY resources only with -target"
+            APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\" -target=module.sql_cluster"
           else
-            # PRIMARY-only deployment: apply everything (no DR in config)
+            # PRIMARY-only deployment, no DR in state: apply everything
             echo "PRIMARY deployment: Applying PRIMARY resources only"
             APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\""
           fi
