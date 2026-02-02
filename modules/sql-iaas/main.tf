@@ -282,6 +282,16 @@ resource "azurerm_private_dns_a_record" "cluster_listener" {
   records             = [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
 }
 
+# DNS A records for individual VMs (for inter-node communication)
+resource "azurerm_private_dns_a_record" "sql_vm" {
+  for_each            = var.is_ha ? local.vm_map : {}
+  name                = each.key
+  zone_name           = module.sql_dns[0].name
+  resource_group_name = var.resource_group_name
+  ttl                 = 300
+  records             = [module.sql_vm[each.key].virtual_machine_azurerm.private_ip_address]
+}
+
 
 # --- VM Extensions (Disk Setup & Cluster Setup) ---
 
