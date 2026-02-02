@@ -32,7 +32,8 @@ module "sql_cluster" {
   subnet_ids = [
     data.terraform_remote_state.network.outputs.sql_subnet_sql1_id
   ]
-  vnet_id = data.terraform_remote_state.network.outputs.sql_vnet_id
+  private_endpoint_subnet_id = data.terraform_remote_state.network.outputs.pep_subnet_id
+  vnet_id                    = data.terraform_remote_state.network.outputs.sql_vnet_id
 
   sql_admin_username           = var.sql_admin_username
   sql_vm_admin_password        = local.sql_vm_admin_password
@@ -77,7 +78,8 @@ module "sql_cluster_dr" {
   subnet_ids = [
     data.terraform_remote_state.network.outputs.dr_sql_subnet_sql1_id
   ]
-  vnet_id = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
+  private_endpoint_subnet_id = data.terraform_remote_state.network.outputs.dr_pep_subnet_id
+  vnet_id                    = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
 
   sql_admin_username           = var.sql_admin_username
   sql_vm_admin_password        = local.dr_sql_vm_admin_password

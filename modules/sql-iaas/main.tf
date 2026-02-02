@@ -85,7 +85,7 @@ module "witness_storage" {
   private_endpoints = {
     witness_blob = {
       name                          = "${var.name_prefix}-witness-pe"
-      subnet_resource_id            = var.subnet_ids[0]
+      subnet_resource_id            = var.private_endpoint_subnet_id != "" ? var.private_endpoint_subnet_id : var.subnet_ids[0]
       subresource_name              = "blob"
       private_dns_zone_resource_ids = [module.witness_blob_dns[0].resource_id]
     }

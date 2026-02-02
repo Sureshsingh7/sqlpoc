@@ -35,6 +35,12 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
+variable "private_endpoint_subnet_id" {
+  description = "Subnet ID for private endpoints (witness storage, etc.). If not provided, uses first subnet from subnet_ids."
+  type        = string
+  default     = ""
+}
+
 variable "availability_zones" {
   description = "For HA deployments: zones to be used. Typically inferred from is_ha. But can be overwritten if the desired SKUs are not available in all zones."
   type        = list(number)
