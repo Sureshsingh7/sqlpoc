@@ -28,6 +28,14 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $log='C:\Windows\Temp\configure-sql-disks.log'
 $err='C:\Windows\Temp\configure-sql-disks.err.txt'
+$sentinel='C:\Windows\Temp\.disk-setup-completed'
+
+# FAST idempotency check - if sentinel file exists, we're done
+if (Test-Path $sentinel) {
+    Add-Content -Path $log -Value "$(Get-Date -Format o) [OK] Disk setup already completed (sentinel file exists) - exiting"
+    Write-Host "Disk setup already completed - exiting"
+    exit 0
+}
 
 # Handle comma-separated strings for array parameters (workaround for RunCommand passing single strings)
 if ($NodeIPs.Count -eq 1 -and $NodeIPs[0] -like "*,*") { $NodeIPs = $NodeIPs[0] -split "," }
@@ -47,62 +55,6 @@ if (-not [string]::IsNullOrWhiteSpace($ClusterAdminPasswordSecure)) {
 function L([string]$m){Add-Content -Path $log -Value ((Get-Date -Format o)+" "+$m)}
 function LD([string]$m){L "DEBUG: $m"}
 function LE([string]$m){L "ERROR: $m"}
-
-# Idempotency check - exit early if everything is already configured
-function Test-AlreadyConfigured {
-    try {
-        L "Checking if disk configuration already exists..."
-        
-        # Quick check: if all expected volumes exist with correct filesystem, we're done
-        $expectedVolumes = @('E', 'F', 'G')
-        $allVolumesExist = $true
-        
-        foreach ($letter in $expectedVolumes) {
-            $volume = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
-            if (-not $volume) {
-                L "Volume ${letter}: not found - configuration needed"
-                return $false
-            } elseif ($volume.FileSystem -ne 'NTFS') {
-                L "Volume ${letter}: exists but not NTFS - reconfiguration needed"
-                return $false
-            }
-        }
-        
-        L "All volumes (E:, F:, G:) exist and are NTFS formatted"
-        
-        # For HA deployments only: quick check if Failover Clustering is installed
-        if ($NodeIPs.Count -gt 0) {
-            L "HA deployment detected - checking Failover Clustering feature..."
-            try {
-                # Use faster WMI query instead of Get-WindowsFeature
-                $clusterService = Get-Service -Name ClusSvc -ErrorAction SilentlyContinue
-                if ($clusterService) {
-                    L "Failover Clustering service found"
-                } else {
-                    L "Failover Clustering not installed - configuration needed"
-                    return $false
-                }
-            } catch {
-                L "Could not verify Failover Clustering - proceeding with configuration"
-                return $false
-            }
-        }
-        
-        L "[OK] All required configuration already exists - skipping disk setup"
-        return $true
-        
-    } catch {
-        L "Error during idempotency check: $_"
-        L "Proceeding with full configuration to be safe"
-        return $false
-    }
-}
-
-# Check idempotency and exit early if already configured
-if (Test-AlreadyConfigured) {
-    L "=== DISK SETUP COMPLETED (ALREADY CONFIGURED) ==="
-    exit 0
-}
 
 function ConfigureVMPrerequisites {
     L "Configuring VM prerequisites"
@@ -479,6 +431,10 @@ try{
       CreateClusterAdminLocal
   }
 
+  # Create sentinel file to mark completion
+  New-Item -Path $sentinel -ItemType File -Force | Out-Null
+  L '[OK] Disk setup completed successfully - sentinel file created'
+  
   L 'ok'
   exit 0
 }catch{

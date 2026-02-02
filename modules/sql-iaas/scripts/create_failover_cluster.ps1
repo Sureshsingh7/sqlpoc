@@ -33,6 +33,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $log = 'C:\Windows\Temp\create-failover-cluster.log'
 $err = 'C:\Windows\Temp\create-failover-cluster.err.txt'
+$sentinel = 'C:\Windows\Temp\.cluster-setup-completed'
+
+# FAST idempotency check - if sentinel file exists, we're done
+if (Test-Path $sentinel) {
+    Add-Content -Path $log -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [OK] Cluster setup already completed (sentinel file exists) - exiting"
+    Write-Host "Cluster setup already completed - exiting"
+    exit 0
+}
 
 # Handle comma-separated strings for array parameters (workaround for RunCommand passing single strings)
 if ($NodeIPs.Count -eq 1 -and $NodeIPs[0] -like "*,*") { $NodeIPs = $NodeIPs[0] -split "," }
@@ -85,62 +93,6 @@ if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
 if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP)) {
     LD "PrimaryClusterIP = $PrimaryClusterIP"
 }
-
-# Idempotency check - exit early if cluster is already configured
-function Test-ClusterAlreadyConfigured {
-    L "Checking if failover cluster already exists..."
-    
-    try {
-        Import-Module FailoverClusters -ErrorAction SilentlyContinue
-        
-        # Check if cluster exists
-        $existingCluster = Get-Cluster -Name $ClusterName -ErrorAction SilentlyContinue
-        if (-not $existingCluster) {
-            L "Cluster '$ClusterName' does not exist - configuration needed"
-            return $false
-        }
-        
-        L "Cluster '$ClusterName' exists"
-        
-        # Check if all expected nodes are in the cluster
-        $clusterNodes = Get-ClusterNode -Cluster $ClusterName -ErrorAction SilentlyContinue
-        $expectedNodeCount = $NodeNames.Count
-        
-        if ($clusterNodes.Count -ne $expectedNodeCount) {
-            L "Cluster has $($clusterNodes.Count) nodes but expected $expectedNodeCount - reconfiguration needed"
-            return $false
-        }
-        
-        L "All $expectedNodeCount nodes are present in cluster"
-        
-        # Check if cloud witness is configured (if witness storage was provided)
-        if (-not [string]::IsNullOrWhiteSpace($WitnessStorageAccountName)) {
-            $quorum = Get-ClusterQuorum -Cluster $ClusterName -ErrorAction SilentlyContinue
-            if ($quorum -and $quorum.QuorumResource.ResourceType.DisplayName -eq "Cloud Witness") {
-                L "Cloud witness is configured"
-            } else {
-                L "Cloud witness not configured - configuration needed"
-                return $false
-            }
-        }
-        
-        L "[OK] Failover cluster is fully configured - skipping cluster setup"
-        return $true
-        
-    } catch {
-        L "Error checking cluster configuration: $_"
-        L "Proceeding with cluster setup"
-        return $false
-    }
-}
-
-# Check idempotency and exit early if already configured
-if (Test-ClusterAlreadyConfigured) {
-    L "=== CLUSTER SETUP COMPLETED (ALREADY CONFIGURED) ==="
-    exit 0
-}
-
-L "Proceeding with cluster configuration..."
 
 # Log DR parameters if provided (original location - keeping for backwards compatibility)
 if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
@@ -556,6 +508,11 @@ try {
     L "Script started"
     Main
     L "Script completed successfully"
+    
+    # Create sentinel file to mark completion
+    New-Item -Path $sentinel -ItemType File -Force | Out-Null
+    L "[OK] Cluster setup completed - sentinel file created"
+    
     exit 0
 } catch {
     $errorMsg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [ERROR] $($_ | Out-String)"
