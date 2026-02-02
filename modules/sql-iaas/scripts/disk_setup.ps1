@@ -504,6 +504,27 @@ try{
       CreateClusterAdminLocal
   }
 
+  # Validate all drives are accessible and writable before marking complete
+  L 'Validating drive accessibility and write permissions...'
+  $drives = @('F','G','T')
+  foreach($drive in $drives){
+    if(-not (Test-Path "${drive}:\")){
+      throw "CRITICAL: Drive ${drive}: not accessible after setup"
+    }
+    L "Drive ${drive}: accessible"
+    
+    # Verify write access with test file
+    try {
+      $testFile = "${drive}:\test-disksetup-$(Get-Date -Format 'yyyyMMddHHmmss').tmp"
+      "validation test" | Out-File $testFile -ErrorAction Stop
+      Remove-Item $testFile -Force -ErrorAction Stop
+      L "Drive ${drive}: write permission verified"
+    } catch {
+      throw "CRITICAL: Drive ${drive}: write test failed - $_"
+    }
+  }
+  L '[OK] All drives validated successfully (accessible and writable)'
+
   # Create sentinel file to mark completion
   New-Item -Path $sentinel -ItemType File -Force | Out-Null
   L '[OK] Disk setup completed successfully - sentinel file created'
