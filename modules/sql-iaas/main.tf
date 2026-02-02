@@ -76,7 +76,7 @@ module "witness_storage" {
   shared_access_key_enabled       = true
   allow_nested_items_to_be_public = false
   min_tls_version                 = "TLS1_2"
-  public_network_access_enabled   = true
+  public_network_access_enabled   = false
 
   tags = merge(var.tags, {
     SecurityControl = "Normal"
