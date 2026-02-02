@@ -38,8 +38,10 @@ jobs:
       ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
       ARM_SKIP_AZURECLI_AUTH: "true"
-      SQL_RG: ${{ secrets.SQL_RG }}
-      SQL_DR_RG: ${{ secrets.SQL_DR_RG }}
+
+      # Resource groups are derived from tfvars (see "Load Resource Groups from tfvars" step)
+      SQL_RG: ""
+      SQL_DR_RG: ""
 
       # Defaults (overridden in "Set Deployment Context" step)
       TF_VAR_FILE: "env/dev.tfvars"
@@ -169,6 +171,21 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
+
+      - name: Load Resource Groups from tfvars
+        run: |
+          set -euo pipefail
+          echo "Loading resource group names from $TF_VAR_FILE"
+          
+          SQL_RG=$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.sql_resource_group_name' | tr -d '"')
+          echo "SQL_RG=${SQL_RG}" >> $GITHUB_ENV
+          echo "Primary SQL RG: ${SQL_RG}"
+          
+          if [ "${IS_DR}" = "true" ]; then
+            SQL_DR_RG=$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.dr_sql_resource_group_name' | tr -d '"')
+            echo "SQL_DR_RG=${SQL_DR_RG}" >> $GITHUB_ENV
+            echo "DR SQL RG: ${SQL_DR_RG}"
+          fi
 
       - name: Import existing SQL IaaS resources (if any)
         run: |

@@ -158,15 +158,24 @@ jobs:
             terraform plan -input=false -var="enable_dr=false" -out=tfplan
           fi
 
+      - name: Load DR Resource Group from tfvars
+        if: env.TF_VAR_enable_dr == 'true'
+        run: |
+          set -euo pipefail
+          echo "Loading DR resource group name from terraform.tfvars"
+          DR_RG=$(terraform console <<< 'var.dr_resource_group_name' | tr -d '"')
+          echo "DR_RG=${DR_RG}" >> $GITHUB_ENV
+          echo "DR Resource Group: ${DR_RG}"
+
       - name: Grant UAMI Key Vault access on DR resource group
         if: env.TF_VAR_enable_dr == 'true'
         run: |
-          echo "Granting UAMI 'Key Vault Secrets Officer' role on DR resource group..."
+          echo "Granting UAMI 'Key Vault Secrets Officer' role on DR resource group: ${DR_RG}"
           az role assignment create \
             --role "Key Vault Secrets Officer" \
             --assignee-object-id ${{ secrets.TERRAFORM_UAMI_OBJECT_ID }} \
             --assignee-principal-type ServicePrincipal \
-            --scope /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.SQL_DR_RG }} \
+            --scope /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/${DR_RG} \
             --only-show-errors || echo "Role assignment may already exist"
 
           echo "Waiting 10 seconds for RBAC to propagate..."
