@@ -193,9 +193,30 @@ function ConfigureHostsFile {
 }
 
 function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
-  try{Set-Disk -Number $n -IsOffline $false -ErrorAction SilentlyContinue|Out-Null}catch{}
-  try{Set-Disk -Number $n -IsReadOnly $false -ErrorAction SilentlyContinue|Out-Null}catch{}
-  $d=Get-Disk -Number $n
+  L "Processing Disk $n for drive $dl (label: $lbl)"
+  
+  # Verify disk exists and is accessible
+  $d = $null
+  for($retry=0; $retry -lt 5; $retry++){
+    try{
+      Set-Disk -Number $n -IsOffline $false -ErrorAction SilentlyContinue | Out-Null
+      Set-Disk -Number $n -IsReadOnly $false -ErrorAction SilentlyContinue | Out-Null
+      $d = Get-Disk -Number $n -ErrorAction Stop
+      if($d){
+        L "Disk $n found: Size=$($d.Size) PartitionStyle=$($d.PartitionStyle) Status=$($d.OperationalStatus)"
+        break
+      }
+    }catch{
+      L "Disk $n access attempt $($retry+1)/5 failed: $_"
+      Update-HostStorageCache -ErrorAction SilentlyContinue | Out-Null
+      Start-Sleep -Seconds 2
+    }
+  }
+  
+  if(-not $d){
+    throw "Disk $n not accessible after 5 retries"
+  }
+  
   if($d.PartitionStyle -eq 'RAW'){Initialize-Disk -Number $n -PartitionStyle GPT|Out-Null}
   $p=Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue | Where-Object { $_.Type -ne 'Reserved' } | Sort-Object Size -Desc | Select-Object -First 1
 
@@ -406,30 +427,66 @@ $spec=@{0=@{l='F';b='DATA';d='F:\Data'};1=@{l='G';b='LOG';d='G:\Log'};2=@{l='T';
 
 function GetLunMap(){
   $m=@{}
+  
+  # Method 1: MSFT_Disk CIM (most reliable with LUN info)
   foreach($d in (Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -ErrorAction SilentlyContinue)){
     if($d.IsBoot -or $d.IsSystem){continue}
+    if($null -eq $d.Number){
+      LD "Skipping disk with null Number: Location=$($d.Location)"
+      continue
+    }
     $loc=$d.Location;$lun=$null
     if($loc -match 'LUN\s*(\d+)'){$lun=[int]$Matches[1]}
     elseif($loc -match 'L(\d+)\)'){$lun=[int]$Matches[1]}
-    if($null -ne $lun -and ($lun -in 0,1,2)){$m[$lun]=[int]$d.Number}
+    if($null -ne $lun -and ($lun -in 0,1,2)){
+      LD "LUN $lun -> Disk $($d.Number) (MSFT_Disk)"
+      $m[$lun]=[int]$d.Number
+    }
   }
+  
+  # Method 2: Win32_DiskDrive (fallback for disks with no Number in MSFT_Disk)
   if($m.Count -lt 3){
     foreach($dd in (Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue)){
       if($null -eq $dd.Index -or $null -eq $dd.SCSILogicalUnit){continue}
       $lun=[int]$dd.SCSILogicalUnit;$num=[int]$dd.Index
-      if($lun -in 0,1,2){$m[$lun]=$num}
+      if(($lun -in 0,1,2) -and -not $m.ContainsKey($lun)){
+        LD "LUN $lun -> Disk $num (Win32_DiskDrive fallback)"
+        $m[$lun]=$num
+      }
     }
   }
+  
   $m
 }
 
 try{
   try{Remove-Item $log,$err -ErrorAction SilentlyContinue}catch{}
   L 'start'
+  
+  # Force storage rescan and bring all disks online before mapping LUNs
+  L 'Forcing storage rescan and disk online...'
+  try { Update-HostStorageCache -ErrorAction SilentlyContinue | Out-Null } catch {}
+  try { 
+    Get-Disk -ErrorAction SilentlyContinue | Where-Object {$_.OperationalStatus -eq 'Offline'} | ForEach-Object {
+      L "Bringing disk $($_.Number) online"
+      Set-Disk -Number $_.Number -IsOffline $false -ErrorAction SilentlyContinue | Out-Null
+      Set-Disk -Number $_.Number -IsReadOnly $false -ErrorAction SilentlyContinue | Out-Null
+    }
+  } catch {
+    L "Disk online check failed: $_"
+  }
+  Start-Sleep -Seconds 5
+  
   $map=@{}
   for($i=0;$i -lt 60;$i++){
+    # Rescan storage on each retry to ensure stable disk enumeration
+    try { Update-HostStorageCache -ErrorAction SilentlyContinue | Out-Null } catch {}
+    
     $map=GetLunMap
-    if($map.ContainsKey(0) -and $map.ContainsKey(1) -and $map.ContainsKey(2)){break}
+    if($map.ContainsKey(0) -and $map.ContainsKey(1) -and $map.ContainsKey(2)){
+      L "Found all 3 LUNs: LUN0->Disk$($map[0]), LUN1->Disk$($map[1]), LUN2->Disk$($map[2])"
+      break
+    }
     L ("wait {0}/60 {1}/3" -f ($i+1),$map.Count); Start-Sleep -Seconds 10
   }
   foreach($lun in 0,1,2){
