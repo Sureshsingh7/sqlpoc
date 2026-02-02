@@ -276,20 +276,24 @@ module "sql_dns" {
 resource "azurerm_private_dns_a_record" "cluster_listener" {
   count               = var.is_ha ? 1 : 0
   name                = var.failover_cluster_name
-  zone_name           = module.sql_dns[0].name
+  zone_name           = var.dns_zone_name
   resource_group_name = var.resource_group_name
   ttl                 = 300
   records             = [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
+
+  depends_on = [module.sql_dns]
 }
 
 # DNS A records for individual VMs (for inter-node communication)
 resource "azurerm_private_dns_a_record" "sql_vm" {
   for_each            = var.is_ha ? local.vm_map : {}
   name                = each.key
-  zone_name           = module.sql_dns[0].name
+  zone_name           = var.dns_zone_name
   resource_group_name = var.resource_group_name
   ttl                 = 300
   records             = [module.sql_vm[each.key].virtual_machine_azurerm.private_ip_address]
+
+  depends_on = [module.sql_dns]
 }
 
 

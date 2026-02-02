@@ -187,6 +187,41 @@ jobs:
             echo "DR SQL RG: ${SQL_DR_RG}"
           fi
 
+      - name: Detect DR resources in state (safety check)
+        id: check_dr_state
+        run: |
+          set -euo pipefail
+          
+          # Check if DR module exists in state
+          if terraform state list 2>/dev/null | grep -q 'module.sql_cluster_dr\[0\]'; then
+            echo "DR_IN_STATE=true" >> $GITHUB_ENV
+            echo "DR_IN_STATE=true" >> $GITHUB_OUTPUT
+            echo "⚠️  DETECTED: DR resources exist in state"
+          else
+            echo "DR_IN_STATE=false" >> $GITHUB_ENV
+            echo "DR_IN_STATE=false" >> $GITHUB_OUTPUT
+            echo "No DR resources in state"
+          fi
+
+      - name: Safety check - prevent DR destruction
+        if: env.DR_IN_STATE == 'true' && env.IS_DR == 'false'
+        run: |
+          set -euo pipefail
+          echo "========================================" 
+          echo "❌ SAFETY CHECK FAILED"
+          echo "========================================"
+          echo ""
+          echo "DR resources exist in state but deployment preset is '${TF_VAR_FILE}' (enable_dr=false)"
+          echo "This would DESTROY all DR infrastructure!"
+          echo ""
+          echo "OPTIONS:"
+          echo "1. Deploy with 'dev-ha-dr' preset to maintain DR resources"
+          echo "2. Use targeted apply to update PRIMARY only: -target=module.sql_cluster"
+          echo "3. Manually remove DR from state if intentional decommission"
+          echo ""
+          echo "Preventing accidental DR destruction. Exiting."
+          exit 1
+
       - name: Import existing SQL IaaS resources (if any)
         run: |
           set -euo pipefail
@@ -567,7 +602,20 @@ jobs:
             tail -n 50 "$log_file" 2>/dev/null || true
           }
           trap on_term SIGINT SIGTERM
-          ( terraform apply -parallelism=1 -auto-approve -var-file="$TF_VAR_FILE" 2>&1 | tee -a "$log_file" ) &
+          
+          # Determine apply strategy based on DR deployment status
+          if [ "${IS_DR}" = "true" ]; then
+            # DR deployment: apply everything (PRIMARY+DR)
+            echo "DR deployment: Applying PRIMARY + DR resources"
+            APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\""
+          else
+            # PRIMARY-only deployment: apply everything (no DR in config)
+            echo "PRIMARY deployment: Applying PRIMARY resources only"
+            APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\""
+          fi
+          
+          echo "Apply command: $APPLY_CMD"
+          eval "( $APPLY_CMD 2>&1 | tee -a \"$log_file\" )" &
           pid=$!
           azure_watch_counter=0
           while kill -0 "$pid" 2>/dev/null; do
