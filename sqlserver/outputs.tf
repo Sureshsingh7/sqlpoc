@@ -85,3 +85,23 @@ output "dr_load_balancer_ip" {
   description = "Frontend IP of the DR Internal Load Balancer"
 }
 
+# PRIMARY Infrastructure outputs for DR remote state reference
+output "primary_vnet_id" {
+  value       = data.terraform_remote_state.network.outputs.vnet_id
+  description = "PRIMARY VNet ID for DR to link Private DNS zones"
+}
+
+output "primary_resource_group_name" {
+  value       = var.sql_resource_group_name
+  description = "PRIMARY SQL resource group name"
+}
+
+output "primary_dns_zone_name" {
+  value       = var.dns_zone_name
+  description = "PRIMARY SQL Private DNS zone name (sql.internal)"
+}
+
+output "primary_location" {
+  value       = var.location
+  description = "PRIMARY deployment region"
+}

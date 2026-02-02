@@ -145,13 +145,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Use dev-ha state for dev-ha-dr to preserve primary resources
+          # Each preset gets its own state file for clean separation
           STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
-          if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha-dr" ]; then
-            STATE_KEY="sqlserver-dev-ha.tfstate"
-            echo "⚠️  Using dev-ha state file for dev-ha-dr preset to preserve Primary infrastructure"
-          fi
-
           echo "State file: ${STATE_KEY}"
 
           for attempt in 1 2 3; do
@@ -186,39 +181,6 @@ jobs:
             echo "SQL_DR_RG=${SQL_DR_RG}" >> $GITHUB_ENV
             echo "DR SQL RG: ${SQL_DR_RG}"
           fi
-
-      - name: Detect DR resources in state (safety check)
-        id: check_dr_state
-        run: |
-          set -euo pipefail
-          
-          # Check if DR module exists in state
-          if terraform state list 2>/dev/null | grep -q 'module.sql_cluster_dr\[0\]'; then
-            echo "DR_IN_STATE=true" >> $GITHUB_ENV
-            echo "DR_IN_STATE=true" >> $GITHUB_OUTPUT
-            echo "⚠️  DETECTED: DR resources exist in state"
-          else
-            echo "DR_IN_STATE=false" >> $GITHUB_ENV
-            echo "DR_IN_STATE=false" >> $GITHUB_OUTPUT
-            echo "No DR resources in state"
-          fi
-
-      - name: Safety warning - DR exists in state
-        if: env.DR_IN_STATE == 'true' && env.IS_DR == 'false'
-        run: |
-          echo "========================================" 
-          echo "⚠️  SAFETY WARNING"
-          echo "========================================"
-          echo ""
-          echo "DR resources exist in state but deployment preset is '${TF_VAR_FILE}' (enable_dr=false)"
-          echo ""
-          echo "SAFETY MEASURES ACTIVE:"
-          echo "• Using -target=module.sql_cluster for plan/apply"
-          echo "• DR resources will remain in state but won't be refreshed/modified"
-          echo "• DR VMs can remain stopped during deployment"
-          echo ""
-          echo "NOTE: To deploy DR resources, use 'dev-ha-dr' preset"
-          echo ""
 
       - name: Import existing SQL IaaS resources (if any)
         run: |
@@ -425,15 +387,7 @@ jobs:
           }
           trap on_term SIGINT SIGTERM
 
-          # If DR exists in state but we're deploying PRIMARY only, use targeted refresh
-          # This prevents plan failures when DR VMs are stopped
-          if [ "${DR_IN_STATE}" = "true" ] && [ "${IS_DR}" = "false" ]; then
-            echo "⚠️  DR resources in state but deploying PRIMARY only"
-            echo "Using targeted plan with -refresh=false to avoid stopped DR VMs"
-            PLAN_CMD="terraform plan -refresh=false -input=false -var-file=\"$TF_VAR_FILE\" -target=module.sql_cluster -out=tfplan"
-          else
-            PLAN_CMD="terraform plan -input=false -var-file=\"$TF_VAR_FILE\" -out=tfplan"
-          fi
+          PLAN_CMD="terraform plan -input=false -var-file=\"$TF_VAR_FILE\" -out=tfplan"
 
           echo "Plan command: $PLAN_CMD"
           ( eval "$PLAN_CMD" 2>&1 | tee "$log_file" ) &
@@ -611,20 +565,14 @@ jobs:
           }
           trap on_term SIGINT SIGTERM
           
-          # Determine apply strategy based on DR deployment status
+          # Apply SQL IaaS extension configuration
           if [ "${IS_DR}" = "true" ]; then
-            # DR deployment: apply everything (PRIMARY+DR)
-            echo "DR deployment: Applying PRIMARY + DR resources"
-            APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\""
-          elif [ "${DR_IN_STATE}" = "true" ]; then
-            # PRIMARY-only deployment but DR exists in state: use targeted apply to avoid DR
-            echo "PRIMARY deployment with DR in state: Applying PRIMARY resources only with -target"
-            APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\" -target=module.sql_cluster"
+            echo "DR deployment: Applying PRIMARY + DR SQL IaaS configuration"
           else
-            # PRIMARY-only deployment, no DR in state: apply everything
-            echo "PRIMARY deployment: Applying PRIMARY resources only"
-            APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\""
+            echo "PRIMARY deployment: Applying PRIMARY SQL IaaS configuration"
           fi
+          
+          APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\""
           
           echo "Apply command: $APPLY_CMD"
           eval "( $APPLY_CMD 2>&1 | tee -a \"$log_file\" )" &

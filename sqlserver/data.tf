@@ -26,6 +26,22 @@ data "terraform_remote_state" "ops" {
   }
 }
 
+# Fetch PRIMARY HA deployment outputs when deploying DR
+# This allows DR to reference PRIMARY infrastructure (VNet, DNS zones, etc.)
+data "terraform_remote_state" "primary_ha" {
+  count   = var.enable_dr ? 1 : 0
+  backend = "azurerm"
+
+  config = {
+    resource_group_name  = "rg-fnz-poc-tfstate-se"
+    storage_account_name = "stfnzpocdj522c"
+    container_name       = "tfstate"
+    key                  = "sqlserver-dev-ha.tfstate"
+    use_azuread_auth     = true
+    use_msi              = var.use_msi
+  }
+}
+
 # DR Key Vault lookup (pulled from ops remote state outputs)
 data "azurerm_key_vault" "dr_ops" {
   count               = var.enable_dr ? 1 : 0
