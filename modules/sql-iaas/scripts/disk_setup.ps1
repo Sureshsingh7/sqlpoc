@@ -83,7 +83,7 @@ function Test-AlreadyConfigured {
     }
     
     if ($allVolumesExist) {
-        L "✓ All required configuration already exists - skipping disk setup"
+        L "[OK] All required configuration already exists - skipping disk setup"
         return $true
     }
     

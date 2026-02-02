@@ -124,7 +124,7 @@ function Test-ClusterAlreadyConfigured {
             }
         }
         
-        L "✓ Failover cluster is fully configured - skipping cluster setup"
+        L "[OK] Failover cluster is fully configured - skipping cluster setup"
         return $true
         
     } catch {
