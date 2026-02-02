@@ -429,8 +429,8 @@ jobs:
           # This prevents plan failures when DR VMs are stopped
           if [ "${DR_IN_STATE}" = "true" ] && [ "${IS_DR}" = "false" ]; then
             echo "⚠️  DR resources in state but deploying PRIMARY only"
-            echo "Using targeted plan to avoid refreshing stopped DR VMs"
-            PLAN_CMD="terraform plan -input=false -var-file=\"$TF_VAR_FILE\" -target=module.sql_cluster -out=tfplan"
+            echo "Using targeted plan with -refresh=false to avoid stopped DR VMs"
+            PLAN_CMD="terraform plan -refresh=false -input=false -var-file=\"$TF_VAR_FILE\" -target=module.sql_cluster -out=tfplan"
           else
             PLAN_CMD="terraform plan -input=false -var-file=\"$TF_VAR_FILE\" -out=tfplan"
           fi
