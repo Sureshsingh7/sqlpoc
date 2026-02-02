@@ -48,6 +48,55 @@ function L([string]$m){Add-Content -Path $log -Value ((Get-Date -Format o)+" "+$
 function LD([string]$m){L "DEBUG: $m"}
 function LE([string]$m){L "ERROR: $m"}
 
+# Idempotency check - exit early if everything is already configured
+function Test-AlreadyConfigured {
+    L "Checking if disk configuration already exists..."
+    
+    # Check if all expected volumes exist (E: = data, F: = log, G: = tempdb)
+    $expectedVolumes = @('E', 'F', 'G')
+    $allVolumesExist = $true
+    
+    foreach ($letter in $expectedVolumes) {
+        $volume = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+        if (-not $volume) {
+            L "Volume ${letter}: not found - configuration needed"
+            $allVolumesExist = $false
+            break
+        } elseif ($volume.FileSystem -ne 'NTFS') {
+            L "Volume ${letter}: exists but not NTFS - reconfiguration needed"
+            $allVolumesExist = $false
+            break
+        } else {
+            L "Volume ${letter}: exists (${volume.FileSystemLabel}, ${volume.SizeRemaining}/${volume.Size} free)"
+        }
+    }
+    
+    # Check if Failover Clustering feature is installed (for HA deployments)
+    if ($NodeIPs.Count -gt 0) {
+        $feature = Get-WindowsFeature -Name Failover-Clustering -ErrorAction SilentlyContinue
+        if (-not $feature -or -not $feature.Installed) {
+            L "Failover Clustering not installed - configuration needed"
+            $allVolumesExist = $false
+        } else {
+            L "Failover Clustering already installed"
+        }
+    }
+    
+    if ($allVolumesExist) {
+        L "✓ All required configuration already exists - skipping disk setup"
+        return $true
+    }
+    
+    L "Configuration incomplete - proceeding with disk setup"
+    return $false
+}
+
+# Check idempotency and exit early if already configured
+if (Test-AlreadyConfigured) {
+    L "=== DISK SETUP COMPLETED (ALREADY CONFIGURED) ==="
+    exit 0
+}
+
 function ConfigureVMPrerequisites {
     L "Configuring VM prerequisites"
 
