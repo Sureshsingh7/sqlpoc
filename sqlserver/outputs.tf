@@ -87,7 +87,7 @@ output "dr_load_balancer_ip" {
 
 # PRIMARY Infrastructure outputs for DR remote state reference
 output "primary_vnet_id" {
-  value       = data.terraform_remote_state.network.outputs.vnet_id
+  value       = data.terraform_remote_state.network.outputs.sql_vnet_id
   description = "PRIMARY VNet ID for DR to link Private DNS zones"
 }
 
