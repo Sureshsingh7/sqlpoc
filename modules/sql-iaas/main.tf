@@ -251,7 +251,7 @@ resource "azurerm_lb_rule" "sql_rule" {
   frontend_ip_configuration_name = "LoadBalancerFrontEnd"
   probe_id                       = azurerm_lb_probe.sql_probe[0].id
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.sql_lb_backend[0].id]
-  enable_floating_ip             = true
+  floating_ip_enabled            = true
 }
 
 # --- Private DNS Zone for Cluster VNN ---
