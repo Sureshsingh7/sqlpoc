@@ -97,7 +97,7 @@ output "primary_resource_group_name" {
 }
 
 output "primary_dns_zone_name" {
-  value       = var.dns_zone_name
+  value       = "sql.internal"
   description = "PRIMARY SQL Private DNS zone name (sql.internal)"
 }
 
