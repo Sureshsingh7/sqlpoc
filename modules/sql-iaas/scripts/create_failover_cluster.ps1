@@ -80,6 +80,70 @@ LD "ClusterIPs = $($ClusterIPs -join ', ')"
 
 # Log DR parameters if provided
 if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
+    LD "PrimaryClusterDNS = $PrimaryClusterDNS"
+}
+if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP)) {
+    LD "PrimaryClusterIP = $PrimaryClusterIP"
+}
+
+# Idempotency check - exit early if cluster is already configured
+function Test-ClusterAlreadyConfigured {
+    L "Checking if failover cluster already exists..."
+    
+    try {
+        Import-Module FailoverClusters -ErrorAction SilentlyContinue
+        
+        # Check if cluster exists
+        $existingCluster = Get-Cluster -Name $ClusterName -ErrorAction SilentlyContinue
+        if (-not $existingCluster) {
+            L "Cluster '$ClusterName' does not exist - configuration needed"
+            return $false
+        }
+        
+        L "Cluster '$ClusterName' exists"
+        
+        # Check if all expected nodes are in the cluster
+        $clusterNodes = Get-ClusterNode -Cluster $ClusterName -ErrorAction SilentlyContinue
+        $expectedNodeCount = $NodeNames.Count
+        
+        if ($clusterNodes.Count -ne $expectedNodeCount) {
+            L "Cluster has $($clusterNodes.Count) nodes but expected $expectedNodeCount - reconfiguration needed"
+            return $false
+        }
+        
+        L "All $expectedNodeCount nodes are present in cluster"
+        
+        # Check if cloud witness is configured (if witness storage was provided)
+        if (-not [string]::IsNullOrWhiteSpace($WitnessStorageAccountName)) {
+            $quorum = Get-ClusterQuorum -Cluster $ClusterName -ErrorAction SilentlyContinue
+            if ($quorum -and $quorum.QuorumResource.ResourceType.DisplayName -eq "Cloud Witness") {
+                L "Cloud witness is configured"
+            } else {
+                L "Cloud witness not configured - configuration needed"
+                return $false
+            }
+        }
+        
+        L "✓ Failover cluster is fully configured - skipping cluster setup"
+        return $true
+        
+    } catch {
+        L "Error checking cluster configuration: $_"
+        L "Proceeding with cluster setup"
+        return $false
+    }
+}
+
+# Check idempotency and exit early if already configured
+if (Test-ClusterAlreadyConfigured) {
+    L "=== CLUSTER SETUP COMPLETED (ALREADY CONFIGURED) ==="
+    exit 0
+}
+
+L "Proceeding with cluster configuration..."
+
+# Log DR parameters if provided (original location - keeping for backwards compatibility)
+if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
     LD "DR Configuration: PrimaryClusterDNS = $PrimaryClusterDNS"
 }
 if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP)) {
