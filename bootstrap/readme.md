@@ -100,7 +100,7 @@ terraform apply tfplan
 
 **Verify:** Plan should show:
 - DR Key Vault creation
-- DR password generation  
+- DR password generation
 - DR VNet link to shared DNS zone
 - PRIMARY resources show as "No changes"
 

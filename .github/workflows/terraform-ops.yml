@@ -168,7 +168,7 @@ jobs:
             --assignee-principal-type ServicePrincipal \
             --scope /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.SQL_DR_RG }} \
             --only-show-errors || echo "Role assignment may already exist"
-          
+
           echo "Waiting 10 seconds for RBAC to propagate..."
           sleep 10
 
