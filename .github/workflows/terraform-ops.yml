@@ -166,7 +166,7 @@ jobs:
             --role "Key Vault Secrets Officer" \
             --assignee-object-id ${{ secrets.TERRAFORM_UAMI_OBJECT_ID }} \
             --assignee-principal-type ServicePrincipal \
-            --scope /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/rg-fnz-poc-sql-dr-swc \
+            --scope /subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.SQL_DR_RG }} \
             --only-show-errors || echo "Role assignment may already exist"
           
           echo "Waiting 10 seconds for RBAC to propagate..."
