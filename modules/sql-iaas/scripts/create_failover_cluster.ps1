@@ -139,7 +139,7 @@ function CheckClusterExists {
 
 function ValidateNodeConnectivity {
     L "Validating network connectivity (waiting for other nodes to be up and firewall rules applied)"
-    
+
     # Wait up to 20 minutes for checks to pass
     $timeout = New-TimeSpan -Minutes 20
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -154,7 +154,7 @@ function ValidateNodeConnectivity {
                 $connected = $true
                 break
             }
-            
+
             if ($sw.Elapsed.Seconds % 30 -eq 0) {
                  LD "Waiting for node $node to be reachable (ICMP)... ($([math]::Round($sw.Elapsed.TotalSeconds))s elapsed)"
             }
@@ -244,13 +244,13 @@ function EnableSqlAlwaysOn {
     try {
         # Install NuGet and dbatools with timeout (requires internet access)
         LD "Installing NuGet provider and dbatools (timeout: 2 minutes)"
-        
+
         $job = Start-Job -ScriptBlock {
             Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers -ErrorAction Stop | Out-Null
             Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction Stop
             Install-Module dbatools -Force -Scope AllUsers -AllowClobber -SkipPublisherCheck -ErrorAction Stop
         }
-        
+
         $completed = Wait-Job $job -Timeout 120
         if ($null -eq $completed) {
             Stop-Job $job
@@ -260,10 +260,10 @@ function EnableSqlAlwaysOn {
             LW "Always On can be enabled manually later using: Enable-SqlAlwaysOn -ServerName localhost -Force"
             return $false
         }
-        
+
         $jobError = $job.ChildJobs[0].Error
         Remove-Job $job -Force
-        
+
         if ($jobError) {
             LW "Failed to install dbatools: $($jobError | Out-String)"
             LW "Always On can be enabled manually later using: Enable-SqlAlwaysOn -ServerName localhost -Force"

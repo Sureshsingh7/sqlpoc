@@ -104,7 +104,7 @@ module "kv_private_dns" {
   source  = "Azure/avm-res-network-privatednszone/azurerm"
   version = "0.4.4"
 
-  domain_name = "privatelink.vaultcore.azure.net"
+  domain_name = var.kv_private_dns_zone
   parent_id   = data.azurerm_resource_group.ops.id
   tags        = local.tags
 
@@ -321,7 +321,7 @@ module "jumpbox_vm" {
   source_image_reference = {
     publisher = "MicrosoftWindowsServer"
     offer     = "WindowsServer"
-    sku       = "2022-datacenter-g2"
+    sku       = "2025-datacenter-g2"
     version   = "latest"
   }
 

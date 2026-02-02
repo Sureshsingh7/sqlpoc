@@ -72,7 +72,7 @@ variable "image_publisher" {
 
 variable "image_offer" {
   type    = string
-  default = "sql2022-ws2022"
+  default = "sql2025-ws2025"
 }
 
 variable "image_sku" {

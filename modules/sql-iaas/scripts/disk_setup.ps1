@@ -4,7 +4,7 @@ param(
 
     [Parameter(Mandatory=$false)]
     [string[]]$NodeNames = @(),
-    
+
     [Parameter(Mandatory=$false)]
     [string[]]$ClusterIPs = @(),
 
@@ -122,7 +122,7 @@ function CreateClusterAdminLocal {
     try {
         $existingUser = Get-LocalUser -Name $ClusterAdminUsername -ErrorAction SilentlyContinue
         $securePassword = ConvertTo-SecureString $ClusterAdminPassword -AsPlainText -Force
-        
+
         if ($existingUser) {
             LD "User '$ClusterAdminUsername' already exists locally"
             Set-LocalUser -Name $ClusterAdminUsername -Password $securePassword -ErrorAction Stop
@@ -144,7 +144,7 @@ function CreateClusterAdminLocal {
 
 function ConfigureHostsFile {
     if ($ClusterIPs.Count -eq 0 -or [string]::IsNullOrWhiteSpace($ClusterName)) { return }
-    
+
     LD "Configuring cluster hosts file entries"
     $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
     $hostsContent = Get-Content $hostsFile -Raw -ErrorAction SilentlyContinue
@@ -417,7 +417,7 @@ try{
 
   if ($NodeIPs.Count -gt 0) {
       ConfigureVMPrerequisites
-      ConfigureHostsFile
+      # NOTE: ConfigureHostsFile removed - using Private DNS Zone (sql.internal) with A records instead
   }
   if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
       CreateClusterAdminLocal
