@@ -37,6 +37,22 @@ if (Test-Path $sentinel) {
     exit 0
 }
 
+# Smart detection: if volumes E:, F:, G: already exist, create sentinel and exit (handles transition from old code)
+try {
+    $vol_e = Get-Volume -DriveLetter E -ErrorAction SilentlyContinue
+    $vol_f = Get-Volume -DriveLetter F -ErrorAction SilentlyContinue
+    $vol_g = Get-Volume -DriveLetter G -ErrorAction SilentlyContinue
+    
+    if ($vol_e -and $vol_f -and $vol_g) {
+        Write-Host "Volumes E:, F:, G: already exist - creating sentinel and exiting"
+        Add-Content -Path $log -Value "$(Get-Date -Format o) [OK] Volumes already configured - creating sentinel file and exiting"
+        New-Item -Path $sentinel -ItemType File -Force | Out-Null
+        exit 0
+    }
+} catch {
+    # If volume check fails, continue with normal setup
+}
+
 # Handle comma-separated strings for array parameters (workaround for RunCommand passing single strings)
 if ($NodeIPs.Count -eq 1 -and $NodeIPs[0] -like "*,*") { $NodeIPs = $NodeIPs[0] -split "," }
 if ($NodeNames.Count -eq 1 -and $NodeNames[0] -like "*,*") { $NodeNames = $NodeNames[0] -split "," }

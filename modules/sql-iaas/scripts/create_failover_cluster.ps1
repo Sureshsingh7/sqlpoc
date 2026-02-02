@@ -42,6 +42,20 @@ if (Test-Path $sentinel) {
     exit 0
 }
 
+# Smart detection: if cluster already exists, create sentinel and exit (handles transition from old code)
+try {
+    Import-Module FailoverClusters -ErrorAction SilentlyContinue
+    $existingCluster = Get-Cluster -Name $ClusterName -ErrorAction SilentlyContinue 2>$null
+    if ($existingCluster) {
+        Write-Host "Cluster '$ClusterName' already exists - creating sentinel and exiting"
+        Add-Content -Path $log -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [OK] Cluster already configured - creating sentinel file and exiting"
+        New-Item -Path $sentinel -ItemType File -Force | Out-Null
+        exit 0
+    }
+} catch {
+    # If cluster check fails, continue with normal setup
+}
+
 # Handle comma-separated strings for array parameters (workaround for RunCommand passing single strings)
 if ($NodeIPs.Count -eq 1 -and $NodeIPs[0] -like "*,*") { $NodeIPs = $NodeIPs[0] -split "," }
 if ($ClusterIPs.Count -eq 1 -and $ClusterIPs[0] -like "*,*") { $ClusterIPs = $ClusterIPs[0] -split "," }
