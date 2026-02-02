@@ -37,15 +37,15 @@ if (Test-Path $sentinel) {
     exit 0
 }
 
-# Smart detection: if volumes E:, F:, G: already exist, create sentinel and exit (handles transition from old code)
+# Smart detection: if volumes F:, G:, T: already exist, create sentinel and exit (handles transition from old code)
 try {
-    $vol_e = Get-Volume -DriveLetter E -ErrorAction SilentlyContinue
     $vol_f = Get-Volume -DriveLetter F -ErrorAction SilentlyContinue
     $vol_g = Get-Volume -DriveLetter G -ErrorAction SilentlyContinue
+    $vol_t = Get-Volume -DriveLetter T -ErrorAction SilentlyContinue
     
-    if ($vol_e -and $vol_f -and $vol_g) {
-        Write-Host "Volumes E:, F:, G: already exist - creating sentinel and exiting"
-        Add-Content -Path $log -Value "$(Get-Date -Format o) [OK] Volumes already configured - creating sentinel file and exiting"
+    if ($vol_f -and $vol_g -and $vol_t) {
+        Write-Host "Volumes F:, G:, T: already exist - creating sentinel and exiting"
+        Add-Content -Path $log -Value "$(Get-Date -Format o) [OK] Volumes already configured (F:/G:/T:) - creating sentinel file and exiting"
         New-Item -Path $sentinel -ItemType File -Force | Out-Null
         exit 0
     }
