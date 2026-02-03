@@ -461,6 +461,20 @@ function ConfigureCloudWitness {
         }
 
         LD "Storage account: $WitnessStorageAccountName"
+
+        # Wait for private endpoint DNS propagation
+        L "Waiting 60s for private endpoint DNS to stabilize"
+        Start-Sleep -Seconds 60
+
+        # Verify DNS resolves to private IP before attempting
+        $fqdn = "$WitnessStorageAccountName.blob.core.windows.net"
+        $resolved = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -like "10.*" }
+        if ($resolved) {
+            LD "DNS resolved to private IP: $($resolved.IPAddress)"
+        } else {
+            LW "DNS did not resolve to private IP, Cloud Witness may fail"
+        }
+        
         Set-ClusterQuorum -CloudWitness -AccountName $WitnessStorageAccountName -AccessKey $witnessKey -ErrorAction Stop
 
         L "Cloud Witness configured"
