@@ -474,7 +474,7 @@ function ConfigureCloudWitness {
         } else {
             LW "DNS did not resolve to private IP, Cloud Witness may fail"
         }
-        
+
         Set-ClusterQuorum -CloudWitness -AccountName $WitnessStorageAccountName -AccessKey $witnessKey -ErrorAction Stop
 
         L "Cloud Witness configured"
@@ -536,11 +536,11 @@ try {
     L "Script started"
     Main
     L "Script completed successfully"
-    
+
     # Create sentinel file to mark completion
     New-Item -Path $sentinel -ItemType File -Force | Out-Null
     L "[OK] Cluster setup completed - sentinel file created"
-    
+
     exit 0
 } catch {
     $errorMsg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [ERROR] $($_ | Out-String)"
