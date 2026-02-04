@@ -494,6 +494,82 @@ function ConfigureCloudWitness {
     }
 }
 
+function ConfigureVnnProbePort {
+    param([string[]]$ClusterIPAddresses)
+
+    L "Configuring VNN Listener with Azure Load Balancer Probe Port"
+
+    if ($ClusterIPAddresses.Count -eq 0) {
+        LW "No cluster IP addresses provided, skipping VNN configuration"
+        return $false
+    }
+
+    try {
+        $probePort = 59999
+        L "Probe port: $probePort"
+
+        # Get all IP address resources for the cluster
+        $ipResources = Get-ClusterResource | Where-Object { $_.ResourceType -eq "IP Address" }
+
+        foreach ($ip in $ClusterIPAddresses) {
+            L "Configuring cluster IP: $ip"
+
+            # Find the IP resource that matches this address
+            $ipResource = $ipResources | Where-Object {
+                $addr = ($_ | Get-ClusterParameter -Name Address -ErrorAction SilentlyContinue).Value
+                $addr -eq $ip
+            }
+
+            if ($null -eq $ipResource) {
+                LW "IP resource not found for address $ip, skipping"
+                continue
+            }
+
+            L "Found IP resource: $($ipResource.Name) for address $ip"
+
+            # Get the network for this IP
+            $network = ($ipResource | Get-ClusterParameter -Name Network -ErrorAction SilentlyContinue).Value
+            if ([string]::IsNullOrWhiteSpace($network)) {
+                LW "Could not determine network for IP $ip"
+                continue
+            }
+
+            LD "Network: $network"
+
+            # Configure the IP resource for Azure Load Balancer VNN
+            L "Setting cluster parameters for IP $ip..."
+            $ipResource | Set-ClusterParameter -Multiple @{
+                \"Address\"              = $ip
+                \"ProbePort\"            = $probePort
+                \"SubnetMask\"           = \"255.255.255.255\"
+                \"Network\"              = $network
+                \"OverrideAddressMatch\" = 1
+                \"EnableDhcp\"           = 0
+            } -ErrorAction Stop
+
+            L "Cluster IP $ip configured successfully"
+
+            # Restart the IP resource to apply changes
+            L "Restarting IP resource $($ipResource.Name)..."
+            try {
+                Stop-ClusterResource -Name $ipResource.Name -ErrorAction Stop
+                Start-Sleep -Seconds 5
+                Start-ClusterResource -Name $ipResource.Name -ErrorAction Stop
+                L "IP resource $($ipResource.Name) restarted"
+            } catch {
+                LW "Failed to restart IP resource $($ipResource.Name): $_"
+            }
+        }
+
+        L "VNN Listener configuration completed"
+        return $true
+    } catch {
+        LE "Failed to configure VNN: $_"
+        $_ | Out-File -FilePath $err -Append
+        return $false
+    }
+}
+
 function Main {
     L "========== Failover Cluster Setup =========="
     L "Host: $env:COMPUTERNAME | Cluster: $ClusterName"
@@ -527,6 +603,13 @@ function Main {
     if (CreateFailoverCluster) {
         L "Cluster created successfully"
         DisplayClusterInfo -Name $ClusterName
+
+        # Configure VNN with Azure Load Balancer probe port
+        if ($ClusterIPs.Count -gt 0) {
+            if (-not (ConfigureVnnProbePort -ClusterIPAddresses $ClusterIPs)) {
+                LW "VNN probe port configuration failed, manual configuration may be required"
+            }
+        }
 
         if (-not [string]::IsNullOrWhiteSpace($WitnessStorageAccountName)) {
             if (-not (ConfigureCloudWitness)) {

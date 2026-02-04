@@ -173,11 +173,13 @@ import {
   id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/loadBalancers/poc-ha-dr-ilb/probes/SqlProbe"
 }
 
-# Load Balancer Rule
-import {
-  to = module.sql_cluster_dr[0].azurerm_lb_rule.sql_rule[0]
-  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/loadBalancers/poc-ha-dr-ilb/loadBalancingRules/SqlListenerRule"
-}
+# Load Balancer Rules (VNN: 1433 and 5022 on both subnets)
+# Note: The old SqlListenerRule needs to be destroyed and recreated as 4 new rules
+# Remove the old import for sql_rule and the existing rule will be destroyed during plan
+# import {
+#   to = module.sql_cluster_dr[0].azurerm_lb_rule.sql_rule_1433_subnet1[0]
+#   id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/loadBalancers/poc-ha-dr-ilb/loadBalancingRules/SqlListener-1433-Subnet1"
+# }
 
 # VM Run Commands - Disk Setup
 import {

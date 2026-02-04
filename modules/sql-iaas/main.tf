@@ -200,6 +200,7 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
 
 # --- Load Balancer (Internal) ---
 # Only for HA deployments
+# VNN configuration requires 1 frontend IP per subnet
 resource "azurerm_lb" "sql_lb" {
   count               = var.is_ha ? 1 : 0
   name                = "${var.name_prefix}-ilb"
@@ -207,11 +208,21 @@ resource "azurerm_lb" "sql_lb" {
   resource_group_name = var.resource_group_name
   sku                 = "Standard"
 
+  # Frontend IP for first subnet
   frontend_ip_configuration {
-    name                          = "LoadBalancerFrontEnd"
+    name                          = "LoadBalancerFrontEnd-Subnet1"
     subnet_id                     = var.subnet_ids[0]
     private_ip_address_allocation = "Dynamic"
-    # Or Static if user provides an IP? For now Dynamic is safer for module portability.
+  }
+
+  # Frontend IP for second subnet (for VNN listener)
+  dynamic "frontend_ip_configuration" {
+    for_each = length(var.subnet_ids) > 1 ? [1] : []
+    content {
+      name                          = "LoadBalancerFrontEnd-Subnet2"
+      subnet_id                     = var.subnet_ids[1]
+      private_ip_address_allocation = "Dynamic"
+    }
   }
 
   tags = var.tags
@@ -241,14 +252,55 @@ resource "azurerm_lb_probe" "sql_probe" {
   number_of_probes    = 2
 }
 
-resource "azurerm_lb_rule" "sql_rule" {
+# Load balancing rules for SQL port 1433 on both frontend IPs
+resource "azurerm_lb_rule" "sql_rule_1433_subnet1" {
   count                          = var.is_ha ? 1 : 0
   loadbalancer_id                = azurerm_lb.sql_lb[0].id
-  name                           = "SqlListenerRule"
+  name                           = "SqlListener-1433-Subnet1"
   protocol                       = "Tcp"
   frontend_port                  = 1433
   backend_port                   = 1433
-  frontend_ip_configuration_name = "LoadBalancerFrontEnd"
+  frontend_ip_configuration_name = "LoadBalancerFrontEnd-Subnet1"
+  probe_id                       = azurerm_lb_probe.sql_probe[0].id
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.sql_lb_backend[0].id]
+  floating_ip_enabled            = true
+}
+
+resource "azurerm_lb_rule" "sql_rule_1433_subnet2" {
+  count                          = var.is_ha && length(var.subnet_ids) > 1 ? 1 : 0
+  loadbalancer_id                = azurerm_lb.sql_lb[0].id
+  name                           = "SqlListener-1433-Subnet2"
+  protocol                       = "Tcp"
+  frontend_port                  = 1433
+  backend_port                   = 1433
+  frontend_ip_configuration_name = "LoadBalancerFrontEnd-Subnet2"
+  probe_id                       = azurerm_lb_probe.sql_probe[0].id
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.sql_lb_backend[0].id]
+  floating_ip_enabled            = true
+}
+
+# Load balancing rules for AlwaysOn port 5022 on both frontend IPs
+resource "azurerm_lb_rule" "sql_rule_5022_subnet1" {
+  count                          = var.is_ha ? 1 : 0
+  loadbalancer_id                = azurerm_lb.sql_lb[0].id
+  name                           = "AlwaysOn-5022-Subnet1"
+  protocol                       = "Tcp"
+  frontend_port                  = 5022
+  backend_port                   = 5022
+  frontend_ip_configuration_name = "LoadBalancerFrontEnd-Subnet1"
+  probe_id                       = azurerm_lb_probe.sql_probe[0].id
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.sql_lb_backend[0].id]
+  floating_ip_enabled            = true
+}
+
+resource "azurerm_lb_rule" "sql_rule_5022_subnet2" {
+  count                          = var.is_ha && length(var.subnet_ids) > 1 ? 1 : 0
+  loadbalancer_id                = azurerm_lb.sql_lb[0].id
+  name                           = "AlwaysOn-5022-Subnet2"
+  protocol                       = "Tcp"
+  frontend_port                  = 5022
+  backend_port                   = 5022
+  frontend_ip_configuration_name = "LoadBalancerFrontEnd-Subnet2"
   probe_id                       = azurerm_lb_probe.sql_probe[0].id
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.sql_lb_backend[0].id]
   floating_ip_enabled            = true
@@ -273,13 +325,17 @@ module "sql_dns" {
   }
 }
 
+# DNS A record for cluster listener (VNN) points to both frontend IPs
 resource "azurerm_private_dns_a_record" "cluster_listener" {
   count               = var.is_ha ? 1 : 0
   name                = var.failover_cluster_name
   zone_name           = var.dns_zone_name
   resource_group_name = var.resource_group_name
   ttl                 = 300
-  records             = [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
+  records             = length(var.subnet_ids) > 1 ? [
+    azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+    azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+  ] : [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
 
   depends_on = [module.sql_dns]
 }
@@ -327,7 +383,10 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
 
   parameter {
     name  = "ClusterIPs"
-    value = var.is_ha ? azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address : ""
+    value = var.is_ha ? (length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address) : ""
   }
 
   parameter {
@@ -399,7 +458,10 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
 
   parameter {
     name  = "ClusterIPs"
-    value = azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
+    value = length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
   }
 
   timeouts {

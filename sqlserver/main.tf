@@ -31,7 +31,8 @@ module "sql_cluster" {
   vm_sku = var.vm_size
 
   subnet_ids = [
-    data.terraform_remote_state.network.outputs.sql_subnet_sql1_id
+    data.terraform_remote_state.network.outputs.sql_subnet_sql1_id,
+    data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
   ]
   private_endpoint_subnet_id = data.terraform_remote_state.network.outputs.pep_subnet_id
   vnet_id                    = data.terraform_remote_state.network.outputs.sql_vnet_id
@@ -55,8 +56,8 @@ module "sql_cluster" {
   image_sku       = var.image_sku
   image_version   = var.image_version
 
-  failover_cluster_name               = var.failover_cluster_name
-  dns_zone_name                       = "sql.internal"
+  failover_cluster_name                = var.failover_cluster_name
+  dns_zone_name                        = "sql.internal"
   witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
   tags = var.tags
@@ -81,7 +82,8 @@ module "sql_cluster_dr" {
   vm_sku = var.vm_size
 
   subnet_ids = [
-    data.terraform_remote_state.network.outputs.dr_sql_subnet_sql1_id
+    data.terraform_remote_state.network.outputs.dr_sql_subnet_sql1_id,
+    data.terraform_remote_state.network.outputs.dr_sql_subnet_sql2_id
   ]
   private_endpoint_subnet_id = data.terraform_remote_state.network.outputs.dr_pep_subnet_id
   vnet_id                    = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
@@ -105,8 +107,8 @@ module "sql_cluster_dr" {
   image_sku       = var.image_sku
   image_version   = var.image_version
 
-  failover_cluster_name               = "${var.failover_cluster_name}-dr"
-  dns_zone_name                       = "sql.internal"
+  failover_cluster_name                = "${var.failover_cluster_name}-dr"
+  dns_zone_name                        = "sql.internal"
   witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
   tags = merge(
