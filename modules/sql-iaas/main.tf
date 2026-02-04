@@ -76,20 +76,11 @@ module "witness_storage" {
   shared_access_key_enabled       = true
   allow_nested_items_to_be_public = false
   min_tls_version                 = "TLS1_2"
-  public_network_access_enabled   = true
+  public_network_access_enabled   = false
 
   tags = merge(var.tags, {
     SecurityControl = var.witness_storage_security_control_tag
   })
-
-  network_rules = {
-    default_action = "Deny"
-    bypass         = ["AzureServices"]
-    ip_rules       = []
-    virtual_network_subnet_ids = [
-      var.subnet_ids[0]
-    ]
-  }
 
   private_endpoints = {
     witness_blob = {
