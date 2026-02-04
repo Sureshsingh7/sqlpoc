@@ -144,15 +144,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Each preset gets its own state file for clean separation
-          STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
+          # HA and HA+DR share the same state file (DR is added to HA, not a separate deployment)
+          if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha-dr" ]; then
+            STATE_KEY="sqlserver-dev-ha.tfstate"
+            BACKEND_CONFIG="env/backend-dev-ha-dr.tfbackend"
+            echo "HA+DR deployment: Using shared HA state file"
+          else
+            STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
+            BACKEND_CONFIG="env/backend-${{ github.event.inputs.deployment_preset }}.tfbackend"
+          fi
+          
           echo "State file: ${STATE_KEY}"
-          echo "Backend config: env/backend-${{ github.event.inputs.deployment_preset }}.tfbackend"
+          echo "Backend config: ${BACKEND_CONFIG}"
 
           for attempt in 1 2 3; do
             echo "terraform init attempt ${attempt}/3"
             if terraform init -reconfigure -upgrade \
-              -backend-config="env/backend-${{ github.event.inputs.deployment_preset }}.tfbackend" \
+              -backend-config="${BACKEND_CONFIG}" \
               -backend-config="key=${STATE_KEY}"; then
               exit 0
             fi

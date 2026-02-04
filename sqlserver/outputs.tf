@@ -40,27 +40,27 @@ output "ops_key_vault_id" {
 }
 
 output "witness_storage_account_name" {
-  value       = module.sql_cluster.witness_storage_account_name
+  value       = var.deploy_primary ? module.sql_cluster[0].witness_storage_account_name : null
   description = "Storage account name used for WSFC Cloud Witness"
 }
 
 output "cluster_name" {
-  value       = module.sql_cluster.cluster_name
+  value       = var.deploy_primary ? module.sql_cluster[0].cluster_name : null
   description = "Name of the specified failover cluster"
 }
 
 output "sql_vm_ids" {
-  value       = module.sql_cluster.sql_vm_ids
+  value       = var.deploy_primary ? module.sql_cluster[0].sql_vm_ids : {}
   description = "Map of VM names to their resource IDs"
 }
 
 output "sql_vm_private_ips" {
-  value       = module.sql_cluster.sql_vm_ips
+  value       = var.deploy_primary ? module.sql_cluster[0].sql_vm_ips : {}
   description = "Map of VM names to their private IPs"
 }
 
 output "load_balancer_ip" {
-  value       = module.sql_cluster.load_balancer_ip
+  value       = var.deploy_primary ? module.sql_cluster[0].load_balancer_ip : null
   description = "Frontend IP of the Internal Load Balancer"
 }
 

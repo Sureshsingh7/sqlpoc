@@ -18,6 +18,7 @@ locals {
 }
 
 module "sql_cluster" {
+  count  = var.deploy_primary ? 1 : 0
   source = "../modules/sql-iaas"
 
   resource_group_name = var.sql_resource_group_name
@@ -72,7 +73,10 @@ module "sql_cluster_dr" {
   is_ha = true
   is_dr = true
 
-  dr_primary_nodes = module.sql_cluster.sql_vm_names
+  # Get primary nodes from either the primary module (if deploying both) or remote state (if DR-only)
+  dr_primary_nodes = var.deploy_primary ? module.sql_cluster[0].sql_vm_names : (
+    length(data.terraform_remote_state.primary_ha) > 0 ? keys(data.terraform_remote_state.primary_ha[0].outputs.sql_vm_ids) : []
+  )
 
   vm_sku = var.vm_size
 

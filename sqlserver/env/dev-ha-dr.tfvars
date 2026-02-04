@@ -39,7 +39,8 @@ manage_disk_setup_extension = true
 enable_failover_cluster = true
 failover_cluster_name   = "sqlpoc-ha-cl"
 
-# DR Configuration
+# DR Configuration - Deploy only DR (primary HA managed by separate dev-ha state)
+deploy_primary             = false
 enable_dr                  = true
 dr_location                = "swedencentral"
 dr_sql_resource_group_name = "rg-fnz-poc-sql-dr-swc"

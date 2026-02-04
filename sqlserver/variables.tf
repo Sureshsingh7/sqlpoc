@@ -258,6 +258,12 @@ variable "enable_dr" {
   default     = false
 }
 
+variable "deploy_primary" {
+  type        = bool
+  description = "Deploy primary SQL cluster. Set to false when deploying only DR to avoid state conflicts."
+  default     = true
+}
+
 variable "dr_location" {
   type        = string
   description = "Azure region for DR deployment (should match your DR network region)"

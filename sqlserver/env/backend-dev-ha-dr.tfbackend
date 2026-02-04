@@ -1,5 +1,6 @@
 # Backend configuration for HA+DR deployment
-# Note: key is set dynamically by GitHub Actions workflow based on deployment_preset
+# Note: HA+DR uses the SAME state as HA (DR is added to existing HA)
+# The state key is set dynamically by workflow to "sqlserver-dev-ha.tfstate"
 
 resource_group_name  = "rg-fnz-poc-tfstate-se"
 storage_account_name = "stfnzpocdj522c"
