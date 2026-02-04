@@ -141,20 +141,18 @@ jobs:
           TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
-          TFSTATE_KEY: "sqlpoc.sqlserver.tfstate"
         run: |
           set -euo pipefail
 
           # Each preset gets its own state file for clean separation
           STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
           echo "State file: ${STATE_KEY}"
+          echo "Backend config: env/backend-${{ github.event.inputs.deployment_preset }}.tfbackend"
 
           for attempt in 1 2 3; do
             echo "terraform init attempt ${attempt}/3"
             if terraform init -reconfigure -upgrade \
-              -backend-config="resource_group_name=${TFSTATE_RG}" \
-              -backend-config="storage_account_name=${TFSTATE_SA}" \
-              -backend-config="container_name=${TFSTATE_CONTAINER}" \
+              -backend-config="env/backend-${{ github.event.inputs.deployment_preset }}.tfbackend" \
               -backend-config="key=${STATE_KEY}"; then
               exit 0
             fi

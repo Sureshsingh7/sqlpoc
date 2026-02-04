@@ -1,7 +1,6 @@
 # Backend configuration for non-HA deployment
-# Usage: terraform init -backend-config="env/backend-dev.tfbackend"
+# Note: key is set dynamically by GitHub Actions workflow based on deployment_preset
 
 resource_group_name  = "rg-fnz-poc-tfstate-se"
 storage_account_name = "stfnzpocdj522c"
 container_name       = "tfstate"
-key                  = "sqlserver-dev.tfstate"
