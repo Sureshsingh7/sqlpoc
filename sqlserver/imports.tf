@@ -112,6 +112,82 @@ import {
   id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Storage/storageAccounts/stpochadrwtc4b9dy"
 }
 
+# Witness Storage Private Endpoint
+import {
+  to = module.sql_cluster_dr[0].module.witness_storage[0].azurerm_private_endpoint.this["witness_blob"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateEndpoints/poc-ha-dr-witness-pe"
+}
+
+# Private DNS Zone - Blob (azapi_resource)
+import {
+  to = module.sql_cluster_dr[0].module.witness_blob_dns[0].azapi_resource.private_dns_zone
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+}
+
+# Private DNS Zone - SQL.internal (azapi_resource)
+import {
+  to = module.sql_cluster_dr[0].module.sql_dns[0].azapi_resource.private_dns_zone
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/sql.internal"
+}
+
+# Virtual Network Link - Blob DNS Zone
+import {
+  to = module.sql_cluster_dr[0].module.witness_blob_dns[0].module.virtual_network_links["sql_vnet"].azapi_resource.private_dns_zone_network_link
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net/virtualNetworkLinks/link-blob-poc-ha-dr"
+}
+
+# Virtual Network Link - SQL DNS Zone
+import {
+  to = module.sql_cluster_dr[0].module.sql_dns[0].module.virtual_network_links["sql_vnet"].azapi_resource.private_dns_zone_network_link
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/sql.internal/virtualNetworkLinks/link-sql-vnet-poc-ha-dr"
+}
+
+# DNS A Record - Cluster Listener
+import {
+  to = module.sql_cluster_dr[0].azurerm_private_dns_a_record.cluster_listener[0]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/sql.internal/A/sqlpoc-ha-cl-dr"
+}
+
+# DNS A Records - SQL VMs
+import {
+  to = module.sql_cluster_dr[0].azurerm_private_dns_a_record.sql_vm["poc-ha-dr-sql01"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/sql.internal/A/poc-ha-dr-sql01"
+}
+
+import {
+  to = module.sql_cluster_dr[0].azurerm_private_dns_a_record.sql_vm["poc-ha-dr-sql02"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/sql.internal/A/poc-ha-dr-sql02"
+}
+
+# Load Balancer Backend Pool
+import {
+  to = module.sql_cluster_dr[0].azurerm_lb_backend_address_pool.sql_lb_backend[0]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/loadBalancers/poc-ha-dr-ilb/backendAddressPools/SqlBackendPool"
+}
+
+# Load Balancer Backend Pool Addresses
+import {
+  to = module.sql_cluster_dr[0].azurerm_lb_backend_address_pool_address.sql_nodes["poc-ha-dr-sql01"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/loadBalancers/poc-ha-dr-ilb/backendAddressPools/SqlBackendPool/addresses/poc-ha-dr-sql01"
+}
+
+import {
+  to = module.sql_cluster_dr[0].azurerm_lb_backend_address_pool_address.sql_nodes["poc-ha-dr-sql02"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/loadBalancers/poc-ha-dr-ilb/backendAddressPools/SqlBackendPool/addresses/poc-ha-dr-sql02"
+}
+
+# Load Balancer Probe
+import {
+  to = module.sql_cluster_dr[0].azurerm_lb_probe.sql_probe[0]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/loadBalancers/poc-ha-dr-ilb/probes/SqlProbe"
+}
+
+# Load Balancer Rule
+import {
+  to = module.sql_cluster_dr[0].azurerm_lb_rule.sql_rule[0]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/loadBalancers/poc-ha-dr-ilb/loadBalancingRules/SqlListenerRule"
+}
+
 # VM Run Commands - Disk Setup
 import {
   to = module.sql_cluster_dr[0].azurerm_virtual_machine_run_command.disk_setup["poc-ha-dr-sql01"]
@@ -133,6 +209,3 @@ import {
   to = module.sql_cluster_dr[0].azurerm_virtual_machine_run_command.cluster_setup["poc-ha-dr-sql02"]
   id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Compute/virtualMachines/poc-ha-dr-sql02/runCommands/failover-cluster-setup"
 }
-
-# Note: Nested AVM module resources (DNS zones, disk attachments, private endpoints) 
-# will be imported automatically when running terraform apply
