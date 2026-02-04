@@ -470,5 +470,7 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
     delete = "30m"
   }
 
-  tags = var.tags
+  tags = merge(var.tags, {
+    script_hash = md5(file("${path.module}/scripts/create_failover_cluster.ps1"))
+  })
 }

@@ -353,7 +353,7 @@ try {
     }
 
     Add-Content -Path `$log -Value "Creating cluster '$ClusterName' with nodes '$($NodeNames -join "','")'..."
-    `$c = New-Cluster -Name '$ClusterName' -Node @('$($NodeNames -join "','")') -AdministrativeAccessPoint ActiveDirectoryAndDns -StaticAddress @('$($ClusterIPs -join "','")') -NoStorage -Force -ErrorAction Stop
+    `$c = New-Cluster -Name '$ClusterName' -Node @('$($NodeNames -join "','")') -AdministrativeAccessPoint Dns -StaticAddress @('$($ClusterIPs -join "','")') -NoStorage -Force -ErrorAction Stop
     Add-Content -Path `$log -Value "SUCCESS: Cluster `$(`$c.Name) created"
     "SUCCESS:`$(`$c.Name)" | Out-File '$resultFile' -Force
 } catch {
