@@ -1,7 +1,7 @@
 
 terraform {
   backend "azurerm" {
-    key              = "sqlpoc.sqlserver.tfstate"
+    key              = "sqlserver-dev-ha.tfstate"
     use_azuread_auth = true
   }
 }
