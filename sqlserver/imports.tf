@@ -56,6 +56,39 @@ import {
   id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Compute/disks/poc-ha-dr-sql02-tempdb"
 }
 
+# Disk Attachments - Data
+import {
+  to = module.sql_cluster_dr[0].module.sql_vm["poc-ha-dr-sql01"].azurerm_virtual_machine_data_disk_attachment.this_windows["poc-ha-dr-sql01-data"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Compute/virtualMachines/poc-ha-dr-sql01/dataDisks/poc-ha-dr-sql01-data"
+}
+
+import {
+  to = module.sql_cluster_dr[0].module.sql_vm["poc-ha-dr-sql02"].azurerm_virtual_machine_data_disk_attachment.this_windows["poc-ha-dr-sql02-data"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Compute/virtualMachines/poc-ha-dr-sql02/dataDisks/poc-ha-dr-sql02-data"
+}
+
+# Disk Attachments - Log
+import {
+  to = module.sql_cluster_dr[0].module.sql_vm["poc-ha-dr-sql01"].azurerm_virtual_machine_data_disk_attachment.this_windows["poc-ha-dr-sql01-log"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Compute/virtualMachines/poc-ha-dr-sql01/dataDisks/poc-ha-dr-sql01-log"
+}
+
+import {
+  to = module.sql_cluster_dr[0].module.sql_vm["poc-ha-dr-sql02"].azurerm_virtual_machine_data_disk_attachment.this_windows["poc-ha-dr-sql02-log"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Compute/virtualMachines/poc-ha-dr-sql02/dataDisks/poc-ha-dr-sql02-log"
+}
+
+# Disk Attachments - TempDB
+import {
+  to = module.sql_cluster_dr[0].module.sql_vm["poc-ha-dr-sql01"].azurerm_virtual_machine_data_disk_attachment.this_windows["poc-ha-dr-sql01-tempdb"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Compute/virtualMachines/poc-ha-dr-sql01/dataDisks/poc-ha-dr-sql01-tempdb"
+}
+
+import {
+  to = module.sql_cluster_dr[0].module.sql_vm["poc-ha-dr-sql02"].azurerm_virtual_machine_data_disk_attachment.this_windows["poc-ha-dr-sql02-tempdb"]
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Compute/virtualMachines/poc-ha-dr-sql02/dataDisks/poc-ha-dr-sql02-tempdb"
+}
+
 # SQL IaaS Extension
 import {
   to = module.sql_cluster_dr[0].azurerm_mssql_virtual_machine.sql_vm["poc-ha-dr-sql01"]
