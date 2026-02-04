@@ -1,0 +1,7 @@
+# Backend configuration for non-HA deployment
+# Usage: terraform init -backend-config="env/backend-dev.tfbackend"
+
+resource_group_name  = "rg-fnz-poc-tfstate-se"
+storage_account_name = "stfnzpocdj522c"
+container_name       = "tfstate"
+key                  = "sqlserver-dev.tfstate"
