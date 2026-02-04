@@ -539,12 +539,12 @@ function ConfigureVnnProbePort {
             # Configure the IP resource for Azure Load Balancer VNN
             L "Setting cluster parameters for IP $ip..."
             $ipResource | Set-ClusterParameter -Multiple @{
-                \"Address\"              = $ip
-                \"ProbePort\"            = $probePort
-                \"SubnetMask\"           = \"255.255.255.255\"
-                \"Network\"              = $network
-                \"OverrideAddressMatch\" = 1
-                \"EnableDhcp\"           = 0
+                "Address"              = $ip
+                "ProbePort"            = $probePort
+                "SubnetMask"           = "255.255.255.255"
+                "Network"              = $network
+                "OverrideAddressMatch" = 1
+                "EnableDhcp"           = 0
             } -ErrorAction Stop
 
             L "Cluster IP $ip configured successfully"
