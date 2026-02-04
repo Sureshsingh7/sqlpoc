@@ -98,12 +98,12 @@ import {
 # SQL IaaS Extension
 import {
   to = module.sql_cluster_dr[0].azurerm_mssql_virtual_machine.sql_vm["poc-ha-dr-sql01"]
-  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.SqlVirtualMachine/SqlVirtualMachines/poc-ha-dr-sql01"
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/poc-ha-dr-sql01"
 }
 
 import {
   to = module.sql_cluster_dr[0].azurerm_mssql_virtual_machine.sql_vm["poc-ha-dr-sql02"]
-  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.SqlVirtualMachine/SqlVirtualMachines/poc-ha-dr-sql02"
+  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/poc-ha-dr-sql02"
 }
 
 # Load Balancer
