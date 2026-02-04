@@ -66,5 +66,4 @@ tags = {
   managed_by  = "terraform"
   tier        = "database"
   ha_enabled  = "true"
-  dr_enabled  = "true"
 }

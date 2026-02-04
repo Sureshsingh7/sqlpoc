@@ -106,7 +106,10 @@ module "sql_cluster_dr" {
   witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
   tags = merge(
-    { for k, v in var.tags : k => v if lower(k) != "environment" },
-    { environment = "dr" }
+    var.tags,
+    {
+      environment = "dr"
+      dr_enabled  = "true"
+    }
   )
 }
