@@ -54,8 +54,9 @@ module "sql_cluster" {
   image_sku       = var.image_sku
   image_version   = var.image_version
 
-  failover_cluster_name = var.failover_cluster_name
-  dns_zone_name         = "sql.internal"
+  failover_cluster_name               = var.failover_cluster_name
+  dns_zone_name                       = "sql.internal"
+  witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
   tags = var.tags
 }
@@ -100,8 +101,9 @@ module "sql_cluster_dr" {
   image_sku       = var.image_sku
   image_version   = var.image_version
 
-  failover_cluster_name = "${var.failover_cluster_name}-dr"
-  dns_zone_name         = "sql.internal"
+  failover_cluster_name               = "${var.failover_cluster_name}-dr"
+  dns_zone_name                       = "sql.internal"
+  witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
   tags = merge(
     { for k, v in var.tags : k => v if lower(k) != "environment" },

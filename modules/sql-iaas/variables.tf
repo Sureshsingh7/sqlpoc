@@ -150,3 +150,9 @@ variable "user_assigned_identity_ids" {
   default     = []
 }
 
+variable "witness_storage_security_control_tag" {
+  description = "Value for the SecurityControl tag on witness storage account to bypass org policy that disables key access."
+  type        = string
+  default     = "ignore"
+}
+

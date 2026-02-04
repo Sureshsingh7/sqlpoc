@@ -461,6 +461,15 @@ function ConfigureCloudWitness {
         }
 
         LD "Storage account: $WitnessStorageAccountName"
+        
+        # Validate storage account key access is enabled
+        L "Validating storage account key access..."
+        if ([string]::IsNullOrWhiteSpace($witnessKey) -or $witnessKey.Length -lt 20) {
+            LE "Storage account key is invalid or empty - key access may be disabled"
+            LE "Ensure 'Allow storage account key access' is enabled and SecurityControl tag is set to bypass policy"
+            throw "Storage account key access validation failed"
+        }
+        LD "Storage account key validation passed"
 
         # Wait for private endpoint DNS propagation
         L "Waiting 60s for private endpoint DNS to stabilize"

@@ -141,9 +141,12 @@ module "ops_kv" {
   sku_name                      = "standard"
   purge_protection_enabled      = true
   soft_delete_retention_days    = 30
-  public_network_access_enabled = true
-  network_acls                  = null
-  tags                          = local.tags
+  public_network_access_enabled = false
+  network_acls = {
+    bypass         = "AzureServices"
+    default_action = "Deny"
+  }
+  tags = local.tags
 
   # Note: Terraform UAMI "Key Vault Secrets Officer" must be granted manually/via workflow
   # UAMI cannot grant its own role assignments without User Access Administrator privilege
@@ -187,9 +190,12 @@ module "ops_kv_dr" {
   sku_name                      = "standard"
   purge_protection_enabled      = true
   soft_delete_retention_days    = 30
-  public_network_access_enabled = true
-  network_acls                  = null
-  tags                          = merge(local.tags, { environment = "dr" })
+  public_network_access_enabled = false
+  network_acls = {
+    bypass         = "AzureServices"
+    default_action = "Deny"
+  }
+  tags = merge(local.tags, { environment = "dr" })
 
   # Note: Terraform UAMI "Key Vault Secrets Officer" must be granted manually/via workflow
   # UAMI cannot grant its own role assignments without User Access Administrator privilege

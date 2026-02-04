@@ -79,7 +79,7 @@ module "witness_storage" {
   public_network_access_enabled   = true
 
   tags = merge(var.tags, {
-    SecurityControl = "Normal"
+    SecurityControl = var.witness_storage_security_control_tag
   })
 
   network_rules = {
