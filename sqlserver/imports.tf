@@ -1,6 +1,12 @@
 # DR Resources Import Blocks
 # These import existing DR resources into Terraform state to avoid recreation
 
+# Random suffix for witness storage account naming
+import {
+  to = module.sql_cluster_dr[0].random_string.witness_suffix
+  id = "c4b9dy"
+}
+
 # VMs (use [0] count index)
 import {
   to = module.sql_cluster_dr[0].module.sql_vm["poc-ha-dr-sql01"].azurerm_windows_virtual_machine.this[0]
