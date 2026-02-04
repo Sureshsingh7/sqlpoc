@@ -148,22 +148,7 @@ import {
   id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/sql.internal/virtualNetworkLinks/link-sql-vnet-poc-ha-dr"
 }
 
-# DNS A Record - Cluster Listener
-import {
-  to = module.sql_cluster_dr[0].azurerm_private_dns_a_record.cluster_listener[0]
-  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/sql.internal/A/sqlpoc-ha-cl-dr"
-}
-
-# DNS A Records - SQL VMs
-import {
-  to = module.sql_cluster_dr[0].azurerm_private_dns_a_record.sql_vm["poc-ha-dr-sql01"]
-  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/sql.internal/A/poc-ha-dr-sql01"
-}
-
-import {
-  to = module.sql_cluster_dr[0].azurerm_private_dns_a_record.sql_vm["poc-ha-dr-sql02"]
-  id = "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-dr-swc/providers/Microsoft.Network/privateDnsZones/sql.internal/A/poc-ha-dr-sql02"
-}
+# Note: DNS A records for cluster listener and SQL VMs don't exist yet in DR - they will be created
 
 # Load Balancer Backend Pool
 import {
