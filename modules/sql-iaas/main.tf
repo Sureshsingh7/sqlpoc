@@ -332,7 +332,7 @@ resource "azurerm_private_dns_a_record" "cluster_listener" {
   zone_name           = var.dns_zone_name
   resource_group_name = var.resource_group_name
   ttl                 = 300
-  records             = length(var.subnet_ids) > 1 ? [
+  records = length(var.subnet_ids) > 1 ? [
     azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
     azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
   ] : [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
@@ -382,7 +382,7 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
   }
 
   parameter {
-    name  = "ClusterIPs"
+    name = "ClusterIPs"
     value = var.is_ha ? (length(var.subnet_ids) > 1 ? join(",", [
       azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
       azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
@@ -457,7 +457,7 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
   }
 
   parameter {
-    name  = "ClusterIPs"
+    name = "ClusterIPs"
     value = length(var.subnet_ids) > 1 ? join(",", [
       azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
       azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
