@@ -216,3 +216,4 @@ FOR DATABASE_MIRRORING (
     $_ | Out-File "C:\Windows\Temp\configure-hadr-endpoints.err.txt" -Force
     exit 1
 }
+
