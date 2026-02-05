@@ -533,7 +533,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
 resource "azurerm_virtual_machine_run_command" "ag_setup" {
   for_each = var.is_ha ? { for k, v in local.vm_map : k => v if k == local.vm_names[0] } : {}
 
-  name               = "availability-group-setup-v2"
+  name               = "availability-group-setup-v3"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.hadr_endpoint_setup]
@@ -578,6 +578,16 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
   parameter {
     name  = "ProbePort"
     value = "59999"
+  }
+
+  parameter {
+    name  = "SqlAdminUsername"
+    value = var.sql_admin_username
+  }
+
+  parameter {
+    name  = "SqlAdminPassword"
+    value = var.sql_admin_password
   }
 
   timeouts {
