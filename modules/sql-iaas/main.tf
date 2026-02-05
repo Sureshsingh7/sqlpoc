@@ -474,3 +474,64 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
     script_hash = md5(file("${path.module}/scripts/create_failover_cluster.ps1"))
   })
 }
+# Availability Group Setup (only on primary replica)
+resource "azurerm_virtual_machine_run_command" "ag_setup" {
+  for_each = var.is_ha ? { for k, v in local.vm_map : k => v if k == local.vm_names[0] } : {}
+
+  name               = "availability-group-setup"
+  location           = var.location
+  virtual_machine_id = module.sql_vm[each.key].resource_id
+  depends_on         = [azurerm_virtual_machine_run_command.cluster_setup]
+
+  source {
+    script = file("${path.module}/scripts/create_availability_group.ps1")
+  }
+
+  parameter {
+    name  = "AGName"
+    value = "${var.sql_name_prefix}-AG"
+  }
+
+  parameter {
+    name  = "ListenerName"
+    value = "${var.sql_name_prefix}-listener"
+  }
+
+  parameter {
+    name = "ListenerIPs"
+    value = length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
+  }
+
+  parameter {
+    name  = "PrimaryReplica"
+    value = local.vm_names[0]
+  }
+
+  parameter {
+    name  = "SecondaryReplicas"
+    value = join(",", slice(local.vm_names, 1, length(local.vm_names)))
+  }
+
+  parameter {
+    name  = "ListenerPort"
+    value = "1433"
+  }
+
+  parameter {
+    name  = "ProbePort"
+    value = "59999"
+  }
+
+  timeouts {
+    create = "60m"
+    update = "60m"
+    delete = "30m"
+  }
+
+  tags = merge(var.tags, {
+    script_hash = md5(file("${path.module}/scripts/create_availability_group.ps1"))
+  })
+}
