@@ -587,7 +587,7 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
 
   parameter {
     name  = "SqlAdminPassword"
-    value = var.sql_admin_password
+    value = var.sql_vm_admin_password
   }
 
   timeouts {
