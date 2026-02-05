@@ -363,22 +363,39 @@ try {
         `$clusterNameResource = Get-ClusterResource 'Cluster Name' -ErrorAction Stop
     }
     
+    # Stop cluster name before modifying dependencies
+    Add-Content -Path `$log -Value "Stopping cluster name resource..."
+    Stop-ClusterResource `$clusterNameResource.Name -ErrorAction Stop
+    
+    # Get cluster networks
+    `$clusterNetworks = Get-ClusterNetwork | Sort-Object Name
+    Add-Content -Path `$log -Value "Found `$(`$clusterNetworks.Count) cluster networks"
+    
     # Add IP Address resources for each cluster IP
-    `$ipIndex = 1
+    `$ipIndex = 0
     foreach (`$ip in @('$($ClusterIPs -join "','")')) {
         Add-Content -Path `$log -Value "Adding IP Address resource for `$ip..."
-        `$ipResource = Add-ClusterResource -Name "Cluster IP Address `$ipIndex" -ResourceType 'IP Address' -Group 'Cluster Group' -ErrorAction Stop
+        `$ipResource = Add-ClusterResource -Name "Cluster IP Address `$(`$ipIndex + 1)" -ResourceType 'IP Address' -Group 'Cluster Group' -ErrorAction Stop
+        
+        # Assign to correct network (use index to match network order)
+        if (`$ipIndex -lt `$clusterNetworks.Count) {
+            `$network = `$clusterNetworks[`$ipIndex]
+            Add-Content -Path `$log -Value "  Assigning to network: `$(`$network.Name)"
+            `$ipResource | Set-ClusterParameter -Name Network -Value `$network.Name -ErrorAction Stop
+        }
+        
         `$ipResource | Set-ClusterParameter -Name Address -Value `$ip -ErrorAction Stop
         `$ipResource | Set-ClusterParameter -Name SubnetMask -Value '255.255.255.255' -ErrorAction Stop
         `$ipResource | Set-ClusterParameter -Name EnableDhcp -Value 0 -ErrorAction Stop
+        
+        # Add dependency
         Add-ClusterResourceDependency -Resource `$clusterNameResource.Name -Provider `$ipResource.Name -ErrorAction Stop
-        Start-ClusterResource `$ipResource.Name -ErrorAction Stop
-        Add-Content -Path `$log -Value "IP resource `$(`$ipResource.Name) added and started"
+        Add-Content -Path `$log -Value "IP resource `$(`$ipResource.Name) configured"
         `$ipIndex++
     }
     
-    # Restart cluster name resource to pick up new dependencies
-    Stop-ClusterResource `$clusterNameResource.Name -ErrorAction Stop
+    # Start cluster name resource (will bring dependencies online too)
+    Add-Content -Path `$log -Value "Starting cluster name resource..."
     Start-ClusterResource `$clusterNameResource.Name -ErrorAction Stop
     
     Add-Content -Path `$log -Value "SUCCESS: Cluster `$(`$c.Name) created with IP Address resources"
