@@ -66,7 +66,7 @@ try {
     Import-Module SqlServer -ErrorAction Stop
 
     # Check if Always On is enabled
-    $hadrEnabled = Invoke-Sqlcmd -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS IsEnabled" -ServerInstance $currentNode
+    $hadrEnabled = Invoke-Sqlcmd -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS IsEnabled" -ServerInstance $currentNode -TrustServerCertificate
     if ($hadrEnabled.IsEnabled -ne 1) {
         LE "Always On is not enabled on $currentNode"
         exit 1
@@ -74,7 +74,7 @@ try {
     L "Always On is enabled"
 
     # Check if AG already exists
-    $existingAG = Invoke-Sqlcmd -Query "SELECT name FROM sys.availability_groups WHERE name = '$AGName'" -ServerInstance $currentNode -ErrorAction SilentlyContinue
+    $existingAG = Invoke-Sqlcmd -Query "SELECT name FROM sys.availability_groups WHERE name = '$AGName'" -ServerInstance $currentNode -TrustServerCertificate -ErrorAction SilentlyContinue
     if ($existingAG) {
         L "Availability Group '$AGName' already exists"
         New-Item -Path $sentinel -ItemType File -Force | Out-Null
@@ -84,11 +84,11 @@ try {
     # Create test database if it doesn't exist
     $dbName = "TestDB"
     L "Creating test database '$dbName'..."
-    $dbExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.databases WHERE name = '$dbName'" -ServerInstance $currentNode
+    $dbExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.databases WHERE name = '$dbName'" -ServerInstance $currentNode -TrustServerCertificate
     if (-not $dbExists) {
-        Invoke-Sqlcmd -Query "CREATE DATABASE [$dbName]" -ServerInstance $currentNode
-        Invoke-Sqlcmd -Query "ALTER DATABASE [$dbName] SET RECOVERY FULL" -ServerInstance $currentNode
-        Invoke-Sqlcmd -Query "BACKUP DATABASE [$dbName] TO DISK = 'NUL'" -ServerInstance $currentNode
+        Invoke-Sqlcmd -Query "CREATE DATABASE [$dbName]" -ServerInstance $currentNode -TrustServerCertificate
+        Invoke-Sqlcmd -Query "ALTER DATABASE [$dbName] SET RECOVERY FULL" -ServerInstance $currentNode -TrustServerCertificate
+        Invoke-Sqlcmd -Query "BACKUP DATABASE [$dbName] TO DISK = 'NUL'" -ServerInstance $currentNode -TrustServerCertificate
         L "Database created and backed up"
     } else {
         L "Database already exists"
@@ -131,7 +131,7 @@ N'$secondary' WITH (
 "@
     }
 
-    Invoke-Sqlcmd -Query $createAGSQL -ServerInstance $currentNode
+    Invoke-Sqlcmd -Query $createAGSQL -ServerInstance $currentNode -TrustServerCertificate
     L "Availability Group created"
 
     # Wait for secondaries to join
@@ -141,7 +141,7 @@ N'$secondary' WITH (
         $elapsed = 0
         while ($elapsed -lt $timeout) {
             try {
-                Invoke-Sqlcmd -Query "ALTER AVAILABILITY GROUP [$AGName] GRANT CREATE ANY DATABASE" -ServerInstance $secondary -ErrorAction Stop
+                Invoke-Sqlcmd -Query "ALTER AVAILABILITY GROUP [$AGName] GRANT CREATE ANY DATABASE" -ServerInstance $secondary -TrustServerCertificate -ErrorAction Stop
                 L "$secondary joined successfully"
                 break
             } catch {
@@ -162,7 +162,7 @@ N'$secondary' WITH (
     $listenerSQL += $ipParts -join ", "
     $listenerSQL += "), PORT=$ListenerPort)"
 
-    Invoke-Sqlcmd -Query $listenerSQL -ServerInstance $currentNode
+    Invoke-Sqlcmd -Query $listenerSQL -ServerInstance $currentNode -TrustServerCertificate
     L "Listener created"
 
     # Wait for listener resources to appear in cluster
