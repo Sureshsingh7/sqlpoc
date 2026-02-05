@@ -59,10 +59,13 @@ try {
 
     # Step 1: Create Master Key if it doesn't exist
     L "Creating database master key..."
+    L "DEBUG: Master key password length: $($masterKeyPassword.Length)"
+    L "DEBUG: Master key password (first 10 chars): $($masterKeyPassword.Substring(0, [Math]::Min(10, $masterKeyPassword.Length)))"
     $masterKeyCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'" -ServerInstance $CurrentNodeName -Database master -ErrorAction SilentlyContinue
 
     if (-not $masterKeyCheck) {
         $createMasterKeySQL = "USE master; CREATE MASTER KEY ENCRYPTION BY PASSWORD = '" + $masterKeyPassword + "';"
+        L "DEBUG: SQL command length: $($createMasterKeySQL.Length)"
         Invoke-Sqlcmd -Query $createMasterKeySQL -ServerInstance $CurrentNodeName
         L "Master key created"
     } else {
