@@ -1,10 +1,10 @@
 param(
     [Parameter(Mandatory=$true)]
     [string[]]$AllNodeNames,
-    
+
     [Parameter(Mandatory=$true)]
     [string]$CurrentNodeName,
-    
+
     [Parameter(Mandatory=$false)]
     [int]$EndpointPort = 5022
 )
@@ -13,13 +13,13 @@ $ErrorActionPreference = 'Stop'
 $log = 'C:\Windows\Temp\configure-hadr-endpoints.log'
 $sentinel = 'C:\Windows\Temp\.hadr-endpoint-configured'
 
-function L([string]$m) { 
+function L([string]$m) {
     $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [INFO] $m"
     Add-Content -Path $log -Value $msg
     Write-Host $msg
 }
 
-function LE([string]$m) { 
+function LE([string]$m) {
     $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [ERROR] $m"
     Add-Content -Path $log -Value $msg
     Write-Error $msg
@@ -34,25 +34,25 @@ if (Test-Path $sentinel) {
 try {
     L "Starting HADR endpoint configuration for $CurrentNodeName"
     L "All nodes in cluster: $($AllNodeNames -join ', ')"
-    
+
     # Import SQL Server module
     Import-Module SqlServer -ErrorAction Stop
-    
+
     $certName = "${CurrentNodeName}_Cert"
     $certBackupPath = "C:\Temp\Certificates"
     $guidPart = (New-Guid).ToString()
     $masterKeyPassword = "${guidPart}Pass@123!" # Random strong password
-    
+
     # Create certificate directory
     if (-not (Test-Path $certBackupPath)) {
         New-Item -Path $certBackupPath -ItemType Directory -Force | Out-Null
         L "Created certificate directory: $certBackupPath"
     }
-    
+
     # Step 1: Create Master Key if it doesn't exist
     L "Creating database master key..."
     $masterKeyCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'" -ServerInstance $CurrentNodeName -Database master -ErrorAction SilentlyContinue
-    
+
     if (-not $masterKeyCheck) {
         $createMasterKeySQL = @"
 USE master;
@@ -63,11 +63,11 @@ CREATE MASTER KEY ENCRYPTION BY PASSWORD = '$masterKeyPassword';
     } else {
         L "Master key already exists"
     }
-    
+
     # Step 2: Create Certificate for this node
     L "Creating certificate: $certName"
     $certCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name = '$certName'" -ServerInstance $CurrentNodeName -Database master -ErrorAction SilentlyContinue
-    
+
     if (-not $certCheck) {
         $createCertSQL = @"
 USE master;
@@ -77,11 +77,11 @@ EXPIRY_DATE = '2030-12-31';
 "@
         Invoke-Sqlcmd -Query $createCertSQL -ServerInstance $CurrentNodeName
         L "Certificate created: $certName"
-        
+
         # Backup certificate
         $certFile = Join-Path $certBackupPath "${certName}.cer"
         $keyFile = Join-Path $certBackupPath "${certName}.pvk"
-        
+
         $backupCertSQL = @"
 BACKUP CERTIFICATE [$certName]
 TO FILE = '$certFile'
@@ -95,13 +95,13 @@ WITH PRIVATE KEY (
     } else {
         L "Certificate already exists: $certName"
     }
-    
+
     # Step 3: Wait for all nodes to create their certificates
     L "Waiting for partner node certificates..."
     $timeout = 300 # 5 minutes
     $elapsed = 0
     $allCertsReady = $false
-    
+
     while ($elapsed -lt $timeout -and -not $allCertsReady) {
         $missingCerts = @()
         foreach ($nodeName in $AllNodeNames) {
@@ -112,7 +112,7 @@ WITH PRIVATE KEY (
                 }
             }
         }
-        
+
         if ($missingCerts.Count -eq 0) {
             $allCertsReady = $true
             L "All partner certificates are ready"
@@ -122,22 +122,22 @@ WITH PRIVATE KEY (
             $elapsed += 10
         }
     }
-    
+
     if (-not $allCertsReady) {
         LE "Timeout waiting for partner certificates"
         exit 1
     }
-    
+
     # Step 4: Import partner certificates
     L "Importing partner certificates..."
     foreach ($nodeName in $AllNodeNames) {
         if ($nodeName -ne $CurrentNodeName) {
             $partnerCertName = "${nodeName}_Cert"
             $partnerCertFile = Join-Path $certBackupPath "$partnerCertName.cer"
-            
+
             # Check if certificate already imported
             $certExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name = '$partnerCertName'" -ServerInstance $CurrentNodeName -Database master -ErrorAction SilentlyContinue
-            
+
             if (-not $certExists) {
                 $importCertSQL = @"
 USE master;
@@ -151,19 +151,19 @@ FROM FILE = '$partnerCertFile';
             }
         }
     }
-    
+
     # Step 5: Create HADR Endpoint with certificate authentication
     L "Creating HADR endpoint on port $EndpointPort..."
     $endpointName = "Hadr_endpoint"
-    
+
     # Check if endpoint exists
     $endpointCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.endpoints WHERE name = '$endpointName'" -ServerInstance $CurrentNodeName -ErrorAction SilentlyContinue
-    
+
     if ($endpointCheck) {
         L "Endpoint already exists, dropping it to recreate with certificate"
         Invoke-Sqlcmd -Query "DROP ENDPOINT [$endpointName]" -ServerInstance $CurrentNodeName
     }
-    
+
     $createEndpointSQL = @"
 CREATE ENDPOINT [$endpointName]
 STATE = STARTED
@@ -179,38 +179,38 @@ FOR DATABASE_MIRRORING (
 "@
     Invoke-Sqlcmd -Query $createEndpointSQL -ServerInstance $CurrentNodeName
     L "HADR endpoint created with certificate authentication"
-    
+
     # Step 6: Grant CONNECT permission to partner certificates
     L "Granting CONNECT permissions to partner certificates..."
     foreach ($nodeName in $AllNodeNames) {
         if ($nodeName -ne $CurrentNodeName) {
             $partnerCertName = "${nodeName}_Cert"
             $loginName = "${nodeName}_Login"
-            
+
             # Check if login exists
             $loginExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.server_principals WHERE name = '$loginName'" -ServerInstance $CurrentNodeName -ErrorAction SilentlyContinue
-            
+
             if (-not $loginExists) {
                 # Create login from certificate
                 $createLoginSQL = "USE master; CREATE LOGIN [$loginName] FROM CERTIFICATE [$partnerCertName];"
                 Invoke-Sqlcmd -Query $createLoginSQL -ServerInstance $CurrentNodeName
                 L "Created login for $nodeName: $loginName"
             }
-            
+
             # Grant CONNECT permission to endpoint
             $grantSQL = "GRANT CONNECT ON ENDPOINT::[$endpointName] TO [$loginName];"
             Invoke-Sqlcmd -Query $grantSQL -ServerInstance $CurrentNodeName
             L "Granted CONNECT permission to $loginName"
         }
     }
-    
+
     # Verify endpoint is running
     $endpointStatus = Invoke-Sqlcmd -Query "SELECT state_desc FROM sys.endpoints WHERE name = '$endpointName'" -ServerInstance $CurrentNodeName
     L "Endpoint status: $($endpointStatus.state_desc)"
-    
+
     L "HADR endpoint configuration completed successfully"
     New-Item -Path $sentinel -ItemType File -Force | Out-Null
-    
+
 } catch {
     LE "Error configuring HADR endpoint: $_"
     $_ | Out-File "C:\Windows\Temp\configure-hadr-endpoints.err.txt" -Force
