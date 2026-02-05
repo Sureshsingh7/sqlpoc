@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string[]]$AllNodeNames,
+    [string]$AllNodeNames,  # Changed from [string[]] - will be comma-separated
 
     [Parameter(Mandatory=$true)]
     [string]$CurrentNodeName,
@@ -18,6 +18,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $log = 'C:\Windows\Temp\configure-hadr-endpoints.log'
 $sentinel = 'C:\Windows\Temp\.hadr-endpoint-configured'
+
+# Split the comma-separated node names into an array
+$AllNodeNamesArray = $AllNodeNames -split ',' | ForEach-Object { $_.Trim() }
 
 function L([string]$m) {
     $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [INFO] $m"
@@ -39,7 +42,7 @@ if (Test-Path $sentinel) {
 
 try {
     L "Starting HADR endpoint configuration for $CurrentNodeName"
-    L "All nodes in cluster: $($AllNodeNames -join ', ')"
+    L "All nodes in cluster: $($AllNodeNamesArray -join ', ')"
 
     # Install and import SQL Server module
     L "Checking for SqlServer module..."
@@ -131,7 +134,7 @@ EXPIRY_DATE = '2030-12-31';
 
     while ($elapsed -lt $timeout -and -not $allCertsReady) {
         $missingCerts = @()
-        foreach ($nodeName in $AllNodeNames) {
+        foreach ($nodeName in $AllNodeNamesArray) {
             if ($nodeName -ne $CurrentNodeName) {
                 $partnerCertFile = Join-Path $certBackupPath "${nodeName}_Cert.cer"
                 if (-not (Test-Path $partnerCertFile)) {
