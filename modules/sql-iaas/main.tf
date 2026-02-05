@@ -529,12 +529,12 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
 
   parameter {
     name  = "AGName"
-    value = "${var.sql_name_prefix}-AG"
+    value = "${var.name_prefix}-AG"
   }
 
   parameter {
     name  = "ListenerName"
-    value = "${var.sql_name_prefix}-listener"
+    value = "${var.name_prefix}-listener"
   }
 
   parameter {
