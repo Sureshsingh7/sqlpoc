@@ -6,7 +6,13 @@ param(
     [string]$CurrentNodeName,
 
     [Parameter(Mandatory=$false)]
-    [int]$EndpointPort = 5022
+    [int]$EndpointPort = 5022,
+
+    [Parameter(Mandatory=$true)]
+    [string]$SqlAdminUsername,
+
+    [Parameter(Mandatory=$true)]
+    [string]$SqlAdminPassword
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,7 +68,7 @@ try {
     L "DEBUG: ServerInstance = $CurrentNodeName"
     
     try {
-        $masterKeyCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'" -ServerInstance $CurrentNodeName -Database master -TrustServerCertificate -ErrorAction Stop
+        $masterKeyCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'" -ServerInstance $CurrentNodeName -Database master -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
         L "DEBUG: Master key check completed, result count: $($masterKeyCheck.Count)"
     } catch {
         L "DEBUG: Master key check failed with error: $_"
@@ -78,7 +84,7 @@ try {
         try {
             $createQuery = "CREATE MASTER KEY ENCRYPTION BY PASSWORD = '$testPassword'"
             L "DEBUG: Executing query: $createQuery"
-            Invoke-Sqlcmd -Query $createQuery -ServerInstance $CurrentNodeName -Database master -TrustServerCertificate -ErrorAction Stop
+            Invoke-Sqlcmd -Query $createQuery -ServerInstance $CurrentNodeName -Database master -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
             L "Master key created successfully"
         } catch {
             L "DEBUG: CREATE MASTER KEY failed with error: $_"
@@ -94,7 +100,7 @@ try {
 
     # Step 2: Create Certificate for this node
     L "Creating certificate: $certName"
-    $certCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name = '$certName'" -ServerInstance $CurrentNodeName -Database master -TrustServerCertificate -ErrorAction SilentlyContinue
+    $certCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name = '$certName'" -ServerInstance $CurrentNodeName -Database master -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
 
     if (-not $certCheck) {
         $createCertSQL = @"
@@ -103,7 +109,7 @@ CREATE CERTIFICATE [$certName]
 WITH SUBJECT = 'Certificate for $CurrentNodeName HADR Endpoint',
 EXPIRY_DATE = '2030-12-31';
 "@
-        Invoke-Sqlcmd -Query $createCertSQL -ServerInstance $CurrentNodeName -TrustServerCertificate
+        Invoke-Sqlcmd -Query $createCertSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
         L "Certificate created: $certName"
 
         # Backup certificate
@@ -111,7 +117,7 @@ EXPIRY_DATE = '2030-12-31';
         $keyFile = Join-Path $certBackupPath "${certName}.pvk"
 
         $backupCertSQL = "BACKUP CERTIFICATE [$certName] TO FILE = '$certFile' WITH PRIVATE KEY (FILE = '$keyFile', ENCRYPTION BY PASSWORD = '" + $masterKeyPassword + "');"
-        Invoke-Sqlcmd -Query $backupCertSQL -ServerInstance $CurrentNodeName -TrustServerCertificate
+        Invoke-Sqlcmd -Query $backupCertSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
         L "Certificate backed up to: $certFile"
     } else {
         L "Certificate already exists: $certName"
@@ -157,7 +163,7 @@ EXPIRY_DATE = '2030-12-31';
             $partnerCertFile = Join-Path $certBackupPath "$partnerCertName.cer"
 
             # Check if certificate already imported
-            $certExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name = '$partnerCertName'" -ServerInstance $CurrentNodeName -Database master -TrustServerCertificate -ErrorAction SilentlyContinue
+            $certExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name = '$partnerCertName'" -ServerInstance $CurrentNodeName -Database master -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
 
             if (-not $certExists) {
                 $importCertSQL = @"
@@ -165,7 +171,7 @@ USE master;
 CREATE CERTIFICATE [$partnerCertName]
 FROM FILE = '$partnerCertFile';
 "@
-                Invoke-Sqlcmd -Query $importCertSQL -ServerInstance $CurrentNodeName -TrustServerCertificate
+                Invoke-Sqlcmd -Query $importCertSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
                 L "Imported certificate from $nodeName"
             } else {
                 L "Certificate from $nodeName already imported"
@@ -178,11 +184,11 @@ FROM FILE = '$partnerCertFile';
     $endpointName = "Hadr_endpoint"
 
     # Check if endpoint exists
-    $endpointCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.endpoints WHERE name = '$endpointName'" -ServerInstance $CurrentNodeName -TrustServerCertificate -ErrorAction SilentlyContinue
+    $endpointCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.endpoints WHERE name = '$endpointName'" -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
 
     if ($endpointCheck) {
         L "Endpoint already exists, dropping it to recreate with certificate"
-        Invoke-Sqlcmd -Query "DROP ENDPOINT [$endpointName]" -ServerInstance $CurrentNodeName -TrustServerCertificate
+        Invoke-Sqlcmd -Query "DROP ENDPOINT [$endpointName]" -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
     }
 
     $createEndpointSQL = @"
@@ -198,7 +204,7 @@ FOR DATABASE_MIRRORING (
     ROLE = ALL
 );
 "@
-    Invoke-Sqlcmd -Query $createEndpointSQL -ServerInstance $CurrentNodeName -TrustServerCertificate
+    Invoke-Sqlcmd -Query $createEndpointSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
     L "HADR endpoint created with certificate authentication"
 
     # Step 6: Grant CONNECT permission to partner certificates
@@ -209,23 +215,23 @@ FOR DATABASE_MIRRORING (
             $loginName = "${nodeName}_Login"
 
             # Check if login exists
-            $loginExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.server_principals WHERE name = '$loginName'" -ServerInstance $CurrentNodeName -TrustServerCertificate -ErrorAction SilentlyContinue
+            $loginExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.server_principals WHERE name = '$loginName'" -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
 
             if (-not $loginExists) {
                 # Create login from certificate
                 $createLoginSQL = "USE master; CREATE LOGIN [" + $loginName + "] FROM CERTIFICATE [" + $partnerCertName + "];"
-                Invoke-Sqlcmd -Query $createLoginSQL -ServerInstance $CurrentNodeName -TrustServerCertificate
+                Invoke-Sqlcmd -Query $createLoginSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
                 L "Created login for ${nodeName}: $loginName"
             }
             # Grant CONNECT permission to endpoint
             $grantSQL = "GRANT CONNECT ON ENDPOINT ::[" + $endpointName + "] TO [" + $loginName + "];"
-            Invoke-Sqlcmd -Query $grantSQL -ServerInstance $CurrentNodeName -TrustServerCertificate
+            Invoke-Sqlcmd -Query $grantSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
             L "Granted CONNECT permission to $loginName"
         }
     }
 
     # Verify endpoint is running
-    $endpointStatus = Invoke-Sqlcmd -Query "SELECT state_desc FROM sys.endpoints WHERE name = '$endpointName'" -ServerInstance $CurrentNodeName -TrustServerCertificate
+    $endpointStatus = Invoke-Sqlcmd -Query "SELECT state_desc FROM sys.endpoints WHERE name = '$endpointName'" -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
     L "Endpoint status: $($endpointStatus.state_desc)"
 
     L "HADR endpoint configuration completed successfully"

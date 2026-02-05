@@ -503,6 +503,16 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
     value = "5022"
   }
 
+  parameter {
+    name  = "SqlAdminUsername"
+    value = var.sql_admin_username
+  }
+
+  parameter {
+    name  = "SqlAdminPassword"
+    value = var.sql_vm_admin_password
+  }
+
   timeouts {
     create = "30m"
     update = "30m"
