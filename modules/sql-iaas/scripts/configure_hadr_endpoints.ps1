@@ -194,10 +194,10 @@ FOR DATABASE_MIRRORING (
                 # Create login from certificate
                 $createLoginSQL = "USE master; CREATE LOGIN [" + $loginName + "] FROM CERTIFICATE [" + $partnerCertName + "];"
                 Invoke-Sqlcmd -Query $createLoginSQL -ServerInstance $CurrentNodeName
-                L "Created login for $nodeName: $loginName"
+                L "Created login for ${nodeName}: $loginName"
             }
             # Grant CONNECT permission to endpoint
-            $grantSQL = "GRANT CONNECT ON ENDPOINT" + "::[" + $endpointName + "] TO [" + $loginName + "];"
+            $grantSQL = "GRANT CONNECT ON ENDPOINT ::[" + $endpointName + "] TO [" + $loginName + "];"
             Invoke-Sqlcmd -Query $grantSQL -ServerInstance $CurrentNodeName
             L "Granted CONNECT permission to $loginName"
         }
