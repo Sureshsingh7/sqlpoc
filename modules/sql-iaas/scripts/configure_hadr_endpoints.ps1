@@ -144,8 +144,13 @@ EXPIRY_DATE = '2030-12-31';
         $backupCertSQL = "BACKUP CERTIFICATE [$certName] TO FILE = '$certFile' WITH PRIVATE KEY (FILE = '$keyFile', ENCRYPTION BY PASSWORD = '" + $masterKeyPassword + "');"
         Invoke-Sqlcmd -Query $backupCertSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
         L "Certificate backed up to: $certFile"
+    } else {
+        L "Certificate already exists: $certName"
+    }
 
-        # Upload certificate to Key Vault (only .cer file, not private key)
+    # Upload certificate to Key Vault (always, even if cert exists)
+    $certFile = Join-Path $certBackupPath "${certName}.cer"
+    if (Test-Path $certFile) {
         try {
             L "Uploading certificate to Key Vault: $KeyVaultName"
             $certBytes = [System.IO.File]::ReadAllBytes($certFile)
@@ -158,7 +163,8 @@ EXPIRY_DATE = '2030-12-31';
             throw $_
         }
     } else {
-        L "Certificate already exists: $certName"
+        LE "Certificate file not found: $certFile"
+        exit 1
     }
 
     # Step 3: Wait for partner node certificates in Key Vault
