@@ -59,17 +59,20 @@ try {
 
     # Step 1: Create Master Key if it doesn't exist
     L "Creating database master key..."
-    L "DEBUG: Master key password length: $($masterKeyPassword.Length)"
-    L "DEBUG: Master key password (first 10 chars): $($masterKeyPassword.Substring(0, [Math]::Min(10, $masterKeyPassword.Length)))"
     $masterKeyCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'" -ServerInstance $CurrentNodeName -Database master -ErrorAction SilentlyContinue
 
     if (-not $masterKeyCheck) {
-        $createMasterKeySQL = "USE master; CREATE MASTER KEY ENCRYPTION BY PASSWORD = '" + $masterKeyPassword + "';"
-        L "DEBUG: SQL command length: $($createMasterKeySQL.Length)"
-        Invoke-Sqlcmd -Query $createMasterKeySQL -ServerInstance $CurrentNodeName
-        L "Master key created"
+        # Use hardcoded password for testing (will generate random after this works)
+        $testPassword = "ComplexTest2025!"
+        L "DEBUG: Using test password for master key creation"
+        Invoke-Sqlcmd -Query "CREATE MASTER KEY ENCRYPTION BY PASSWORD = '$testPassword';" -ServerInstance $CurrentNodeName -Database master
+        L "Master key created successfully"
+        $masterKeyPassword = $testPassword  # Use same password for certificate backup
     } else {
         L "Master key already exists"
+        # For existing keys, generate a password for certificate operations
+        $guidPart = (New-Guid).ToString().Replace('-', '')
+        $masterKeyPassword = "${guidPart}!Sql2025"
     }
 
     # Step 2: Create Certificate for this node
