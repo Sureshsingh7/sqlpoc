@@ -192,7 +192,7 @@ FOR DATABASE_MIRRORING (
 
             if (-not $loginExists) {
                 # Create login from certificate
-                $createLoginSQL = "USE master; CREATE LOGIN [$loginName] FROM CERTIFICATE [$partnerCertName];"
+                $createLoginSQL = "USE master; CREATE LOGIN [" + $loginName + "] FROM CERTIFICATE [" + $partnerCertName + "];"
                 Invoke-Sqlcmd -Query $createLoginSQL -ServerInstance $CurrentNodeName
                 L "Created login for $nodeName: $loginName"
             }
