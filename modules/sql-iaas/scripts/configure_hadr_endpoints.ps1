@@ -49,7 +49,7 @@ try {
     $certName = "${CurrentNodeName}_Cert"
     $certBackupPath = "C:\Temp\Certificates"
     $guidPart = (New-Guid).ToString()
-    $masterKeyPassword = "${guidPart}Pass@123!" # Random strong password
+    $masterKeyPassword = "${guidPart}_Pass123!" # Random strong password
 
     # Create certificate directory
     if (-not (Test-Path $certBackupPath)) {
