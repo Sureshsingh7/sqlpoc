@@ -160,7 +160,7 @@ EXPIRY_DATE = '2030-12-31';
 
     # Step 4: Import partner certificates
     L "Importing partner certificates..."
-    foreach ($nodeName in $AllNodeNames) {
+    foreach ($nodeName in $AllNodeNamesArray) {
         if ($nodeName -ne $CurrentNodeName) {
             $partnerCertName = "${nodeName}_Cert"
             $partnerCertFile = Join-Path $certBackupPath "$partnerCertName.cer"
@@ -212,7 +212,7 @@ FOR DATABASE_MIRRORING (
 
     # Step 6: Grant CONNECT permission to partner certificates
     L "Granting CONNECT permissions to partner certificates..."
-    foreach ($nodeName in $AllNodeNames) {
+    foreach ($nodeName in $AllNodeNamesArray) {
         if ($nodeName -ne $CurrentNodeName) {
             $partnerCertName = "${nodeName}_Cert"
             $loginName = "${nodeName}_Login"
