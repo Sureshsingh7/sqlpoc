@@ -353,8 +353,35 @@ try {
     }
 
     Add-Content -Path `$log -Value "Creating cluster '$ClusterName' with nodes '$($NodeNames -join "','")'..."
-    `$c = New-Cluster -Name '$ClusterName' -Node @('$($NodeNames -join "','")') -AdministrativeAccessPoint Dns -StaticAddress @('$($ClusterIPs -join "','")') -NoStorage -Force -ErrorAction Stop
-    Add-Content -Path `$log -Value "SUCCESS: Cluster `$(`$c.Name) created"
+    `$c = New-Cluster -Name '$ClusterName' -Node @('$($NodeNames -join "','")') -AdministrativeAccessPoint Dns -NoStorage -Force -ErrorAction Stop
+    Add-Content -Path `$log -Value "Cluster created, now adding IP Address resources..."
+    
+    # Windows Server 2025 workgroup clusters don't create IP resources automatically
+    # We need to manually add them to the cluster name resource
+    `$clusterNameResource = Get-ClusterResource | Where-Object ResourceType -eq 'Network Name' -ErrorAction SilentlyContinue
+    if (-not `$clusterNameResource) {
+        `$clusterNameResource = Get-ClusterResource 'Cluster Name' -ErrorAction Stop
+    }
+    
+    # Add IP Address resources for each cluster IP
+    `$ipIndex = 1
+    foreach (`$ip in @('$($ClusterIPs -join "','")')) {
+        Add-Content -Path `$log -Value "Adding IP Address resource for `$ip..."
+        `$ipResource = Add-ClusterResource -Name "Cluster IP Address `$ipIndex" -ResourceType 'IP Address' -Group 'Cluster Group' -ErrorAction Stop
+        `$ipResource | Set-ClusterParameter -Name Address -Value `$ip -ErrorAction Stop
+        `$ipResource | Set-ClusterParameter -Name SubnetMask -Value '255.255.255.255' -ErrorAction Stop
+        `$ipResource | Set-ClusterParameter -Name EnableDhcp -Value 0 -ErrorAction Stop
+        Add-ClusterResourceDependency -Resource `$clusterNameResource.Name -Provider `$ipResource.Name -ErrorAction Stop
+        Start-ClusterResource `$ipResource.Name -ErrorAction Stop
+        Add-Content -Path `$log -Value "IP resource `$(`$ipResource.Name) added and started"
+        `$ipIndex++
+    }
+    
+    # Restart cluster name resource to pick up new dependencies
+    Stop-ClusterResource `$clusterNameResource.Name -ErrorAction Stop
+    Start-ClusterResource `$clusterNameResource.Name -ErrorAction Stop
+    
+    Add-Content -Path `$log -Value "SUCCESS: Cluster `$(`$c.Name) created with IP Address resources"
     "SUCCESS:`$(`$c.Name)" | Out-File '$resultFile' -Force
 } catch {
     Add-Content -Path `$log -Value "ERROR: `$_"
