@@ -48,7 +48,7 @@ try {
 
     $certName = "${CurrentNodeName}_Cert"
     $certBackupPath = "C:\Temp\Certificates"
-    $guidPart = (New-Guid).ToString()
+    $guidPart = (New-Guid).ToString().Replace('-', '') # Remove hyphens from GUID
     $masterKeyPassword = "${guidPart}!Sql2025" # Random GUID with complexity suffix
 
     # Create certificate directory
@@ -62,10 +62,7 @@ try {
     $masterKeyCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'" -ServerInstance $CurrentNodeName -Database master -ErrorAction SilentlyContinue
 
     if (-not $masterKeyCheck) {
-        $createMasterKeySQL = @"
-USE master;
-CREATE MASTER KEY ENCRYPTION BY PASSWORD = '$masterKeyPassword';
-"@
+        $createMasterKeySQL = "USE master; CREATE MASTER KEY ENCRYPTION BY PASSWORD = '" + $masterKeyPassword + "';"
         Invoke-Sqlcmd -Query $createMasterKeySQL -ServerInstance $CurrentNodeName
         L "Master key created"
     } else {
@@ -90,14 +87,7 @@ EXPIRY_DATE = '2030-12-31';
         $certFile = Join-Path $certBackupPath "${certName}.cer"
         $keyFile = Join-Path $certBackupPath "${certName}.pvk"
 
-        $backupCertSQL = @"
-BACKUP CERTIFICATE [$certName]
-TO FILE = '$certFile'
-WITH PRIVATE KEY (
-    FILE = '$keyFile',
-    ENCRYPTION BY PASSWORD = '$masterKeyPassword'
-);
-"@
+        $backupCertSQL = "BACKUP CERTIFICATE [$certName] TO FILE = '$certFile' WITH PRIVATE KEY (FILE = '$keyFile', ENCRYPTION BY PASSWORD = '" + $masterKeyPassword + "');"
         Invoke-Sqlcmd -Query $backupCertSQL -ServerInstance $CurrentNodeName
         L "Certificate backed up to: $certFile"
     } else {
