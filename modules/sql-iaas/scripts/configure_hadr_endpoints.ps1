@@ -59,14 +59,31 @@ try {
 
     # Step 1: Create Master Key if it doesn't exist
     L "Creating database master key..."
-    $masterKeyCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'" -ServerInstance $CurrentNodeName -Database master -ErrorAction SilentlyContinue
+    L "DEBUG: ServerInstance = $CurrentNodeName"
+    
+    try {
+        $masterKeyCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'" -ServerInstance $CurrentNodeName -Database master -ErrorAction Stop
+        L "DEBUG: Master key check completed, result count: $($masterKeyCheck.Count)"
+    } catch {
+        L "DEBUG: Master key check failed with error: $_"
+        $masterKeyCheck = $null
+    }
 
     if (-not $masterKeyCheck) {
+        L "DEBUG: No existing master key found, creating new one"
         # Use hardcoded password for testing (will generate random after this works)
         $testPassword = "ComplexTest2025!"
-        L "DEBUG: Using test password for master key creation"
-        Invoke-Sqlcmd -Query "CREATE MASTER KEY ENCRYPTION BY PASSWORD = '$testPassword';" -ServerInstance $CurrentNodeName -Database master
-        L "Master key created successfully"
+        L "DEBUG: Using test password, length: $($testPassword.Length)"
+        
+        try {
+            $createQuery = "CREATE MASTER KEY ENCRYPTION BY PASSWORD = '$testPassword'"
+            L "DEBUG: Executing query: $createQuery"
+            Invoke-Sqlcmd -Query $createQuery -ServerInstance $CurrentNodeName -Database master -ErrorAction Stop
+            L "Master key created successfully"
+        } catch {
+            L "DEBUG: CREATE MASTER KEY failed with error: $_"
+            throw $_
+        }
         $masterKeyPassword = $testPassword  # Use same password for certificate backup
     } else {
         L "Master key already exists"
