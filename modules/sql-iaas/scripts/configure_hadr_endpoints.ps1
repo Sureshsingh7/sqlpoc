@@ -35,8 +35,16 @@ try {
     L "Starting HADR endpoint configuration for $CurrentNodeName"
     L "All nodes in cluster: $($AllNodeNames -join ', ')"
 
-    # Import SQL Server module
+    # Install and import SQL Server module
+    L "Checking for SqlServer module..."
+    if (-not (Get-Module -ListAvailable -Name SqlServer)) {
+        L "Installing SqlServer module..."
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
+        Install-Module -Name SqlServer -Force -AllowClobber -Scope CurrentUser -SkipPublisherCheck
+        L "SqlServer module installed"
+    }
     Import-Module SqlServer -ErrorAction Stop
+    L "SqlServer module loaded"
 
     $certName = "${CurrentNodeName}_Cert"
     $certBackupPath = "C:\Temp\Certificates"
