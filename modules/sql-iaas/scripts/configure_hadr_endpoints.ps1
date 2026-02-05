@@ -198,7 +198,7 @@ FOR DATABASE_MIRRORING (
             }
 
             # Grant CONNECT permission to endpoint
-            $grantSQL = "GRANT CONNECT ON ENDPOINT::[$endpointName] TO [$loginName];"
+            $grantSQL = "GRANT CONNECT ON ENDPOINT::[" + $endpointName + "] TO [" + $loginName + "];"
             Invoke-Sqlcmd -Query $grantSQL -ServerInstance $CurrentNodeName
             L "Granted CONNECT permission to $loginName"
         }
