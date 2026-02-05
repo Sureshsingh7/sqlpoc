@@ -474,6 +474,46 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
     script_hash = md5(file("${path.module}/scripts/create_failover_cluster.ps1"))
   })
 }
+
+# HADR Endpoint Configuration (runs on all nodes)
+resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
+  for_each = var.is_ha ? local.vm_map : {}
+
+  name               = "hadr-endpoint-setup"
+  location           = var.location
+  virtual_machine_id = module.sql_vm[each.key].resource_id
+  depends_on         = [azurerm_virtual_machine_run_command.cluster_setup]
+
+  source {
+    script = file("${path.module}/scripts/configure_hadr_endpoints.ps1")
+  }
+
+  parameter {
+    name  = "AllNodeNames"
+    value = join(",", local.vm_names)
+  }
+
+  parameter {
+    name  = "CurrentNodeName"
+    value = each.key
+  }
+
+  parameter {
+    name  = "EndpointPort"
+    value = "5022"
+  }
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "10m"
+  }
+
+  tags = merge(var.tags, {
+    script_hash = md5(file("${path.module}/scripts/configure_hadr_endpoints.ps1"))
+  })
+}
+
 # Availability Group Setup (only on primary replica)
 resource "azurerm_virtual_machine_run_command" "ag_setup" {
   for_each = var.is_ha ? { for k, v in local.vm_map : k => v if k == local.vm_names[0] } : {}
@@ -481,7 +521,7 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
   name               = "availability-group-setup"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
-  depends_on         = [azurerm_virtual_machine_run_command.cluster_setup]
+  depends_on         = [azurerm_virtual_machine_run_command.hadr_endpoint_setup]
 
   source {
     script = file("${path.module}/scripts/create_availability_group.ps1")
