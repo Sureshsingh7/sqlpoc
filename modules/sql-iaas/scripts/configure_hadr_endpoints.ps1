@@ -12,7 +12,10 @@ param(
     [string]$SqlAdminUsername,
 
     [Parameter(Mandatory=$true)]
-    [string]$SqlAdminPassword
+    [string]$SqlAdminPassword,
+
+    [Parameter(Mandatory=$true)]
+    [string]$KeyVaultName
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,7 +47,7 @@ try {
     L "Starting HADR endpoint configuration for $CurrentNodeName"
     L "All nodes in cluster: $($AllNodeNamesArray -join ', ')"
 
-    # Install and import SQL Server module
+    # Install and import required modules
     L "Checking for SqlServer module..."
     if (-not (Get-Module -ListAvailable -Name SqlServer)) {
         L "Installing SqlServer module..."
@@ -54,6 +57,25 @@ try {
     }
     Import-Module SqlServer -ErrorAction Stop
     L "SqlServer module loaded"
+
+    L "Checking for Az.KeyVault module..."
+    if (-not (Get-Module -ListAvailable -Name Az.KeyVault)) {
+        L "Installing Az.KeyVault module..."
+        Install-Module -Name Az.KeyVault -Force -AllowClobber -Scope CurrentUser -SkipPublisherCheck
+        L "Az.KeyVault module installed"
+    }
+    Import-Module Az.KeyVault -ErrorAction Stop
+    L "Az.KeyVault module loaded"
+
+    # Connect to Azure using System-Assigned Managed Identity
+    L "Connecting to Azure with Managed Identity..."
+    try {
+        Connect-AzAccount -Identity -ErrorAction Stop | Out-Null
+        L "Connected to Azure successfully"
+    } catch {
+        LE "Failed to connect to Azure: $_"
+        throw $_
+    }
 
     $certName = "${CurrentNodeName}_Cert"
     $certBackupPath = "C:\Temp\Certificates"
@@ -122,12 +144,25 @@ EXPIRY_DATE = '2030-12-31';
         $backupCertSQL = "BACKUP CERTIFICATE [$certName] TO FILE = '$certFile' WITH PRIVATE KEY (FILE = '$keyFile', ENCRYPTION BY PASSWORD = '" + $masterKeyPassword + "');"
         Invoke-Sqlcmd -Query $backupCertSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
         L "Certificate backed up to: $certFile"
+
+        # Upload certificate to Key Vault (only .cer file, not private key)
+        try {
+            L "Uploading certificate to Key Vault: $KeyVaultName"
+            $certBytes = [System.IO.File]::ReadAllBytes($certFile)
+            $certBase64 = [System.Convert]::ToBase64String($certBytes)
+            $secretName = "hadr-cert-$CurrentNodeName"
+            Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name $secretName -SecretValue (ConvertTo-SecureString -String $certBase64 -AsPlainText -Force) -ErrorAction Stop | Out-Null
+            L "Certificate uploaded to Key Vault as secret: $secretName"
+        } catch {
+            LE "Failed to upload certificate to Key Vault: $_"
+            throw $_
+        }
     } else {
         L "Certificate already exists: $certName"
     }
 
-    # Step 3: Wait for all nodes to create their certificates
-    L "Waiting for partner node certificates..."
+    # Step 3: Wait for partner node certificates in Key Vault
+    L "Waiting for partner node certificates in Key Vault..."
     $timeout = 300 # 5 minutes
     $elapsed = 0
     $allCertsReady = $false
@@ -136,8 +171,13 @@ EXPIRY_DATE = '2030-12-31';
         $missingCerts = @()
         foreach ($nodeName in $AllNodeNamesArray) {
             if ($nodeName -ne $CurrentNodeName) {
-                $partnerCertFile = Join-Path $certBackupPath "${nodeName}_Cert.cer"
-                if (-not (Test-Path $partnerCertFile)) {
+                $secretName = "hadr-cert-$nodeName"
+                try {
+                    $secret = Get-AzKeyVaultSecret -VaultName $KeyVaultName -Name $secretName -ErrorAction SilentlyContinue
+                    if (-not $secret) {
+                        $missingCerts += $nodeName
+                    }
+                } catch {
                     $missingCerts += $nodeName
                 }
             }
@@ -145,7 +185,7 @@ EXPIRY_DATE = '2030-12-31';
 
         if ($missingCerts.Count -eq 0) {
             $allCertsReady = $true
-            L "All partner certificates are ready"
+            L "All partner certificates are ready in Key Vault"
         } else {
             L "Waiting for certificates from: $($missingCerts -join ', ')"
             Start-Sleep -Seconds 10
@@ -154,12 +194,12 @@ EXPIRY_DATE = '2030-12-31';
     }
 
     if (-not $allCertsReady) {
-        LE "Timeout waiting for partner certificates"
+        LE "Timeout waiting for partner certificates in Key Vault"
         exit 1
     }
 
-    # Step 4: Import partner certificates
-    L "Importing partner certificates..."
+    # Step 4: Download and import partner certificates from Key Vault
+    L "Downloading and importing partner certificates from Key Vault..."
     foreach ($nodeName in $AllNodeNamesArray) {
         if ($nodeName -ne $CurrentNodeName) {
             $partnerCertName = "${nodeName}_Cert"
@@ -169,6 +209,21 @@ EXPIRY_DATE = '2030-12-31';
             $certExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name = '$partnerCertName'" -ServerInstance $CurrentNodeName -Database master -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
 
             if (-not $certExists) {
+                # Download certificate from Key Vault
+                try {
+                    $secretName = "hadr-cert-$nodeName"
+                    L "Downloading certificate from Key Vault: $secretName"
+                    $secret = Get-AzKeyVaultSecret -VaultName $KeyVaultName -Name $secretName -ErrorAction Stop
+                    $certBase64 = $secret.SecretValue | ConvertFrom-SecureString -AsPlainText
+                    $certBytes = [System.Convert]::FromBase64String($certBase64)
+                    [System.IO.File]::WriteAllBytes($partnerCertFile, $certBytes)
+                    L "Certificate downloaded to: $partnerCertFile"
+                } catch {
+                    LE "Failed to download certificate from Key Vault: $_"
+                    throw $_
+                }
+
+                # Import certificate into SQL Server
                 $importCertSQL = @"
 USE master;
 CREATE CERTIFICATE [$partnerCertName]

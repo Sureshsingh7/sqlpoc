@@ -513,6 +513,11 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
     value = var.sql_vm_admin_password
   }
 
+  parameter {
+    name  = "KeyVaultName"
+    value = "kv-fnz-poc-se"
+  }
+
   timeouts {
     create = "30m"
     update = "30m"
