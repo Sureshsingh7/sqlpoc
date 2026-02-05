@@ -220,7 +220,13 @@ EXPIRY_DATE = '2030-12-31';
                     $secretName = "hadr-cert-$nodeName"
                     L "Downloading certificate from Key Vault: $secretName"
                     $secret = Get-AzKeyVaultSecret -VaultName $KeyVaultName -Name $secretName -ErrorAction Stop
-                    $certBase64 = $secret.SecretValue | ConvertFrom-SecureString -AsPlainText
+                    # Convert SecureString to plain text (PowerShell 5.1 compatible)
+                    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret.SecretValue)
+                    try {
+                        $certBase64 = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+                    } finally {
+                        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+                    }
                     $certBytes = [System.Convert]::FromBase64String($certBase64)
                     [System.IO.File]::WriteAllBytes($partnerCertFile, $certBytes)
                     L "Certificate downloaded to: $partnerCertFile"
