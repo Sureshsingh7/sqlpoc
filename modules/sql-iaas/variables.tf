@@ -150,6 +150,12 @@ variable "user_assigned_identity_ids" {
   default     = []
 }
 
+variable "sql_vm_user_assigned_identity_client_id" {
+  description = "Client ID of the user-assigned managed identity for Azure authentication"
+  type        = string
+  default     = ""
+}
+
 variable "witness_storage_security_control_tag" {
   description = "Value for the SecurityControl tag on witness storage account to bypass org policy that disables key access."
   type        = string

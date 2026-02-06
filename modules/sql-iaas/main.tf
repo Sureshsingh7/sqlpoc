@@ -479,7 +479,7 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
 resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
   for_each = var.is_ha ? local.vm_map : {}
 
-  name               = "hadr-endpoint-setup-v12"
+  name               = "hadr-endpoint-setup-v13"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.cluster_setup]
@@ -516,6 +516,11 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
   parameter {
     name  = "KeyVaultName"
     value = "kv-fnz-poc-se"
+  }
+
+  parameter {
+    name  = "ManagedIdentityClientId"
+    value = var.sql_vm_user_assigned_identity_client_id
   }
 
   timeouts {

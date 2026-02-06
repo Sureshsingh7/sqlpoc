@@ -15,7 +15,10 @@ param(
     [string]$SqlAdminPassword,
 
     [Parameter(Mandatory=$true)]
-    [string]$KeyVaultName
+    [string]$KeyVaultName,
+
+    [Parameter(Mandatory=$false)]
+    [string]$ManagedIdentityClientId = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,10 +70,16 @@ try {
     Import-Module Az.KeyVault -ErrorAction Stop
     L "Az.KeyVault module loaded"
 
-    # Connect to Azure using System-Assigned Managed Identity
+    # Connect to Azure using Managed Identity (specify client ID for UAMI)
     L "Connecting to Azure with Managed Identity..."
     try {
-        Connect-AzAccount -Identity -ErrorAction Stop | Out-Null
+        if ($ManagedIdentityClientId) {
+            L "DEBUG: Using User-Assigned Identity: $ManagedIdentityClientId"
+            Connect-AzAccount -Identity -AccountId $ManagedIdentityClientId -ErrorAction Stop | Out-Null
+        } else {
+            L "DEBUG: Using System-Assigned Identity"
+            Connect-AzAccount -Identity -ErrorAction Stop | Out-Null
+        }
         L "Connected to Azure successfully"
     } catch {
         LE "Failed to connect to Azure: $_"

@@ -41,6 +41,7 @@ module "sql_cluster" {
   sql_vm_admin_password        = local.sql_vm_admin_password
   cluster_local_admin_username = var.cluster_local_admin_username
   user_assigned_identity_ids   = var.sql_vm_user_assigned_identity_ids
+  sql_vm_user_assigned_identity_client_id = var.sql_vm_user_assigned_identity_client_id
 
   # Disk configuration
   data_disk_size_gb   = var.data_disk_size_gb
@@ -92,6 +93,7 @@ module "sql_cluster_dr" {
   sql_vm_admin_password        = local.dr_sql_vm_admin_password
   cluster_local_admin_username = local.dr_cluster_local_admin_username
   user_assigned_identity_ids   = var.sql_vm_user_assigned_identity_ids
+  sql_vm_user_assigned_identity_client_id = var.sql_vm_user_assigned_identity_client_id
 
   # Disk configuration
   data_disk_size_gb   = var.data_disk_size_gb

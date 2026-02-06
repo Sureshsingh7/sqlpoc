@@ -633,6 +633,17 @@ function Main {
         if (-not (GrantSqlClusterAccess)) {
             LW "Failed to grant cluster access to SQL Server - manual configuration may be required"
             LW "Run: Grant-ClusterAccess -User 'NT SERVICE\MSSQLSERVER' -Full"
+        } else {
+            # Restart SQL Server so it picks up the cluster permissions
+            L "Restarting SQL Server to apply cluster permissions..."
+            try {
+                Restart-Service -Name MSSQLSERVER -Force -ErrorAction Stop
+                Start-Sleep -Seconds 10
+                L "SQL Server restarted successfully"
+            } catch {
+                LW "Failed to restart SQL Server: $_"
+                LW "Manual restart may be required: Restart-Service -Name MSSQLSERVER -Force"
+            }
         }
 
         # Configure VNN with Azure Load Balancer probe port
