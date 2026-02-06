@@ -6,13 +6,13 @@ param(
     [string]$ListenerName,
 
     [Parameter(Mandatory=$true)]
-    [string[]]$ListenerIPs,
+    [string]$ListenerIPs,  # Comma-separated string from Terraform
 
     [Parameter(Mandatory=$true)]
     [string]$PrimaryReplica,
 
     [Parameter(Mandatory=$true)]
-    [string[]]$SecondaryReplicas,
+    [string]$SecondaryReplicas,  # Comma-separated string from Terraform
 
     [Parameter(Mandatory=$false)]
     [int]$ListenerPort = 1433,
@@ -43,6 +43,16 @@ function LE([string]$m) {
     Write-Error $msg
 }
 
+function LW([string]$m) { 
+    $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [WARN] $m"
+    Add-Content -Path $log -Value $msg
+    Write-Host $msg
+}
+
+# Parse comma-separated parameters from Terraform
+$ListenerIPArray = @($ListenerIPs -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+$SecondaryReplicaArray = @($SecondaryReplicas -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+
 # Check if already completed
 if (Test-Path $sentinel) {
     L "AG setup already completed - exiting"
@@ -53,9 +63,9 @@ try {
     L "Starting Availability Group creation"
     L "AG Name: $AGName"
     L "Listener: $ListenerName"
-    L "Listener IPs: $($ListenerIPs -join ', ')"
+    L "Listener IPs ($($ListenerIPArray.Count)): $($ListenerIPArray -join ', ')"
     L "Primary: $PrimaryReplica"
-    L "Secondaries: $($SecondaryReplicas -join ', ')"
+    L "Secondaries ($($SecondaryReplicaArray.Count)): $($SecondaryReplicaArray -join ', ')"
 
     # Check if this is the primary replica
     $currentNode = $env:COMPUTERNAME
@@ -123,7 +133,7 @@ try {
     
     $createAGSQL = @"
 CREATE AVAILABILITY GROUP [$AGName]
-WITH (AUTOMATED_BACKUP_PREFERENCE = SECONDARY, DB_FAILOVER = OFF, DTC_SUPPORT = NONE)
+WITH (CLUSTER_TYPE = WSFC, AUTOMATED_BACKUP_PREFERENCE = SECONDARY, DB_FAILOVER = OFF, DTC_SUPPORT = NONE)
 FOR DATABASE [$dbName]
 REPLICA ON 
 "@
@@ -141,7 +151,7 @@ N'$PrimaryReplica' WITH (
 "@
 
     # Add secondary replicas
-    foreach ($secondary in $SecondaryReplicas) {
+    foreach ($secondary in $SecondaryReplicaArray) {
         $createAGSQL += @"
 ,
 N'$secondary' WITH (
@@ -159,7 +169,7 @@ N'$secondary' WITH (
     L "Availability Group created"
 
     # Wait for secondaries to join
-    foreach ($secondary in $SecondaryReplicas) {
+    foreach ($secondary in $SecondaryReplicaArray) {
         L "Waiting for $secondary to join AG..."
         $timeout = 60
         $elapsed = 0
@@ -197,14 +207,14 @@ N'$secondary' WITH (
     # Use proper subnet mask for /26 subnets (Azure standard)
     $subnetMask = "255.255.255.192"
     
-    # Try creating listener with multiple IPs first
+    # Try creating listener with multiple IPs first (multi-subnet AG pattern)
     $listenerCreated = $false
-    if ($ListenerIPs.Count -gt 1) {
-        L "Attempting multi-subnet listener with IPs: $($ListenerIPs -join ', ')"
+    if ($ListenerIPArray.Count -gt 1) {
+        L "Attempting multi-subnet listener with IPs: $($ListenerIPArray -join ', ')"
         try {
             $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ("
             $ipParts = @()
-            foreach ($ip in $ListenerIPs) {
+            foreach ($ip in $ListenerIPArray) {
                 $ipParts += "(N'$ip', N'$subnetMask')"
             }
             $listenerSQL += $ipParts -join ", "
@@ -220,7 +230,7 @@ N'$secondary' WITH (
     
     # Fallback: Try single IP (primary subnet)
     if (-not $listenerCreated) {
-        $primaryIP = $ListenerIPs[0]
+        $primaryIP = $ListenerIPArray[0]
         L "Attempting single-IP listener with: $primaryIP"
         try {
             $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ((N'$primaryIP', N'$subnetMask')), PORT=$ListenerPort)"
@@ -258,9 +268,12 @@ N'$secondary' WITH (
                         $address = ($ipResource | Get-ClusterParameter -Name Address).Value
                         L "Configuring IP resource: $($ipResource.Name) ($address)"
                         
+                        # Azure multi-subnet AG pattern: /32 mask + OverrideAddressMatch
+                        # This allows ANY node to host the IP regardless of its own subnet
                         $ipResource | Set-ClusterParameter -Multiple @{
+                            "Address" = $address
                             "ProbePort" = $ProbePort
-                            "SubnetMask" = $subnetMask
+                            "SubnetMask" = "255.255.255.255"
                             "Network" = $network
                             "OverrideAddressMatch" = 1
                             "EnableDhcp" = 0

@@ -152,9 +152,12 @@ WHERE l.dns_name = '$ListenerName'
                     $address = ($ipResource | Get-ClusterParameter -Name Address).Value
                     L "Configuring IP resource: $($ipResource.Name) ($address)"
                     
+                    # Azure multi-subnet AG pattern: /32 mask + OverrideAddressMatch
+                    # This allows ANY node to host the IP regardless of its own subnet
                     $ipResource | Set-ClusterParameter -Multiple @{
+                        "Address" = $address
                         "ProbePort" = $ProbePort
-                        "SubnetMask" = "255.255.255.192"
+                        "SubnetMask" = "255.255.255.255"
                         "Network" = $network
                         "OverrideAddressMatch" = 1
                         "EnableDhcp" = 0
