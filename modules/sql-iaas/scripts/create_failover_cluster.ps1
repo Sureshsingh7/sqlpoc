@@ -604,12 +604,15 @@ function Main {
     # We still validate connectivity explicitly
     ValidateNodeConnectivity
 
-    EnableSqlAlwaysOn
+    # NOTE: Always On is now enabled AFTER cluster creation and permission grants
+    # to ensure SQL Server can properly register AG resource types with the cluster
 
     # We designate the first node in NodeNames as the "Primary" which performs clustering
     $primaryNode = $NodeNames[0]
 
     if ($env:COMPUTERNAME -ne $primaryNode) {
+        # On secondary nodes, enable Always On after cluster joins (if applicable)
+        EnableSqlAlwaysOn
         L "Secondary node setup completed"
         return
     }
@@ -644,6 +647,14 @@ function Main {
                 LW "Failed to restart SQL Server: $_"
                 LW "Manual restart may be required: Restart-Service -Name MSSQLSERVER -Force"
             }
+        }
+
+        # Now enable Always On - cluster exists and SQL has permissions
+        L "Enabling SQL Server Always On Availability Groups..."
+        if (-not (EnableSqlAlwaysOn)) {
+            LW "Failed to enable Always On - manual configuration may be required"
+        } else {
+            L "Always On enabled successfully - AG resource type registered with cluster"
         }
 
         # Configure VNN with Azure Load Balancer probe port
