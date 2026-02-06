@@ -272,7 +272,6 @@ N'$secondary' WITH (
             LW "Failed to configure probe port: $_"
         }
     }
-    }
 
     L "Availability Group setup completed successfully"
     New-Item -Path $sentinel -ItemType File -Force | Out-Null
