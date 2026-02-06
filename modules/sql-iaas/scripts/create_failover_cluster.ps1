@@ -444,6 +444,30 @@ function DisplayClusterInfo {
     }
 }
 
+function GrantSqlClusterAccess {
+    L "Granting cluster access to SQL Server service account"
+
+    try {
+        # Grant Full cluster access to SQL Server service account
+        Grant-ClusterAccess -User "NT SERVICE\MSSQLSERVER" -Full -ErrorAction Stop
+        L "Granted Full cluster access to NT SERVICE\MSSQLSERVER"
+        
+        # Verify it was granted
+        $access = Get-ClusterAccess | Where-Object { $_.IdentityReference -eq "NT SERVICE\MSSQLSERVER" }
+        if ($access) {
+            L "Verified: SQL Server has $($access.ClusterRights) rights"
+            return $true
+        } else {
+            LW "Could not verify cluster access was granted"
+            return $false
+        }
+    } catch {
+        LE "Failed to grant cluster access to SQL Server: $_"
+        $_ | Out-File -FilePath $err -Append
+        return $false
+    }
+}
+
 function ConfigureCloudWitness {
     L "Configuring Cloud Witness"
 
@@ -604,6 +628,12 @@ function Main {
     if (CreateFailoverCluster) {
         L "Cluster created successfully"
         DisplayClusterInfo -Name $ClusterName
+
+        # Grant cluster access to SQL Server service account
+        if (-not (GrantSqlClusterAccess)) {
+            LW "Failed to grant cluster access to SQL Server - manual configuration may be required"
+            LW "Run: Grant-ClusterAccess -User 'NT SERVICE\MSSQLSERVER' -Full"
+        }
 
         # Configure VNN with Azure Load Balancer probe port
         if ($ClusterIPs.Count -gt 0) {
