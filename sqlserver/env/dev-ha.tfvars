@@ -3,7 +3,7 @@
 
 # Azure context
 subscription_id         = "51595cc9-4191-4785-a757-15e45165d2a4"
-use_msi                 = false  # Set to false for local deployment
+use_msi                 = false # Set to false for local deployment
 location                = "swedencentral"
 sql_resource_group_name = "rg-fnz-poc-sql-se"
 

@@ -37,10 +37,10 @@ module "sql_cluster" {
   private_endpoint_subnet_id = data.terraform_remote_state.network.outputs.pep_subnet_id
   vnet_id                    = data.terraform_remote_state.network.outputs.sql_vnet_id
 
-  sql_admin_username           = var.sql_admin_username
-  sql_vm_admin_password        = local.sql_vm_admin_password
-  cluster_local_admin_username = var.cluster_local_admin_username
-  user_assigned_identity_ids   = var.sql_vm_user_assigned_identity_ids
+  sql_admin_username                      = var.sql_admin_username
+  sql_vm_admin_password                   = local.sql_vm_admin_password
+  cluster_local_admin_username            = var.cluster_local_admin_username
+  user_assigned_identity_ids              = var.sql_vm_user_assigned_identity_ids
   sql_vm_user_assigned_identity_client_id = var.sql_vm_user_assigned_identity_client_id
 
   # Disk configuration
@@ -89,10 +89,10 @@ module "sql_cluster_dr" {
   private_endpoint_subnet_id = data.terraform_remote_state.network.outputs.dr_pep_subnet_id
   vnet_id                    = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
 
-  sql_admin_username           = var.sql_admin_username
-  sql_vm_admin_password        = local.dr_sql_vm_admin_password
-  cluster_local_admin_username = local.dr_cluster_local_admin_username
-  user_assigned_identity_ids   = var.sql_vm_user_assigned_identity_ids
+  sql_admin_username                      = var.sql_admin_username
+  sql_vm_admin_password                   = local.dr_sql_vm_admin_password
+  cluster_local_admin_username            = local.dr_cluster_local_admin_username
+  user_assigned_identity_ids              = var.sql_vm_user_assigned_identity_ids
   sql_vm_user_assigned_identity_client_id = var.sql_vm_user_assigned_identity_client_id
 
   # Disk configuration
