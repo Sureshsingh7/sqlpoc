@@ -538,7 +538,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
 resource "azurerm_virtual_machine_run_command" "ag_setup" {
   for_each = var.is_ha ? { for k, v in local.vm_map : k => v if k == local.vm_names[0] } : {}
 
-  name               = "availability-group-setup-v5"
+  name               = "availability-group-setup-v6"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.hadr_endpoint_setup]

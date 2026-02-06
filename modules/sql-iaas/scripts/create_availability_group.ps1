@@ -81,11 +81,29 @@ try {
 
     # Check if AG already exists
     $existingAG = Invoke-Sqlcmd -Query "SELECT name FROM sys.availability_groups WHERE name = '$AGName'" -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
+    $existingListener = $null
+    $agExists = $false
+    $listenerExists = $false
+    
     if ($existingAG) {
+        $agExists = $true
         L "Availability Group '$AGName' already exists"
-        New-Item -Path $sentinel -ItemType File -Force | Out-Null
-        exit 0
+        
+        # Check if listener also exists
+        $existingListener = Invoke-Sqlcmd -Query "SELECT dns_name FROM sys.availability_group_listeners WHERE dns_name = '$ListenerName'" -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
+        if ($existingListener) {
+            $listenerExists = $true
+            L "Listener '$ListenerName' already exists"
+            L "AG and listener both configured - setup complete"
+            New-Item -Path $sentinel -ItemType File -Force | Out-Null
+            exit 0
+        } else {
+            L "Listener '$ListenerName' does not exist - will attempt to create it"
+        }
     }
+    
+    # Only create AG if it doesn't exist
+    if (-not $agExists) {
 
     # Create test database if it doesn't exist
     $dbName = "TestDB"
@@ -156,9 +174,11 @@ N'$secondary' WITH (
             }
         }
     }
+    }  # End of AG creation (if not exists)
 
-    # Create Listener with DNN cluster compatibility
-    L "Creating AG Listener '$ListenerName'..."
+    # Create Listener with DNN cluster compatibility (runs even if AG already exists)
+    if (-not $listenerExists) {
+        L "Creating AG Listener '$ListenerName'..."
     
     # Ensure cluster networks allow client connectivity
     try {
@@ -272,6 +292,7 @@ N'$secondary' WITH (
             LW "Failed to configure probe port: $_"
         }
     }
+    }  # End of listener creation (if not exists)
 
     L "Availability Group setup completed successfully"
     New-Item -Path $sentinel -ItemType File -Force | Out-Null
