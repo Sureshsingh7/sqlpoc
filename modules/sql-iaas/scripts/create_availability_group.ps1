@@ -157,56 +157,121 @@ N'$secondary' WITH (
         }
     }
 
-    # Create Listener
+    # Create Listener with DNN cluster compatibility
     L "Creating AG Listener '$ListenerName'..."
-    $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ("
-
-    $ipParts = @()
-    foreach ($ip in $ListenerIPs) {
-        $ipParts += "(N'$ip', N'255.255.255.255')"
-    }
-    $listenerSQL += $ipParts -join ", "
-    $listenerSQL += "), PORT=$ListenerPort)"
-
-    Invoke-Sqlcmd -Query $listenerSQL -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-    L "Listener created"
-
-    # Wait for listener resources to appear in cluster
-    L "Waiting for cluster resources..."
-    Start-Sleep -Seconds 10
-
-    # Configure probe port on listener IPs
-    L "Configuring Azure Load Balancer probe port..."
-    Import-Module FailoverClusters
     
-    $ipResources = Get-ClusterResource | Where-Object { 
-        $_.ResourceType -eq 'IP Address' -and $_.OwnerGroup -like "*$AGName*"
+    # Ensure cluster networks allow client connectivity
+    try {
+        Import-Module FailoverClusters -ErrorAction Stop
+        $networks = Get-ClusterNetwork -ErrorAction Stop
+        foreach ($network in $networks) {
+            if ($network.Role -ne "ClusterAndClient") {
+                L "Setting cluster network '$($network.Name)' role to ClusterAndClient"
+                $network.Role = "ClusterAndClient"
+            }
+        }
+    } catch {
+        LW "Could not configure cluster networks: $_"
     }
 
-    foreach ($ipResource in $ipResources) {
-        $network = ($ipResource | Get-ClusterParameter -Name Network).Value
-        $address = ($ipResource | Get-ClusterParameter -Name Address).Value
-        L "Configuring IP resource: $($ipResource.Name) ($address)"
-        
-        $ipResource | Set-ClusterParameter -Multiple @{
-            "ProbePort" = $ProbePort
-            "SubnetMask" = "255.255.255.255"
-            "Network" = $network
-            "OverrideAddressMatch" = 1
-            "EnableDhcp" = 0
+    # Use proper subnet mask for /26 subnets (Azure standard)
+    $subnetMask = "255.255.255.192"
+    
+    # Try creating listener with multiple IPs first
+    $listenerCreated = $false
+    if ($ListenerIPs.Count -gt 1) {
+        L "Attempting multi-subnet listener with IPs: $($ListenerIPs -join ', ')"
+        try {
+            $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ("
+            $ipParts = @()
+            foreach ($ip in $ListenerIPs) {
+                $ipParts += "(N'$ip', N'$subnetMask')"
+            }
+            $listenerSQL += $ipParts -join ", "
+            $listenerSQL += "), PORT=$ListenerPort)"
+            
+            Invoke-Sqlcmd -Query $listenerSQL -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -QueryTimeout 120 -ErrorAction Stop
+            L "Multi-subnet listener created successfully"
+            $listenerCreated = $true
+        } catch {
+            LW "Multi-subnet listener failed: $_"
         }
     }
-
-    # Restart listener to apply probe port
-    L "Restarting listener resources..."
-    $listenerResource = Get-ClusterResource | Where-Object { 
-        $_.ResourceType -eq 'Network Name' -and $_.Name -like "*$ListenerName*"
+    
+    # Fallback: Try single IP (primary subnet)
+    if (-not $listenerCreated) {
+        $primaryIP = $ListenerIPs[0]
+        L "Attempting single-IP listener with: $primaryIP"
+        try {
+            $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ((N'$primaryIP', N'$subnetMask')), PORT=$ListenerPort)"
+            Invoke-Sqlcmd -Query $listenerSQL -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -QueryTimeout 120 -ErrorAction Stop
+            L "Single-IP listener created successfully"
+            L "Note: For multi-subnet failover, use MultiSubnetFailover=True in connection strings"
+            $listenerCreated = $true
+        } catch {
+            LE "Listener creation failed: $_"
+        }
     }
     
-    if ($listenerResource) {
-        Stop-ClusterResource $listenerResource.Name
-        Start-ClusterResource $listenerResource.Name
-        L "Listener restarted"
+    if (-not $listenerCreated) {
+        LE "Failed to create AG listener - manual configuration required"
+    }
+
+    # Wait for listener resources to appear in cluster
+    if ($listenerCreated) {
+        L "Waiting for cluster resources to initialize..."
+        Start-Sleep -Seconds 10
+
+        # Configure probe port on listener IPs
+        L "Configuring Azure Load Balancer probe port..."
+        try {
+            Import-Module FailoverClusters -ErrorAction Stop
+            
+            $ipResources = Get-ClusterResource -ErrorAction Stop | Where-Object { 
+                $_.ResourceType -eq 'IP Address' -and $_.OwnerGroup -like "*$AGName*"
+            }
+
+            if ($ipResources) {
+                foreach ($ipResource in $ipResources) {
+                    try {
+                        $network = ($ipResource | Get-ClusterParameter -Name Network).Value
+                        $address = ($ipResource | Get-ClusterParameter -Name Address).Value
+                        L "Configuring IP resource: $($ipResource.Name) ($address)"
+                        
+                        $ipResource | Set-ClusterParameter -Multiple @{
+                            "ProbePort" = $ProbePort
+                            "SubnetMask" = $subnetMask
+                            "Network" = $network
+                            "OverrideAddressMatch" = 1
+                            "EnableDhcp" = 0
+                        }
+                        L "IP resource $($ipResource.Name) configured successfully"
+                    } catch {
+                        LW "Failed to configure IP resource $($ipResource.Name): $_"
+                    }
+                }
+
+                # Restart listener to apply probe port
+                L "Restarting listener resources..."
+                $listenerResource = Get-ClusterResource -ErrorAction Stop | Where-Object { 
+                    $_.ResourceType -eq 'Network Name' -and $_.Name -like "*$ListenerName*"
+                }
+                
+                if ($listenerResource) {
+                    Stop-ClusterResource $listenerResource.Name -ErrorAction SilentlyContinue
+                    Start-Sleep -Seconds 2
+                    Start-ClusterResource $listenerResource.Name -ErrorAction Stop
+                    L "Listener restarted successfully"
+                } else {
+                    LW "Listener cluster resource not found - probe port may not be configured"
+                }
+            } else {
+                LW "No IP address resources found for AG - listener may not have cluster resources"
+            }
+        } catch {
+            LW "Failed to configure probe port: $_"
+        }
+    }
     }
 
     L "Availability Group setup completed successfully"
