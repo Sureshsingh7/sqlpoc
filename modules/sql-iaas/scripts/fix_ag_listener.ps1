@@ -9,7 +9,7 @@ param(
     [string]$ListenerName,
 
     [Parameter(Mandatory=$true)]
-    [string[]]$ListenerIPs,
+    [string]$ListenerIPs,  # Comma-separated string from Terraform
 
     [Parameter(Mandatory=$false)]
     [int]$ListenerPort = 1433,
@@ -32,14 +32,12 @@ function LW { param([string]$msg) "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
 function LE { param([string]$msg) "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) [ERROR] $msg" | Tee-Object -FilePath $log -Append | Write-Host -ForegroundColor Red; Write-Error $msg }
 
 # Parse ListenerIPs - Terraform passes comma-separated string, convert to array
-if ($ListenerIPs -is [string]) {
-    $ListenerIPs = $ListenerIPs -split ',' | ForEach-Object { $_.Trim() }
-}
+$ListenerIPArray = @($ListenerIPs -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
 
 try {
     L "Starting AG Listener fix for '$AGName'"
     L "Listener Name: $ListenerName"
-    L "Listener IPs ($(($ListenerIPs).Count)): $($ListenerIPs -join ', ')"
+    L "Listener IPs ($($ListenerIPArray.Count)): $($ListenerIPArray -join ', ')"
     L "Port: $ListenerPort, Probe Port: $ProbePort"
 
     # Check if AG exists
@@ -94,12 +92,12 @@ WHERE l.dns_name = '$ListenerName'
         
         # Try multi-IP first
         $listenerCreated = $false
-        if ($ListenerIPs.Count -gt 1) {
-            L "Attempting multi-subnet listener with IPs: $($ListenerIPs -join ', ')"
+        if ($ListenerIPArray.Count -gt 1) {
+            L "Attempting multi-subnet listener with IPs: $($ListenerIPArray -join ', ')"
             try {
                 $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ("
                 $ipParts = @()
-                foreach ($ip in $ListenerIPs) {
+                foreach ($ip in $ListenerIPArray) {
                     $ipParts += "(N'$ip', N'$subnetMask')"
                 }
                 $listenerSQL += $ipParts -join ", "
@@ -115,7 +113,7 @@ WHERE l.dns_name = '$ListenerName'
         
         # Fallback: Single IP
         if (-not $listenerCreated) {
-            $primaryIP = $ListenerIPs[0]
+            $primaryIP = $ListenerIPArray[0]
             L "Attempting single-IP listener with: $primaryIP"
             try {
                 $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ((N'$primaryIP', N'$subnetMask')), PORT=$ListenerPort)"
