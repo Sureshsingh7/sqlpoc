@@ -31,10 +31,15 @@ function L { param([string]$msg) "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) 
 function LW { param([string]$msg) "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) [WARN] $msg" | Tee-Object -FilePath $log -Append | Write-Host -ForegroundColor Yellow }
 function LE { param([string]$msg) "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) [ERROR] $msg" | Tee-Object -FilePath $log -Append | Write-Host -ForegroundColor Red; Write-Error $msg }
 
+# Parse ListenerIPs - Terraform passes comma-separated string, convert to array
+if ($ListenerIPs -is [string]) {
+    $ListenerIPs = $ListenerIPs -split ',' | ForEach-Object { $_.Trim() }
+}
+
 try {
     L "Starting AG Listener fix for '$AGName'"
     L "Listener Name: $ListenerName"
-    L "Listener IPs: $($ListenerIPs -join ', ')"
+    L "Listener IPs ($(($ListenerIPs).Count)): $($ListenerIPs -join ', ')"
     L "Port: $ListenerPort, Probe Port: $ProbePort"
 
     # Check if AG exists
