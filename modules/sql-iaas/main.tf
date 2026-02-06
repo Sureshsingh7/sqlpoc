@@ -609,7 +609,7 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
 # Fix AG Listener - Runs after AG setup to ensure listener is created
 # This handles the case where AG creation succeeded but listener failed
 resource "azurerm_virtual_machine_run_command" "fix_listener" {
-  for_each = var.is_hanames[0]) = true } : {}
+  for_each = var.is_ha ? { (local.vm_names[0]) = true } : {}
 
   name               = "fix-ag-listener"
   location           = var.location
