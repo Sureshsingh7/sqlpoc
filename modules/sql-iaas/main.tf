@@ -605,3 +605,66 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
     script_hash = md5(file("${path.module}/scripts/create_availability_group.ps1"))
   })
 }
+
+# Fix AG Listener - Runs after AG setup to ensure listener is created
+# This handles the case where AG creation succeeded but listener failed
+resource "azurerm_virtual_machine_run_command" "fix_listener" {
+  for_each = var.cluster_type == "ha" ? { (local.vm_names[0]) = true } : {}
+
+  name               = "fix-ag-listener"
+  location           = var.location
+  virtual_machine_id = module.sql_vm[each.key].resource_id
+  depends_on         = [azurerm_virtual_machine_run_command.ag_setup]
+
+  source {
+    script = file("${path.module}/scripts/fix_ag_listener.ps1")
+  }
+
+  parameter {
+    name  = "AGName"
+    value = "${var.name_prefix}-AG"
+  }
+
+  parameter {
+    name  = "ListenerName"
+    value = "${var.name_prefix}-listener"
+  }
+
+  parameter {
+    name = "ListenerIPs"
+    value = length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
+  }
+
+  parameter {
+    name  = "ListenerPort"
+    value = "1433"
+  }
+
+  parameter {
+    name  = "ProbePort"
+    value = "59999"
+  }
+
+  parameter {
+    name  = "SqlAdminUsername"
+    value = var.sql_admin_username
+  }
+
+  parameter {
+    name  = "SqlAdminPassword"
+    value = var.sql_vm_admin_password
+  }
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "10m"
+  }
+
+  tags = merge(var.tags, {
+    script_hash = md5(file("${path.module}/scripts/fix_ag_listener.ps1"))
+  })
+}
