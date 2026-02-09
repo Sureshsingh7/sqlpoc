@@ -64,9 +64,10 @@ image_version   = "latest"
 # Extensions
 enable_sql_extension = true
 
-# Use the project-specific UAMI created by bootstrap
+# Use the project-specific UAMI created by bootstrap + Azure Policy Built-In Identity
 sql_vm_user_assigned_identity_ids = [
-  "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-se/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-fnz-poc-tf-se"
+  "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/rg-fnz-poc-sql-se/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-fnz-poc-tf-se",
+  "/subscriptions/51595cc9-4191-4785-a757-15e45165d2a4/resourceGroups/Built-In-Identity-RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/Built-In-Identity-swedencentral"
 ]
 sql_vm_user_assigned_identity_client_id = "7b0669cf-04fd-4fe2-82d9-48aff45ba368"
 

@@ -476,10 +476,11 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
 }
 
 # HADR Endpoint Configuration (runs on all nodes)
+# Uses SMB (UNC paths) for certificate exchange between nodes
 resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
   for_each = var.is_ha ? local.vm_map : {}
 
-  name               = "hadr-endpoint-setup-v13"
+  name               = "hadr-endpoint-setup-v14"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.cluster_setup]
@@ -508,19 +509,19 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
     value = var.sql_admin_username
   }
 
-  parameter {
+  protected_parameter {
     name  = "SqlAdminPassword"
     value = var.sql_vm_admin_password
   }
 
   parameter {
-    name  = "KeyVaultName"
-    value = "kv-fnz-poc-se"
+    name  = "ClusterAdminUsername"
+    value = var.cluster_local_admin_username
   }
 
-  parameter {
-    name  = "ManagedIdentityClientId"
-    value = var.sql_vm_user_assigned_identity_client_id
+  protected_parameter {
+    name  = "ClusterAdminPassword"
+    value = var.sql_vm_admin_password
   }
 
   timeouts {
@@ -538,7 +539,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
 resource "azurerm_virtual_machine_run_command" "ag_setup" {
   for_each = var.is_ha ? { for k, v in local.vm_map : k => v if k == local.vm_names[0] } : {}
 
-  name               = "availability-group-setup-v6"
+  name               = "availability-group-setup-v13"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.hadr_endpoint_setup]
@@ -606,65 +607,3 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
   })
 }
 
-# Fix AG Listener - Runs after AG setup to ensure listener is created
-# This handles the case where AG creation succeeded but listener failed
-resource "azurerm_virtual_machine_run_command" "fix_listener" {
-  for_each = var.is_ha ? { (local.vm_names[0]) = true } : {}
-
-  name               = "fix-ag-listener"
-  location           = var.location
-  virtual_machine_id = module.sql_vm[each.key].resource_id
-  depends_on         = [azurerm_virtual_machine_run_command.ag_setup]
-
-  source {
-    script = file("${path.module}/scripts/fix_ag_listener.ps1")
-  }
-
-  parameter {
-    name  = "AGName"
-    value = "${var.name_prefix}-AG"
-  }
-
-  parameter {
-    name  = "ListenerName"
-    value = "${var.name_prefix}-listener"
-  }
-
-  parameter {
-    name = "ListenerIPs"
-    value = length(var.subnet_ids) > 1 ? join(",", [
-      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
-      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
-    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
-  }
-
-  parameter {
-    name  = "ListenerPort"
-    value = "1433"
-  }
-
-  parameter {
-    name  = "ProbePort"
-    value = "59999"
-  }
-
-  parameter {
-    name  = "SqlAdminUsername"
-    value = var.sql_admin_username
-  }
-
-  parameter {
-    name  = "SqlAdminPassword"
-    value = var.sql_vm_admin_password
-  }
-
-  timeouts {
-    create = "30m"
-    update = "30m"
-    delete = "10m"
-  }
-
-  tags = merge(var.tags, {
-    script_hash = md5(file("${path.module}/scripts/fix_ag_listener.ps1"))
-  })
-}

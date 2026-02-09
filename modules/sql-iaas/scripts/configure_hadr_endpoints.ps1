@@ -1,6 +1,26 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    Sets up SQL Server HADR certificates and endpoints on EACH VM separately.
+    Certificates are exchanged between nodes via SMB (UNC file shares).
+.PARAMETER AllNodeNames
+    Comma-separated list of all SQL node hostnames
+.PARAMETER CurrentNodeName
+    Hostname of the current node
+.PARAMETER EndpointPort
+    Port for the HADR endpoint (default: 5022)
+.PARAMETER SqlAdminUsername
+    SQL admin username for SQL authentication
+.PARAMETER SqlAdminPassword
+    SQL admin password for SQL authentication
+.PARAMETER ClusterAdminUsername
+    Local admin username for SMB access to partner nodes
+.PARAMETER ClusterAdminPassword
+    Local admin password for SMB access to partner nodes
+#>
 param(
     [Parameter(Mandatory=$true)]
-    [string]$AllNodeNames,  # Changed from [string[]] - will be comma-separated
+    [string]$AllNodeNames,
 
     [Parameter(Mandatory=$true)]
     [string]$CurrentNodeName,
@@ -15,310 +35,370 @@ param(
     [string]$SqlAdminPassword,
 
     [Parameter(Mandatory=$true)]
-    [string]$KeyVaultName,
+    [string]$ClusterAdminUsername,
 
-    [Parameter(Mandatory=$false)]
-    [string]$ManagedIdentityClientId = ""
+    [Parameter(Mandatory=$true)]
+    [string]$ClusterAdminPassword
 )
 
 $ErrorActionPreference = 'Stop'
-$log = 'C:\Windows\Temp\configure-hadr-endpoints.log'
+$script:LogFile = 'C:\Windows\Temp\configure-hadr-endpoints.log'
+$script:StartTime = Get-Date
 $sentinel = 'C:\Windows\Temp\.hadr-endpoint-configured'
 
-# Split the comma-separated node names into an array
+# Split comma-separated node names
 $AllNodeNamesArray = $AllNodeNames -split ',' | ForEach-Object { $_.Trim() }
 
-function L([string]$m) {
-    $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [INFO] $m"
-    Add-Content -Path $log -Value $msg
-    Write-Host $msg
+# Determine partner
+$PartnerNodes = $AllNodeNamesArray | Where-Object { $_ -ne $CurrentNodeName }
+$LocalCertName = "${CurrentNodeName}_HADR_Cert"
+$EndpointName = "HADR_Endpoint"
+$CertPath = "C:\Certificates"
+$MasterKeyPassword = "HadrMasterKey2025!$(Get-Random -Minimum 1000 -Maximum 9999)"
+
+#region Logging
+function Write-Log {
+    param([string]$Message, [string]$Level = "INFO")
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $elapsed = ((Get-Date) - $script:StartTime).ToString('mm\:ss')
+    $entry = "$timestamp [$elapsed] [$Level] $Message"
+    Add-Content -Path $script:LogFile -Value $entry -ErrorAction SilentlyContinue
+    Write-Host $entry
 }
 
-function LE([string]$m) {
-    $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [ERROR] $m"
-    Add-Content -Path $log -Value $msg
-    Write-Error $msg
-}
+function L([string]$m) { Write-Log $m "INFO" }
+function LD([string]$m) { Write-Log $m "DEBUG" }
+function LW([string]$m) { Write-Log $m "WARN" }
+function LE([string]$m) { Write-Log $m "ERROR" }
+function Write-Step([int]$Number, [string]$Title) { L ""; L ("=" * 55); L "STEP ${Number}: $Title"; L ("=" * 55) }
+#endregion
 
-# Check if already completed
-if (Test-Path $sentinel) {
-    L "HADR endpoint already configured - exiting"
-    exit 0
-}
+#region SQL Execution
+function Invoke-SqlQuery {
+    param(
+        [Parameter(Mandatory)][string]$Query,
+        [Parameter(Mandatory)][string]$Description,
+        [string]$ServerInstance = "localhost",
+        [int]$QueryTimeout = 30,
+        [switch]$Safe
+    )
 
-try {
-    L "Starting HADR endpoint configuration for $CurrentNodeName"
-    L "All nodes in cluster: $($AllNodeNamesArray -join ', ')"
+    L "  SQL: $Description"
+    $startTime = Get-Date
 
-    # Install and import required modules
-    L "Checking for SqlServer module..."
-    if (-not (Get-Module -ListAvailable -Name SqlServer)) {
-        L "Installing SqlServer module..."
-        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
-        Install-Module -Name SqlServer -Force -AllowClobber -Scope CurrentUser -SkipPublisherCheck
-        L "SqlServer module installed"
-    }
-    Import-Module SqlServer -ErrorAction Stop
-    L "SqlServer module loaded"
-
-    L "Checking for Az.KeyVault module..."
-    if (-not (Get-Module -ListAvailable -Name Az.KeyVault)) {
-        L "Installing Az.KeyVault module..."
-        Install-Module -Name Az.KeyVault -Force -AllowClobber -Scope CurrentUser -SkipPublisherCheck
-        L "Az.KeyVault module installed"
-    }
-    Import-Module Az.KeyVault -ErrorAction Stop
-    L "Az.KeyVault module loaded"
-
-    # Connect to Azure using Managed Identity (specify client ID for UAMI)
-    L "Connecting to Azure with Managed Identity..."
     try {
-        if ($ManagedIdentityClientId) {
-            L "DEBUG: Using User-Assigned Identity: $ManagedIdentityClientId"
-            Connect-AzAccount -Identity -AccountId $ManagedIdentityClientId -ErrorAction Stop | Out-Null
-        } else {
-            L "DEBUG: Using System-Assigned Identity"
-            Connect-AzAccount -Identity -ErrorAction Stop | Out-Null
-        }
-        L "Connected to Azure successfully"
+        $result = Invoke-Sqlcmd -ServerInstance $ServerInstance -Username $SqlAdminUsername -Password $SqlAdminPassword -Query $Query -QueryTimeout $QueryTimeout -ErrorAction Stop
+        $elapsedMs = [int]((Get-Date) - $startTime).TotalMilliseconds
+        L "  Done: $Description (${elapsedMs}ms)"
+        return $result
     } catch {
-        LE "Failed to connect to Azure: $_"
-        throw $_
-    }
-
-    $certName = "${CurrentNodeName}_Cert"
-    $certBackupPath = "C:\Temp\Certificates"
-    $guidPart = (New-Guid).ToString().Replace('-', '') # Remove hyphens from GUID
-    $masterKeyPassword = "${guidPart}!Sql2025" # Random GUID with complexity suffix
-
-    # Create certificate directory
-    if (-not (Test-Path $certBackupPath)) {
-        New-Item -Path $certBackupPath -ItemType Directory -Force | Out-Null
-        L "Created certificate directory: $certBackupPath"
-    }
-
-    # Step 1: Create Master Key if it doesn't exist
-    L "Creating database master key..."
-    L "DEBUG: ServerInstance = $CurrentNodeName"
-    
-    try {
-        $masterKeyCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'" -ServerInstance $CurrentNodeName -Database master -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
-        L "DEBUG: Master key check completed, result count: $($masterKeyCheck.Count)"
-    } catch {
-        L "DEBUG: Master key check failed with error: $_"
-        $masterKeyCheck = $null
-    }
-
-    if (-not $masterKeyCheck) {
-        L "DEBUG: No existing master key found, creating new one"
-        # Use hardcoded password for testing (will generate random after this works)
-        $testPassword = "ComplexTest2025!"
-        L "DEBUG: Using test password, length: $($testPassword.Length)"
-        
-        try {
-            $createQuery = "CREATE MASTER KEY ENCRYPTION BY PASSWORD = '$testPassword'"
-            L "DEBUG: Executing query: $createQuery"
-            Invoke-Sqlcmd -Query $createQuery -ServerInstance $CurrentNodeName -Database master -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
-            L "Master key created successfully"
-        } catch {
-            L "DEBUG: CREATE MASTER KEY failed with error: $_"
-            throw $_
+        if ($Safe) {
+            LW "  Skipped: $Description - $($_.Exception.Message)"
+            return $null
         }
-        $masterKeyPassword = $testPassword  # Use same password for certificate backup
-    } else {
-        L "Master key already exists"
-        # For existing keys, generate a password for certificate operations
-        $guidPart = (New-Guid).ToString().Replace('-', '')
-        $masterKeyPassword = "${guidPart}!Sql2025"
+        LE "  SQL Failed: $Description - $($_.Exception.Message)"
+        throw
     }
+}
+#endregion
 
-    # Step 2: Create Certificate for this node
-    L "Creating certificate: $certName"
-    $certCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name = '$certName'" -ServerInstance $CurrentNodeName -Database master -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
+#region Steps
+function Initialize-CertificateFolder {
+    L "  Creating certificate folder: $CertPath"
+    if (-not (Test-Path $CertPath)) {
+        New-Item -ItemType Directory -Path $CertPath -Force | Out-Null
+    }
+    # Grant SQL Server service account access to cert folder
+    icacls $CertPath /grant "NT SERVICE\MSSQLSERVER:(OI)(CI)M" 2>&1 | Out-Null
+    L "  Folder ready with SQL Server permissions"
+}
 
-    if (-not $certCheck) {
-        $createCertSQL = @"
+function New-MasterKeyAndCertificate {
+    L "  Creating Master Key..."
+    Invoke-SqlQuery "USE master; IF NOT EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name='##MS_DatabaseMasterKey##') CREATE MASTER KEY ENCRYPTION BY PASSWORD='$MasterKeyPassword';" "Create Master Key" -Safe
+
+    L "  Creating Certificate: $LocalCertName"
+    $certStartDate = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
+    $certExpiryDate = (Get-Date).AddYears(5).ToString('yyyy-MM-ddTHH:mm:ss')
+
+    Invoke-SqlQuery @"
 USE master;
-CREATE CERTIFICATE [$certName]
-WITH SUBJECT = 'Certificate for $CurrentNodeName HADR Endpoint',
-EXPIRY_DATE = '2030-12-31';
-"@
-        Invoke-Sqlcmd -Query $createCertSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-        L "Certificate created: $certName"
+IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name='$LocalCertName')
+    CREATE CERTIFICATE [$LocalCertName] WITH SUBJECT = '$CurrentNodeName HADR Certificate',
+        START_DATE = '$certStartDate',
+        EXPIRY_DATE = '$certExpiryDate';
+"@ "Create Certificate" -Safe
+    L "  Master key and certificate ready"
+}
 
-        # Backup certificate
-        $certFile = Join-Path $certBackupPath "${certName}.cer"
-        $keyFile = Join-Path $certBackupPath "${certName}.pvk"
-
-        $backupCertSQL = "BACKUP CERTIFICATE [$certName] TO FILE = '$certFile' WITH PRIVATE KEY (FILE = '$keyFile', ENCRYPTION BY PASSWORD = '" + $masterKeyPassword + "');"
-        Invoke-Sqlcmd -Query $backupCertSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-        L "Certificate backed up to: $certFile"
-    } else {
-        L "Certificate already exists: $certName"
-    }
-
-    # Upload certificate to Key Vault (always, even if cert exists)
-    $certFile = Join-Path $certBackupPath "${certName}.cer"
+function Backup-Certificate {
+    $certFile = "$CertPath\$LocalCertName.cer"
     if (Test-Path $certFile) {
-        try {
-            L "Uploading certificate to Key Vault: $KeyVaultName"
-            $certBytes = [System.IO.File]::ReadAllBytes($certFile)
-            $certBase64 = [System.Convert]::ToBase64String($certBytes)
-            $secretName = "hadr-cert-$CurrentNodeName"
-            Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name $secretName -SecretValue (ConvertTo-SecureString -String $certBase64 -AsPlainText -Force) -ErrorAction Stop | Out-Null
-            L "Certificate uploaded to Key Vault as secret: $secretName"
-        } catch {
-            LE "Failed to upload certificate to Key Vault: $_"
-            throw $_
-        }
+        L "  Certificate backup already exists: $certFile"
+        return
+    }
+    L "  Backing up certificate to: $certFile"
+    Invoke-SqlQuery "BACKUP CERTIFICATE [$LocalCertName] TO FILE='$certFile';" "Backup Certificate" -Safe
+
+    # Wait for file to appear
+    $waitTime = 0
+    while ($waitTime -lt 30 -and -not (Test-Path $certFile)) {
+        Start-Sleep -Seconds 2
+        $waitTime += 2
+    }
+    if (Test-Path $certFile) {
+        L "  Certificate backed up ($((Get-Item $certFile).Length) bytes)"
     } else {
-        LE "Certificate file not found: $certFile"
-        exit 1
+        LE "  Certificate file not found after backup"
+        throw "Certificate backup failed"
+    }
+}
+
+function New-HadrEndpoint {
+    L "  Creating HADR endpoint on port $EndpointPort..."
+    Invoke-SqlQuery @"
+IF NOT EXISTS (SELECT 1 FROM sys.endpoints WHERE name='$EndpointName')
+    CREATE ENDPOINT [$EndpointName]
+        STATE = STARTED AS TCP (LISTENER_PORT = $EndpointPort)
+        FOR DATABASE_MIRRORING (
+            AUTHENTICATION = CERTIFICATE [$LocalCertName],
+            ENCRYPTION = REQUIRED ALGORITHM AES,
+            ROLE = ALL);
+ELSE IF EXISTS (SELECT 1 FROM sys.endpoints WHERE name='$EndpointName' AND state_desc!='STARTED')
+    ALTER ENDPOINT [$EndpointName] STATE = STARTED;
+"@ "Create/Start Endpoint" -Safe
+
+    $endpoint = Invoke-SqlQuery "SELECT name, port, state_desc FROM sys.tcp_endpoints WHERE name='$EndpointName';" "Verify Endpoint" -Safe
+    if ($endpoint) {
+        L "  Endpoint ready: $($endpoint.name) on port $($endpoint.port) - $($endpoint.state_desc)"
+    }
+}
+
+function Sync-PartnerCertificate {
+    param([string]$PartnerServer)
+
+    $localCertFile = "$CertPath\$LocalCertName.cer"
+    $partnerCertName = "${PartnerServer}_HADR_Cert"
+    $partnerCertFile = "$CertPath\$partnerCertName.cer"
+    $uncPath = "\\$PartnerServer\C`$"
+    $maxWaitSeconds = 300  # 5 minutes max
+
+    # Wait for local certificate to be ready
+    L "  Waiting for local certificate to be ready..."
+    $waitTime = 0
+    while ($waitTime -lt 60 -and -not (Test-Path $localCertFile)) {
+        L "  Local certificate not ready yet, waiting... ($waitTime/60s)"
+        Start-Sleep -Seconds 5
+        $waitTime += 5
+    }
+    if (-not (Test-Path $localCertFile)) {
+        throw "Local certificate must exist before exchange: $localCertFile"
+    }
+    L "  Local certificate ready: $localCertFile"
+
+    if (Test-Path $partnerCertFile) {
+        L "  Partner certificate already exists locally: $partnerCertFile"
+        return
     }
 
-    # Step 3: Wait for partner node certificates in Key Vault
-    L "Waiting for partner node certificates in Key Vault..."
-    $timeout = 300 # 5 minutes
-    $elapsed = 0
-    $allCertsReady = $false
+    L "  Starting mutual certificate exchange with $PartnerServer..."
+    L "  Will wait up to $($maxWaitSeconds/60) minutes for partner certificate..."
 
-    while ($elapsed -lt $timeout -and -not $allCertsReady) {
-        $missingCerts = @()
-        foreach ($nodeName in $AllNodeNamesArray) {
-            if ($nodeName -ne $CurrentNodeName) {
-                $secretName = "hadr-cert-$nodeName"
-                try {
-                    $secret = Get-AzKeyVaultSecret -VaultName $KeyVaultName -Name $secretName -ErrorAction SilentlyContinue
-                    if (-not $secret) {
-                        $missingCerts += $nodeName
-                    }
-                } catch {
-                    $missingCerts += $nodeName
-                }
+    $waitTime = 0
+    $copiedFromPartner = $false
+    $pushedToPartner = $false
+
+    while ($waitTime -lt $maxWaitSeconds -and -not $copiedFromPartner) {
+        try {
+            L "  Connecting to $uncPath... (attempt $([math]::Floor($waitTime/10)+1))"
+            $netResult = cmd /c "net use $uncPath /user:$PartnerServer\$ClusterAdminUsername `"$ClusterAdminPassword`" 2>&1"
+            if ($LASTEXITCODE -ne 0 -and $netResult -notmatch "already") {
+                throw "net use failed: $netResult"
             }
-        }
 
-        if ($missingCerts.Count -eq 0) {
-            $allCertsReady = $true
-            L "All partner certificates are ready in Key Vault"
-        } else {
-            L "Waiting for certificates from: $($missingCerts -join ', ')"
-            Start-Sleep -Seconds 10
-            $elapsed += 10
-        }
-    }
+            $remoteCertFolder = "$uncPath\Certificates"
+            if (-not (Test-Path $remoteCertFolder)) {
+                L "  Creating Certificates folder on $PartnerServer..."
+                New-Item -ItemType Directory -Path $remoteCertFolder -Force | Out-Null
+            }
 
-    if (-not $allCertsReady) {
-        LE "Timeout waiting for partner certificates in Key Vault"
-        exit 1
-    }
-
-    # Step 4: Download and import partner certificates from Key Vault
-    L "Downloading and importing partner certificates from Key Vault..."
-    foreach ($nodeName in $AllNodeNamesArray) {
-        if ($nodeName -ne $CurrentNodeName) {
-            $partnerCertName = "${nodeName}_Cert"
-            $partnerCertFile = Join-Path $certBackupPath "$partnerCertName.cer"
-
-            # Check if certificate already imported
-            $certExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name = '$partnerCertName'" -ServerInstance $CurrentNodeName -Database master -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
-
-            if (-not $certExists) {
-                # Download certificate from Key Vault
-                try {
-                    $secretName = "hadr-cert-$nodeName"
-                    L "Downloading certificate from Key Vault: $secretName"
-                    $secret = Get-AzKeyVaultSecret -VaultName $KeyVaultName -Name $secretName -ErrorAction Stop
-                    # Convert SecureString to plain text (PowerShell 5.1 compatible)
-                    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret.SecretValue)
-                    try {
-                        $certBase64 = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-                    } finally {
-                        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-                    }
-                    $certBytes = [System.Convert]::FromBase64String($certBase64)
-                    [System.IO.File]::WriteAllBytes($partnerCertFile, $certBytes)
-                    L "Certificate downloaded to: $partnerCertFile"
-                } catch {
-                    LE "Failed to download certificate from Key Vault: $_"
-                    throw $_
+            # Push local cert to partner
+            if (-not $pushedToPartner) {
+                $remoteLocalCert = "$remoteCertFolder\$LocalCertName.cer"
+                if (-not (Test-Path $remoteLocalCert)) {
+                    L "  Pushing local certificate to $PartnerServer..."
+                    Copy-Item $localCertFile $remoteLocalCert -Force
+                    L "  Local certificate pushed to partner successfully"
                 }
+                $pushedToPartner = $true
+            }
 
-                # Import certificate into SQL Server
-                $importCertSQL = @"
-USE master;
-CREATE CERTIFICATE [$partnerCertName]
-FROM FILE = '$partnerCertFile';
-"@
-                Invoke-Sqlcmd -Query $importCertSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-                L "Imported certificate from $nodeName"
+            # Pull partner cert from partner
+            $remotePartnerCert = "$remoteCertFolder\$partnerCertName.cer"
+            if (Test-Path $remotePartnerCert) {
+                Copy-Item $remotePartnerCert $partnerCertFile -Force
+                $copiedFromPartner = $true
+                L "  Partner certificate copied to local successfully"
             } else {
-                L "Certificate from $nodeName already imported"
+                L "  Partner certificate not ready at $remotePartnerCert ($waitTime/${maxWaitSeconds}s)"
             }
+
+            cmd /c "net use $uncPath /delete /y 2>&1" | Out-Null
+
+        } catch {
+            L "  Connection error ($waitTime/${maxWaitSeconds}s): $($_.Exception.Message)"
+            cmd /c "net use $uncPath /delete /y 2>&1" | Out-Null
+        }
+        if (-not $copiedFromPartner) {
+            Start-Sleep -Seconds 10
+            $waitTime += 10
         }
     }
 
-    # Step 5: Create HADR Endpoint with certificate authentication
-    L "Creating HADR endpoint on port $EndpointPort..."
-    $endpointName = "Hadr_endpoint"
+    if (-not $copiedFromPartner) {
+        throw "Failed to copy partner certificate after $($maxWaitSeconds/60) minutes - ensure script is running on both VMs"
+    }
+    L "  Certificate exchange complete"
+    L "    Local cert: $localCertFile ($((Get-Item $localCertFile).Length) bytes)"
+    L "    Partner cert: $partnerCertFile ($((Get-Item $partnerCertFile).Length) bytes)"
+}
 
-    # Check if endpoint exists
-    $endpointCheck = Invoke-Sqlcmd -Query "SELECT name FROM sys.endpoints WHERE name = '$endpointName'" -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
+function Import-PartnerCertificate {
+    param([string]$PartnerServer)
 
-    if ($endpointCheck) {
-        L "Endpoint already exists, dropping it to recreate with certificate"
-        Invoke-Sqlcmd -Query "DROP ENDPOINT [$endpointName]" -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
+    $partnerCertName = "${PartnerServer}_HADR_Cert"
+    $partnerCertFile = "$CertPath\$partnerCertName.cer"
+    $importedCertName = "${PartnerServer}_Imported_Cert"
+    $hadrLoginName = "${PartnerServer}_HADR_Login"
+
+    if (-not (Test-Path $partnerCertFile)) {
+        throw "Partner certificate not found: $partnerCertFile"
     }
 
-    $createEndpointSQL = @"
-CREATE ENDPOINT [$endpointName]
-STATE = STARTED
-AS TCP (
-    LISTENER_PORT = $EndpointPort,
-    LISTENER_IP = ALL
-)
-FOR DATABASE_MIRRORING (
-    AUTHENTICATION = CERTIFICATE [$certName],
-    ENCRYPTION = REQUIRED ALGORITHM AES,
-    ROLE = ALL
-);
-"@
-    Invoke-Sqlcmd -Query $createEndpointSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-    L "HADR endpoint created with certificate authentication"
+    L "  Importing partner certificate from $PartnerServer..."
+    Invoke-SqlQuery "IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name='$importedCertName') CREATE CERTIFICATE [$importedCertName] FROM FILE='$partnerCertFile';" "Import Certificate" -Safe
+    Invoke-SqlQuery "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name='$hadrLoginName') CREATE LOGIN [$hadrLoginName] FROM CERTIFICATE [$importedCertName];" "Create Login from Certificate" -Safe
+    Invoke-SqlQuery "GRANT CONNECT ON ENDPOINT::[$EndpointName] TO [$hadrLoginName];" "Grant CONNECT on Endpoint" -Safe
+    L "  Partner certificate imported, login configured for handshake"
+}
 
-    # Step 6: Grant CONNECT permission to partner certificates
-    L "Granting CONNECT permissions to partner certificates..."
-    foreach ($nodeName in $AllNodeNamesArray) {
-        if ($nodeName -ne $CurrentNodeName) {
-            $partnerCertName = "${nodeName}_Cert"
-            $loginName = "${nodeName}_Login"
+function Test-HadrSetup {
+    L "  Verifying HADR endpoint setup..."
 
-            # Check if login exists
-            $loginExists = Invoke-Sqlcmd -Query "SELECT name FROM sys.server_principals WHERE name = '$loginName'" -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
-
-            if (-not $loginExists) {
-                # Create login from certificate
-                $createLoginSQL = "USE master; CREATE LOGIN [" + $loginName + "] FROM CERTIFICATE [" + $partnerCertName + "];"
-                Invoke-Sqlcmd -Query $createLoginSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-                L "Created login for ${nodeName}: $loginName"
-            }
-            # Grant CONNECT permission to endpoint
-            $grantSQL = "GRANT CONNECT ON ENDPOINT ::[" + $endpointName + "] TO [" + $loginName + "];"
-            Invoke-Sqlcmd -Query $grantSQL -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-            L "Granted CONNECT permission to $loginName"
-        }
+    $endpointStatus = Invoke-SqlQuery "SELECT name, protocol_desc, port, state_desc FROM sys.tcp_endpoints WHERE type_desc = 'DATABASE_MIRRORING';" "Check Endpoint Status" -Safe
+    if ($endpointStatus) {
+        L "    Endpoint: $($endpointStatus.name) | Port: $($endpointStatus.port) | State: $($endpointStatus.state_desc)"
     }
 
-    # Verify endpoint is running
-    $endpointStatus = Invoke-Sqlcmd -Query "SELECT state_desc FROM sys.endpoints WHERE name = '$endpointName'" -ServerInstance $CurrentNodeName -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-    L "Endpoint status: $($endpointStatus.state_desc)"
+    $certificates = Invoke-SqlQuery "SELECT name, subject, start_date, expiry_date FROM sys.certificates WHERE name LIKE '%HADR%' OR name LIKE '%Imported%';" "Check Certificates" -Safe
+    if ($certificates) {
+        @($certificates) | ForEach-Object { L "    Cert: $($_.name) | Subject: $($_.subject) | Expires: $($_.expiry_date)" }
+    }
 
-    L "HADR endpoint configuration completed successfully"
+    $permissions = Invoke-SqlQuery @"
+SELECT
+    p.name AS Login_Name,
+    c.name AS Certificate_Mapped,
+    sp.permission_name AS Permission,
+    sp.state_desc AS Permission_State
+FROM sys.server_principals p
+JOIN sys.certificates c ON p.sid = c.sid
+JOIN sys.server_permissions sp ON p.principal_id = sp.grantee_principal_id
+JOIN sys.database_mirroring_endpoints e ON sp.major_id = e.endpoint_id
+WHERE p.type = 'C' AND e.name = '$EndpointName';
+"@ "Check Endpoint Permissions" -Safe
+    if ($permissions) {
+        @($permissions) | ForEach-Object { L "    Login: $($_.Login_Name) | Cert: $($_.Certificate_Mapped) | Permission: $($_.Permission) ($($_.Permission_State))" }
+    }
+
+    $certCount = @($certificates).Count
+    $hasEndpoint = $null -ne $endpointStatus
+    $hasPermissions = $null -ne $permissions
+    L "  Summary: Endpoint=$(if($hasEndpoint){'OK'}else{'MISSING'}), Certificates=$certCount, Permissions=$(if($hasPermissions){'OK'}else{'MISSING'})"
+
+    if ($hasEndpoint -and $certCount -ge 2 -and $hasPermissions) {
+        L "  All components verified - Handshake ready"
+    } else {
+        LW "  Some components may be missing - verify manually"
+    }
+}
+#endregion
+
+#region Main
+try {
+    Remove-Item $script:LogFile -Force -ErrorAction SilentlyContinue
+
+    L ("=" * 55)
+    L "SQL SERVER HADR ENDPOINT SETUP"
+    L ("=" * 55)
+    L "Local: $CurrentNodeName | Partners: $($PartnerNodes -join ', ')"
+    L "Endpoint: $EndpointName (Port $EndpointPort)"
+    L "Certificate Path: $CertPath"
+    L "Admin User: $ClusterAdminUsername"
+    L ("=" * 55)
+
+    # Check if already completed
+    if (Test-Path $sentinel) {
+        L "HADR endpoint already configured - exiting"
+        exit 0
+    }
+
+    Write-Step 0 "Checking SQL Permissions"
+    L "  Current Windows user: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+    try {
+        $sqlUser = Invoke-Sqlcmd -ServerInstance localhost -Username $SqlAdminUsername -Password $SqlAdminPassword -Query "SELECT SUSER_SNAME() AS CurrentUser, IS_SRVROLEMEMBER('sysadmin') AS IsSysadmin;" -ErrorAction Stop
+        L "  SQL User: $($sqlUser.CurrentUser) | Sysadmin: $(if($sqlUser.IsSysadmin -eq 1){'YES'}else{'NO'})"
+    } catch {
+        LE "  Could not query SQL user: $($_.Exception.Message)"
+        throw
+    }
+
+    Write-Step 1 "Create Certificate Folder"
+    Initialize-CertificateFolder
+
+    Write-Step 2 "Setup Master Key & Certificate"
+    New-MasterKeyAndCertificate
+
+    Write-Step 3 "Backup Certificate to File"
+    Backup-Certificate
+
+    Write-Step 4 "Create HADR Endpoint"
+    New-HadrEndpoint
+
+    Write-Step 5 "Exchange Certificates with Partners via SMB"
+    foreach ($partner in $PartnerNodes) {
+        L "  --- Exchanging with $partner ---"
+        Sync-PartnerCertificate -PartnerServer $partner
+    }
+
+    Write-Step 6 "Import Partner Certificates & Create Logins"
+    foreach ($partner in $PartnerNodes) {
+        Import-PartnerCertificate -PartnerServer $partner
+    }
+
+    Write-Step 7 "Verify Setup"
+    Test-HadrSetup
+
+    # Mark as complete
     New-Item -Path $sentinel -ItemType File -Force | Out-Null
 
+    $duration = (Get-Date) - $script:StartTime
+    L ""
+    L ("=" * 55)
+    L "COMPLETED (Duration: $($duration.ToString('mm\:ss')))"
+    L "Log: $script:LogFile"
+    L ("=" * 55)
+    exit 0
+
 } catch {
-    LE "Error configuring HADR endpoint: $_"
-    $_ | Out-File "C:\Windows\Temp\configure-hadr-endpoints.err.txt" -Force
+    LE "SCRIPT EXECUTION FAILED: $($_.Exception.Message)"
+    LE "Stack Trace: $($_.ScriptStackTrace)"
+    $duration = (Get-Date) - $script:StartTime
+    L ("=" * 55)
+    L "SCRIPT FAILED (Duration: $($duration.ToString('mm\:ss')))"
+    L "Log: $script:LogFile"
+    L ("=" * 55)
     exit 1
 }
+#endregion
 

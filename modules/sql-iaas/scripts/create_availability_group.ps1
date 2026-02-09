@@ -18,6 +18,9 @@ param(
     [int]$ListenerPort = 1433,
 
     [Parameter(Mandatory=$false)]
+    [int]$EndpointPort = 5022,
+
+    [Parameter(Mandatory=$false)]
     [int]$ProbePort = 59999,
 
     [Parameter(Mandatory=$true)]
@@ -49,9 +52,79 @@ function LW([string]$m) {
     Write-Host $msg
 }
 
+#region Endpoint Safety Net
+function Ensure-HadrEndpoint {
+    <#
+    .SYNOPSIS
+        Verifies HADR endpoint exists and is STARTED on a given SQL instance.
+        If missing, recreates a basic endpoint (no cert auth - just ensures connectivity).
+        This is a safety net in case endpoints were dropped after SQL restarts.
+    #>
+    param(
+        [string]$ServerInstance,
+        [string]$EndpointName = "HADR_Endpoint",
+        [int]$Port = 5022
+    )
+
+    L "  Checking HADR endpoint on $ServerInstance..."
+    try {
+        $endpoint = Invoke-Sqlcmd -Query "SELECT name, state_desc, port FROM sys.tcp_endpoints WHERE type_desc = 'DATABASE_MIRRORING';" `
+            -ServerInstance $ServerInstance -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
+
+        if ($endpoint) {
+            L "  Endpoint found: $($endpoint.name) on port $($endpoint.port) - $($endpoint.state_desc)"
+            if ($endpoint.state_desc -ne 'STARTED') {
+                L "  Endpoint not started - starting it..."
+                Invoke-Sqlcmd -Query "ALTER ENDPOINT [$($endpoint.name)] STATE = STARTED;" `
+                    -ServerInstance $ServerInstance -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
+                L "  Endpoint started"
+            }
+            return $true
+        } else {
+            LW "  No HADR endpoint found on $ServerInstance - recreating..."
+            # Check if certificate exists for cert-based auth
+            $certName = "${ServerInstance}_HADR_Cert"
+            $cert = Invoke-Sqlcmd -Query "SELECT name FROM sys.certificates WHERE name='$certName';" `
+                -ServerInstance $ServerInstance -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
+
+            if ($cert) {
+                # Recreate with certificate authentication
+                L "  Found certificate $certName - recreating endpoint with cert auth"
+                Invoke-Sqlcmd -Query @"
+CREATE ENDPOINT [$EndpointName]
+    STATE = STARTED AS TCP (LISTENER_PORT = $Port)
+    FOR DATABASE_MIRRORING (
+        AUTHENTICATION = CERTIFICATE [$certName],
+        ENCRYPTION = REQUIRED ALGORITHM AES,
+        ROLE = ALL);
+"@ -ServerInstance $ServerInstance -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
+            } else {
+                # Fallback: create with Windows auth (basic connectivity)
+                LW "  No certificate found - creating endpoint with NEGOTIATE auth"
+                Invoke-Sqlcmd -Query @"
+CREATE ENDPOINT [$EndpointName]
+    STATE = STARTED AS TCP (LISTENER_PORT = $Port)
+    FOR DATABASE_MIRRORING (
+        AUTHENTICATION = WINDOWS NEGOTIATE,
+        ENCRYPTION = REQUIRED ALGORITHM AES,
+        ROLE = ALL);
+GRANT CONNECT ON ENDPOINT::[$EndpointName] TO [NT AUTHORITY\SYSTEM];
+"@ -ServerInstance $ServerInstance -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
+            }
+            L "  Endpoint recreated on $ServerInstance"
+            return $true
+        }
+    } catch {
+        LW "  Failed to verify/create endpoint on ${ServerInstance}: $($_.Exception.Message)"
+        return $false
+    }
+}
+#endregion
+
 # Parse comma-separated parameters from Terraform
 $ListenerIPArray = @($ListenerIPs -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
 $SecondaryReplicaArray = @($SecondaryReplicas -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+$AllReplicas = @($PrimaryReplica) + $SecondaryReplicaArray
 
 # Check if already completed
 if (Test-Path $sentinel) {
@@ -77,17 +150,47 @@ try {
 
     L "This is the primary replica - proceeding with AG creation"
 
-    # Import SQL Server module
-    L "Importing SQL Server PowerShell module..."
-    Import-Module SqlServer -ErrorAction Stop
-
-    # Check if Always On is enabled
-    $hadrEnabled = Invoke-Sqlcmd -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS IsEnabled" -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-    if ($hadrEnabled.IsEnabled -ne 1) {
-        LE "Always On is not enabled on $currentNode"
-        exit 1
+    # The SqlServer module MUST be used instead of SQLPS.
+    # SQLPS auto-loads the SQL provider context which causes "remote WSFC cluster context" 
+    # errors when creating availability groups on DNN clusters.
+    L "Ensuring SqlServer PowerShell module is available..."
+    $sqlMod = Get-Module -ListAvailable -Name SqlServer -ErrorAction SilentlyContinue
+    if (-not $sqlMod) {
+        L "  SqlServer module not found - installing from PSGallery..."
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction SilentlyContinue | Out-Null
+        Install-Module -Name SqlServer -Force -AllowClobber -Scope AllUsers -SkipPublisherCheck -ErrorAction Stop
+        L "  SqlServer module installed"
     }
-    L "Always On is enabled"
+    Import-Module SqlServer -ErrorAction Stop -DisableNameChecking
+    L "  SqlServer module loaded"
+
+    # Check if Always On is enabled on all replicas
+    L "Verifying Always On is enabled on all replicas..."
+    foreach ($replica in $AllReplicas) {
+        $hadrEnabled = Invoke-Sqlcmd -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS IsEnabled" -ServerInstance $replica -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
+        if ($hadrEnabled.IsEnabled -ne 1) {
+            LE "Always On is NOT enabled on $replica"
+            exit 1
+        }
+        L "  Always On enabled on $replica"
+    }
+
+    # SAFETY NET: Verify HADR endpoints exist on ALL replicas before AG creation
+    L "Verifying HADR endpoints on all replicas (safety net)..."
+    $allEndpointsOk = $true
+    foreach ($replica in $AllReplicas) {
+        $ok = Ensure-HadrEndpoint -ServerInstance $replica -Port $EndpointPort
+        if (-not $ok) {
+            $allEndpointsOk = $false
+            LW "Endpoint verification failed on $replica"
+        }
+    }
+    if (-not $allEndpointsOk) {
+        LW "Some endpoints could not be verified - AG creation may fail"
+    } else {
+        L "All HADR endpoints verified"
+    }
 
     # Check if AG already exists
     $existingAG = Invoke-Sqlcmd -Query "SELECT name FROM sys.availability_groups WHERE name = '$AGName'" -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
@@ -128,21 +231,61 @@ try {
         L "Database already exists"
     }
 
-    # Create Availability Group
+    # Diagnose cluster context before AG creation
+    L "Diagnosing SQL Server cluster context..."
+    try {
+        $clusterProps = Invoke-Sqlcmd -Query "SELECT cluster_name, quorum_type_desc, quorum_state_desc FROM sys.dm_os_cluster_properties" `
+            -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
+        if ($clusterProps) {
+            L "  Cluster name: $($clusterProps.cluster_name), Quorum: $($clusterProps.quorum_type_desc) ($($clusterProps.quorum_state_desc))"
+        } else {
+            LW "  dm_os_cluster_properties returned empty - SQL Server may not see local cluster"
+        }
+    } catch {
+        LW "  Could not query cluster properties: $($_.Exception.Message)"
+    }
+    try {
+        $isClustered = Invoke-Sqlcmd -Query "SELECT SERVERPROPERTY('IsClustered') AS IsClustered" `
+            -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
+        L "  IsClustered: $($isClustered.IsClustered)"
+    } catch {
+        LW "  Could not query IsClustered: $($_.Exception.Message)"
+    }
+
+    # Force local HADR cluster context (fixes "remote WSFC cluster context" error on DNN clusters)
+    L "Setting HADR cluster context to LOCAL..."
+    try {
+        Invoke-Sqlcmd -Query "ALTER SERVER CONFIGURATION SET HADR CLUSTER CONTEXT LOCAL" `
+            -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
+        L "  HADR cluster context set to LOCAL"
+    } catch {
+        LW "  Could not set HADR cluster context: $($_.Exception.Message)"
+    }
+
+    # Create Availability Group - try WSFC first, fall back to NONE for DNN/workgroup clusters
     L "Creating Availability Group '$AGName'..."
     
-    $createAGSQL = @"
+    $clusterTypes = @("WSFC", "NONE")
+    $agCreated = $false
+    
+    foreach ($clusterType in $clusterTypes) {
+        if ($agCreated) { break }
+        
+        $failoverMode = if ($clusterType -eq "WSFC") { "AUTOMATIC" } else { "MANUAL" }
+        L "  Attempting with CLUSTER_TYPE = $clusterType, FAILOVER_MODE = $failoverMode..."
+        
+        $createAGSQL = @"
 CREATE AVAILABILITY GROUP [$AGName]
-WITH (CLUSTER_TYPE = WSFC, AUTOMATED_BACKUP_PREFERENCE = SECONDARY, DB_FAILOVER = OFF, DTC_SUPPORT = NONE)
+WITH (CLUSTER_TYPE = $clusterType, AUTOMATED_BACKUP_PREFERENCE = SECONDARY, DB_FAILOVER = OFF, DTC_SUPPORT = NONE)
 FOR DATABASE [$dbName]
 REPLICA ON 
 "@
 
-    # Add primary replica
-    $createAGSQL += @"
+        # Add primary replica
+        $createAGSQL += @"
 N'$PrimaryReplica' WITH (
-    ENDPOINT_URL = N'TCP://${PrimaryReplica}:5022',
-    FAILOVER_MODE = AUTOMATIC,
+    ENDPOINT_URL = N'TCP://${PrimaryReplica}:${EndpointPort}',
+    FAILOVER_MODE = $failoverMode,
     AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
     BACKUP_PRIORITY = 50,
     SEEDING_MODE = AUTOMATIC,
@@ -150,38 +293,87 @@ N'$PrimaryReplica' WITH (
 )
 "@
 
-    # Add secondary replicas
-    foreach ($secondary in $SecondaryReplicaArray) {
-        $createAGSQL += @"
+        # Add secondary replicas
+        foreach ($secondary in $SecondaryReplicaArray) {
+            $createAGSQL += @"
 ,
 N'$secondary' WITH (
-    ENDPOINT_URL = N'TCP://${secondary}:5022',
-    FAILOVER_MODE = AUTOMATIC,
+    ENDPOINT_URL = N'TCP://${secondary}:${EndpointPort}',
+    FAILOVER_MODE = $failoverMode,
     AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
     BACKUP_PRIORITY = 50,
     SEEDING_MODE = AUTOMATIC,
     SECONDARY_ROLE(ALLOW_CONNECTIONS = ALL)
 )
 "@
+        }
+
+        try {
+            Invoke-Sqlcmd -Query $createAGSQL -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
+            L "Availability Group created with CLUSTER_TYPE = $clusterType"
+            $agCreated = $true
+        } catch {
+            LW "  CLUSTER_TYPE = $clusterType failed: $($_.Exception.Message)"
+            if ($clusterType -eq "WSFC") {
+                L "  Will retry with CLUSTER_TYPE = NONE..."
+            }
+        }
+    }
+    
+    if (-not $agCreated) {
+        LE "Failed to create Availability Group with any cluster type"
+        exit 1
     }
 
-    Invoke-Sqlcmd -Query $createAGSQL -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate
-    L "Availability Group created"
-
-    # Wait for secondaries to join
+    # Join secondaries to AG
+    # Determine cluster type used (check from AG metadata)
+    $agClusterType = Invoke-Sqlcmd -Query "SELECT cluster_type_desc FROM sys.availability_groups WHERE name = '$AGName'" `
+        -ServerInstance $currentNode -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
+    $usedClusterTypeNone = ($agClusterType -and $agClusterType.cluster_type_desc -eq 'NONE')
+    L "AG cluster type: $($agClusterType.cluster_type_desc)"
+    
     foreach ($secondary in $SecondaryReplicaArray) {
-        L "Waiting for $secondary to join AG..."
-        $timeout = 60
-        $elapsed = 0
-        while ($elapsed -lt $timeout) {
+        L "Joining $secondary to AG..."
+        
+        # If CLUSTER_TYPE = NONE, set HADR context on secondary too
+        if ($usedClusterTypeNone) {
             try {
-                Invoke-Sqlcmd -Query "ALTER AVAILABILITY GROUP [$AGName] GRANT CREATE ANY DATABASE" -ServerInstance $secondary -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
-                L "$secondary joined successfully"
-                break
+                Invoke-Sqlcmd -Query "ALTER SERVER CONFIGURATION SET HADR CLUSTER CONTEXT LOCAL" `
+                    -ServerInstance $secondary -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction SilentlyContinue
+            } catch { }
+        }
+        
+        $timeout = 120
+        $elapsed = 0
+        $joined = $false
+        
+        # Build join query based on cluster type
+        $joinQuery = if ($usedClusterTypeNone) {
+            "ALTER AVAILABILITY GROUP [$AGName] JOIN WITH (CLUSTER_TYPE = NONE);"
+        } else {
+            "ALTER AVAILABILITY GROUP [$AGName] JOIN;"
+        }
+        
+        while ($elapsed -lt $timeout -and -not $joined) {
+            try {
+                # First join the AG on the secondary
+                Invoke-Sqlcmd -Query $joinQuery `
+                    -ServerInstance $secondary -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
+                L "$secondary joined the AG"
+                
+                # Then grant automatic seeding
+                Invoke-Sqlcmd -Query "ALTER AVAILABILITY GROUP [$AGName] GRANT CREATE ANY DATABASE;" `
+                    -ServerInstance $secondary -Username $SqlAdminUsername -Password $SqlAdminPassword -TrustServerCertificate -ErrorAction Stop
+                L "$secondary granted CREATE ANY DATABASE for seeding"
+                $joined = $true
             } catch {
-                Start-Sleep -Seconds 5
-                $elapsed += 5
+                LW "Join attempt on $secondary failed ($elapsed/${timeout}s): $($_.Exception.Message)"
+                Start-Sleep -Seconds 10
+                $elapsed += 10
             }
+        }
+        if (-not $joined) {
+            LW "$secondary failed to join AG within ${timeout}s - may need manual intervention"
         }
     }
     }  # End of AG creation (if not exists)
