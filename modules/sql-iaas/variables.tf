@@ -35,6 +35,12 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
+variable "private_endpoint_subnet_id" {
+  description = "Subnet ID for private endpoints (witness storage, etc.). If not provided, uses first subnet from subnet_ids."
+  type        = string
+  default     = ""
+}
+
 variable "availability_zones" {
   description = "For HA deployments: zones to be used. Typically inferred from is_ha. But can be overwritten if the desired SKUs are not available in all zones."
   type        = list(number)
@@ -72,7 +78,7 @@ variable "image_publisher" {
 
 variable "image_offer" {
   type    = string
-  default = "sql2022-ws2022"
+  default = "sql2025-ws2025"
 }
 
 variable "image_sku" {
@@ -142,5 +148,17 @@ variable "user_assigned_identity_ids" {
   description = "List of User Assigned Identity IDs to assign to the VMs."
   type        = list(string)
   default     = []
+}
+
+variable "sql_vm_user_assigned_identity_client_id" {
+  description = "Client ID of the user-assigned managed identity for Azure authentication"
+  type        = string
+  default     = ""
+}
+
+variable "witness_storage_security_control_tag" {
+  description = "Value for the SecurityControl tag on witness storage account to bypass org policy that disables key access."
+  type        = string
+  default     = "ignore"
 }
 

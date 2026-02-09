@@ -38,8 +38,10 @@ jobs:
       ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
       ARM_SKIP_AZURECLI_AUTH: "true"
-      SQL_RG: rg-fnz-poc-sql-se
-      SQL_DR_RG: rg-fnz-poc-sql-dr-swc
+
+      # Resource groups are derived from tfvars (see "Load Resource Groups from tfvars" step)
+      SQL_RG: ""
+      SQL_DR_RG: ""
 
       # Defaults (overridden in "Set Deployment Context" step)
       TF_VAR_FILE: "env/dev.tfvars"
@@ -139,25 +141,26 @@ jobs:
           TFSTATE_RG: ${{ secrets.TFSTATE_RG }}
           TFSTATE_SA: ${{ secrets.TFSTATE_SA }}
           TFSTATE_CONTAINER: ${{ secrets.TFSTATE_CONTAINER }}
-          TFSTATE_KEY: "sqlpoc.sqlserver.tfstate"
         run: |
           set -euo pipefail
 
-          # Use dev-ha state for dev-ha-dr to preserve primary resources
-          STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
+          # HA and HA+DR share the same state file (DR is added to HA, not a separate deployment)
           if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha-dr" ]; then
             STATE_KEY="sqlserver-dev-ha.tfstate"
-            echo "⚠️  Using dev-ha state file for dev-ha-dr preset to preserve Primary infrastructure"
+            BACKEND_CONFIG="env/backend-dev-ha-dr.tfbackend"
+            echo "HA+DR deployment: Using shared HA state file"
+          else
+            STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
+            BACKEND_CONFIG="env/backend-${{ github.event.inputs.deployment_preset }}.tfbackend"
           fi
-
+          
           echo "State file: ${STATE_KEY}"
+          echo "Backend config: ${BACKEND_CONFIG}"
 
           for attempt in 1 2 3; do
             echo "terraform init attempt ${attempt}/3"
             if terraform init -reconfigure -upgrade \
-              -backend-config="resource_group_name=${TFSTATE_RG}" \
-              -backend-config="storage_account_name=${TFSTATE_SA}" \
-              -backend-config="container_name=${TFSTATE_CONTAINER}" \
+              -backend-config="${BACKEND_CONFIG}" \
               -backend-config="key=${STATE_KEY}"; then
               exit 0
             fi
@@ -169,6 +172,21 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
+
+      - name: Load Resource Groups from tfvars
+        run: |
+          set -euo pipefail
+          echo "Loading resource group names from $TF_VAR_FILE"
+          
+          SQL_RG=$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.sql_resource_group_name' | tr -d '"')
+          echo "SQL_RG=${SQL_RG}" >> $GITHUB_ENV
+          echo "Primary SQL RG: ${SQL_RG}"
+          
+          if [ "${IS_DR}" = "true" ]; then
+            SQL_DR_RG=$(terraform console -var-file="$TF_VAR_FILE" <<< 'var.dr_sql_resource_group_name' | tr -d '"')
+            echo "SQL_DR_RG=${SQL_DR_RG}" >> $GITHUB_ENV
+            echo "DR SQL RG: ${SQL_DR_RG}"
+          fi
 
       - name: Import existing SQL IaaS resources (if any)
         run: |
@@ -375,8 +393,10 @@ jobs:
           }
           trap on_term SIGINT SIGTERM
 
-          # Plan is informational; apply runs in two phases for stability.
-          ( terraform plan -input=false -var-file="$TF_VAR_FILE" 2>&1 | tee "$log_file" ) &
+          PLAN_CMD="terraform plan -input=false -var-file=\"$TF_VAR_FILE\" -out=tfplan"
+
+          echo "Plan command: $PLAN_CMD"
+          ( eval "$PLAN_CMD" 2>&1 | tee "$log_file" ) &
           pid=$!
 
           # Heartbeat every 60s so slow AzureRM refresh doesn't look hung.
@@ -550,7 +570,18 @@ jobs:
             tail -n 50 "$log_file" 2>/dev/null || true
           }
           trap on_term SIGINT SIGTERM
-          ( terraform apply -parallelism=1 -auto-approve -var-file="$TF_VAR_FILE" 2>&1 | tee -a "$log_file" ) &
+          
+          # Apply SQL IaaS extension configuration
+          if [ "${IS_DR}" = "true" ]; then
+            echo "DR deployment: Applying PRIMARY + DR SQL IaaS configuration"
+          else
+            echo "PRIMARY deployment: Applying PRIMARY SQL IaaS configuration"
+          fi
+          
+          APPLY_CMD="terraform apply -parallelism=1 -auto-approve -var-file=\"$TF_VAR_FILE\""
+          
+          echo "Apply command: $APPLY_CMD"
+          eval "( $APPLY_CMD 2>&1 | tee -a \"$log_file\" )" &
           pid=$!
           azure_watch_counter=0
           while kill -0 "$pid" 2>/dev/null; do

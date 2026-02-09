@@ -52,15 +52,8 @@ variable "sql_vms" {
     tempdb_disk_size_gb = optional(number)
     tags                = optional(map(string), {})
   }))
-  description = "Map of SQL Server VM configurations. Key is the VM name (max 15 chars). Note: Used only for legacy compat; new sql-iaas module auto-generates names."
-  default = {
-    "sqlpoc-primary" = {
-      private_ip        = "10.10.0.10"
-      subnet_id         = "primary"
-      availability_zone = "1"
-      cluster_ip        = "10.10.0.12"
-    }
-  }
+  description = "Map of SQL Server VM configurations. Key is the VM name (max 15 chars). Note: Used only for legacy compat; new sql-iaas module auto-generates names. IPs must match your network configuration."
+  default     = {}
 }
 
 variable "failover_cluster_sas" {
@@ -200,8 +193,8 @@ variable "image_publisher" {
 
 variable "image_offer" {
   type        = string
-  description = "Image offer (e.g., sql2022-ws2022 for SQL Server 2022 on Windows Server 2022)"
-  default     = "sql2025-ws2022"
+  description = "Image offer (e.g., sql2025-ws2025 for SQL Server 2025 on Windows Server 2025)"
+  default     = "sql2025-ws2025"
 }
 
 variable "image_sku" {
@@ -246,13 +239,6 @@ variable "domain_password" {
   default     = ""
 }
 
-variable "sql_server_iso_url" {
-  type        = string
-  description = "URL to SQL Server Developer Edition ISO (e.g., https://..../SQLServer2022-x64-ENU-Dev.iso)"
-  sensitive   = true
-  default     = ""
-}
-
 variable "sql_server_admin" {
   type        = string
   description = "SQL Server admin username"
@@ -272,16 +258,22 @@ variable "enable_dr" {
   default     = false
 }
 
+variable "deploy_primary" {
+  type        = bool
+  description = "Deploy primary SQL cluster. Set to false when deploying only DR to avoid state conflicts."
+  default     = true
+}
+
 variable "dr_location" {
   type        = string
-  description = "Azure region for DR"
-  default     = "swedencentral"
+  description = "Azure region for DR deployment (should match your DR network region)"
+  default     = ""
 }
 
 variable "dr_sql_resource_group_name" {
   type        = string
-  description = "Resource Group for DR SQL resources"
-  default     = "rg-fnz-poc-sql-dr-swc"
+  description = "Resource Group for DR SQL resources (e.g., rg-<project>-sql-dr-<region>)"
+  default     = ""
 }
 
 # Used to configure DR node to talk to Primary Cluster

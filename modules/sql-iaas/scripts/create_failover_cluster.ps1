@@ -39,19 +39,18 @@ if ($NodeIPs.Count -eq 1 -and $NodeIPs[0] -like "*,*") { $NodeIPs = $NodeIPs[0] 
 if ($ClusterIPs.Count -eq 1 -and $ClusterIPs[0] -like "*,*") { $ClusterIPs = $ClusterIPs[0] -split "," }
 if ($NodeNames.Count -eq 1 -and $NodeNames[0] -like "*,*") { $NodeNames = $NodeNames[0] -split "," }
 
-# Decode cluster admin password from base64 (passed as string to suppress warnings/avoid plain text args)
+# Decode cluster admin password from base64
 $ClusterAdminPassword = ""
 if (-not [string]::IsNullOrWhiteSpace($ClusterAdminPasswordSecure)) {
     try {
         $ClusterAdminPassword = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ClusterAdminPasswordSecure))
     } catch {
-        # Fallback if not valid base64 or conversion failed
         $ClusterAdminPassword = $ClusterAdminPasswordSecure
     }
 }
 
-# Logging levels: DEBUG, INFO, WARN, ERROR
-$script:LogLevel = "DEBUG"  # Set to INFO in production
+# Logging
+$script:LogLevel = "DEBUG"
 
 function Write-Log {
     param(
@@ -66,19 +65,16 @@ function Write-Log {
     }
 }
 
-# Shorthand aliases for logging
 function L([string]$m) { Write-Log -Message $m -Level "INFO" }
 function LD([string]$m) { Write-Log -Message $m -Level "DEBUG" }
 function LW([string]$m) { Write-Log -Message $m -Level "WARN" }
 function LE([string]$m) { Write-Log -Message $m -Level "ERROR" }
 
-# Log script parameters
 LD "ClusterAdminUsername = $ClusterAdminUsername"
 LD "NodeIPs = $($NodeIPs -join ', ')"
 LD "NodeNames = $($NodeNames -join ', ')"
 LD "ClusterIPs = $($ClusterIPs -join ', ')"
 
-# Log DR parameters if provided
 if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
     LD "DR Configuration: PrimaryClusterDNS = $PrimaryClusterDNS"
 }
@@ -116,6 +112,290 @@ function ValidateInputs {
     L "All inputs validated successfully"
 }
 
+function ConfigureVMPrerequisites {
+    L "Configuring VM prerequisites"
+
+    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
+    $domainName = "sqlpoc.local"
+
+    for ($i = 0; $i -lt $NodeIPs.Count; $i++) {
+        $ip = $NodeIPs[$i]
+        $name = $NodeNames[$i]
+        $entry = "$ip`t$name.$domainName`t$name"
+
+        if (-not (Select-String -Path $hostsFile -Pattern $name -Quiet)) {
+            LD "Adding hosts entry: $entry"
+            Add-Content -Path $hostsFile -Value $entry
+        }
+    }
+
+    LD "Setting NV Domain to $domainName"
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\services\Tcpip\Parameters" -Name "NV Domain" -Value $domainName -Force
+
+    LD "Setting LocalAccountTokenFilterPolicy for remote admin"
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "LocalAccountTokenFilterPolicy" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+
+    LD "Configuring ICMP firewall rule"
+    $existingRule = netsh advfirewall firewall show rule name="Allow ICMPv4" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        netsh advfirewall firewall add rule name="Allow ICMPv4" protocol=icmpv4 dir=in action=allow | Out-Null
+    }
+
+    LD "Installing Failover Clustering feature"
+    Import-Module ServerManager
+    $feature = Get-WindowsFeature -Name Failover-Clustering -ErrorAction SilentlyContinue
+    if ($null -eq $feature -or -not $feature.Installed) {
+        Install-WindowsFeature -Name Failover-Clustering -IncludeManagementTools | Out-Null
+        L "Failover Clustering installed"
+    } else {
+        LD "Failover Clustering already installed"
+    }
+
+    LD "Configuring WinRM for Workgroup Auth"
+    Enable-PSRemoting -Force -SkipNetworkProfileCheck -ErrorAction SilentlyContinue | Out-Null
+    Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
+    Restart-Service WinRM
+
+    LD "Creating WinRM Firewall rule for cluster node subnet connectivity"
+    if ($NodeIPs.Count -gt 0) {
+        $ruleName = "Allow_WinRM_Cluster_Nodes"
+        Remove-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
+
+        New-NetFirewallRule -Name $ruleName `
+            -DisplayName "Allow WinRM from Cluster Nodes" `
+            -Direction Inbound `
+            -Action Allow `
+            -Protocol TCP `
+            -LocalPort 5985,5986 `
+            -RemoteAddress $NodeIPs `
+            -Profile Any `
+            -ErrorAction Stop | Out-Null
+        LD "Firewall rule '$ruleName' created for IPs: $($NodeIPs -join ', ')"
+    }
+
+    # Create firewall rule for HADR endpoint (port 5022) and SMB (445)
+    $hadrRuleName = "SQL AG Endpoint 5022"
+    if (-not (Get-NetFirewallRule -DisplayName $hadrRuleName -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName $hadrRuleName `
+            -Direction Inbound -Protocol TCP -LocalPort 5022 `
+            -Action Allow -Profile Any `
+            -Description "Allow SQL Server AG mirroring endpoint" `
+            -ErrorAction Stop | Out-Null
+        LD "Firewall rule '$hadrRuleName' created"
+    }
+
+    $smbRuleName = "Allow SMB for Cert Exchange"
+    if (-not (Get-NetFirewallRule -DisplayName $smbRuleName -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName $smbRuleName `
+            -Direction Inbound -Protocol TCP -LocalPort 445 `
+            -Action Allow -Profile Any -RemoteAddress $NodeIPs `
+            -Description "Allow SMB between cluster nodes for certificate exchange" `
+            -ErrorAction Stop | Out-Null
+        LD "Firewall rule '$smbRuleName' created"
+    }
+
+    L "VM prerequisites configured"
+}
+
+function ConfigureHostsFile {
+    LD "Configuring cluster hosts file entries"
+
+    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
+    $hostsContent = Get-Content $hostsFile -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $hostsContent) { $hostsContent = "" }
+
+    foreach ($clusterIP in $ClusterIPs) {
+        $line = "$clusterIP`t$ClusterName"
+        if ($hostsContent -notmatch [regex]::Escape($clusterIP)) {
+            LD "Adding hosts entry: $line"
+            Add-Content -Path $hostsFile -Value $line -Force
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP) -and -not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
+        $line = "$PrimaryClusterIP`t$PrimaryClusterDNS"
+        if ($hostsContent -notmatch [regex]::Escape($PrimaryClusterIP)) {
+            LD "Adding DR hosts entry: $line"
+            Add-Content -Path $hostsFile -Value $line -Force
+        }
+    }
+
+    ipconfig /flushdns | Out-Null
+    LD "Hosts file configured, DNS cache flushed"
+}
+
+function ValidateNodeConnectivity {
+    L "Validating network connectivity"
+    $NodeNames | ForEach-Object {
+        if (-not (Test-Connection -ComputerName $_ -Count 1 -Quiet -ErrorAction SilentlyContinue)) {
+            LE "Cannot reach node: $_"
+            throw "Cannot reach $_"
+        }
+        LD "Node $_ is reachable"
+    }
+    L "All nodes are reachable"
+}
+
+function CreateClusterAdminLocal {
+    param(
+        [string]$Username,
+        [string]$Password
+    )
+
+    L "Creating local cluster admin user '$Username' on $env:COMPUTERNAME"
+
+    try {
+        $existingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
+        if ($existingUser) {
+            LD "User '$Username' already exists locally"
+            $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+            Set-LocalUser -Name $Username -Password $securePassword -ErrorAction Stop
+        } else {
+            $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+            New-LocalUser -Name $Username -Password $securePassword -FullName "Cluster Admin User" -Description "User for failover cluster operations" -PasswordNeverExpires -ErrorAction Stop
+            L "User '$Username' created locally"
+        }
+
+        $adminGroup = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*\$Username" }
+        if (-not $adminGroup) {
+            Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
+            L "User '$Username' added to Administrators group"
+        } else {
+            LD "User '$Username' already in Administrators group"
+        }
+        return $true
+    } catch {
+        LE "Failed to create/update local admin user: $_"
+        throw
+    }
+}
+
+function WaitForOtherNodes {
+    param(
+        [string[]]$Nodes,
+        [string[]]$NodeIPs,
+        [string]$Username,
+        [string]$Password
+    )
+
+    $localName = $env:COMPUTERNAME
+    $otherNodes = $Nodes | Where-Object { $_ -ne $localName }
+
+    if ($otherNodes.Count -eq 0) { return }
+
+    L "Waiting for other nodes to be ready: $($otherNodes -join ', ')"
+
+    $nodeIpMap = @{}
+    for ($i = 0; $i -lt $Nodes.Count; $i++) {
+        if ($i -lt $NodeIPs.Count) {
+            $nodeIpMap[$Nodes[$i]] = $NodeIPs[$i]
+        }
+    }
+
+    $securePwd = ConvertTo-SecureString $Password -AsPlainText -Force
+
+    foreach ($node in $otherNodes) {
+        $ready = $false
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $lastError = $null
+
+        $target = if ($nodeIpMap.ContainsKey($node)) { $nodeIpMap[$node] } else { $node }
+        LD "Checking connectivity to node '$node' via target '$target'"
+
+        while ($sw.Elapsed.TotalMinutes -lt 10) {
+            try {
+                $cred = New-Object System.Management.Automation.PSCredential("$node\$Username", $securePwd)
+                $res = Invoke-Command -ComputerName $target -Credential $cred -ScriptBlock { $env:COMPUTERNAME } -ErrorAction Stop
+
+                if ($res -eq $node) {
+                    LD "Node $node is ready and accessible with cluster admin credentials"
+                    $ready = $true
+                    break
+                }
+            } catch {
+                $lastError = $_
+                if ([int]$sw.Elapsed.TotalSeconds % 60 -lt 15) {
+                     Write-Host "Waiting for $node ($target)... Last error: $($_.Exception.Message)"
+                }
+            }
+            Start-Sleep -Seconds 15
+        }
+
+        if (-not $ready) {
+            $errMsg = "Timeout waiting for node $node ($target). Last error: $($lastError | Out-String)"
+            LE $errMsg
+            throw $errMsg
+        }
+    }
+}
+
+function EnableSqlAlwaysOn {
+    L "Enabling SQL Server Always On"
+
+    # Check if already enabled
+    try {
+        Import-Module SQLPS -DisableNameChecking -ErrorAction SilentlyContinue 2>$null
+        $hadrEnabled = Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS HadrEnabled" -ErrorAction SilentlyContinue
+        if ($hadrEnabled -and $hadrEnabled.HadrEnabled -eq 1) {
+            L "Always On is already enabled"
+            return
+        }
+    } catch {
+        LD "Could not check current HADR status: $_"
+    }
+
+    # Method 1: Try Enable-SqlAlwaysOn from SQLPS module (built-in)
+    try {
+        L "Attempting to enable Always On via Enable-SqlAlwaysOn (SQLPS)..."
+        Import-Module SQLPS -DisableNameChecking -ErrorAction SilentlyContinue 2>$null
+        Enable-SqlAlwaysOn -ServerInstance localhost -Force -NoServiceRestart -ErrorAction Stop
+        L "Always On enabled via SQLPS - restarting SQL Server..."
+        Restart-Service -Name MSSQLSERVER -Force -ErrorAction Stop
+        Start-Sleep -Seconds 30
+        L "Always On enabled on $env:COMPUTERNAME"
+        return
+    } catch {
+        LW "Enable-SqlAlwaysOn (SQLPS) failed: $_"
+    }
+
+    # Method 2: dbatools
+    try {
+        L "Attempting to enable Always On via dbatools..."
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers -ErrorAction SilentlyContinue | Out-Null
+        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+        Install-Module dbatools -Force -Scope AllUsers -AllowClobber -SkipPublisherCheck -ErrorAction SilentlyContinue
+        Import-Module dbatools -Force
+        Enable-DbaAgHadr -SqlInstance $env:COMPUTERNAME -Force -Confirm:$false
+        Start-Sleep -Seconds 30
+        L "Always On enabled on $env:COMPUTERNAME (via dbatools)"
+        return
+    } catch {
+        LW "dbatools method failed: $_"
+    }
+
+    # Method 3: Direct registry
+    try {
+        L "Attempting to enable Always On via registry..."
+        $sqlInstances = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL" -ErrorAction Stop
+        $instanceName = $sqlInstances.MSSQLSERVER
+        if (-not $instanceName) { throw "Could not find SQL Server instance name in registry" }
+
+        $hadrPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instanceName\MSSQLServer\HADR"
+        if (-not (Test-Path $hadrPath)) { New-Item -Path $hadrPath -Force | Out-Null }
+        Set-ItemProperty -Path $hadrPath -Name "HADR_Enabled" -Value 1 -Type DWord -ErrorAction Stop
+        L "Registry HADR_Enabled set to 1 - restarting SQL Server..."
+        Restart-Service -Name MSSQLSERVER -Force -ErrorAction Stop
+        Start-Sleep -Seconds 30
+        L "Always On enabled on $env:COMPUTERNAME (via registry)"
+        return
+    } catch {
+        LW "Registry method failed: $_"
+    }
+
+    LE "All methods to enable Always On failed"
+    throw "Failed to enable Always On on $env:COMPUTERNAME"
+}
+
 function CheckClusterExists {
     param([string]$Name)
 
@@ -137,156 +417,6 @@ function CheckClusterExists {
     return $false
 }
 
-function ValidateNodeConnectivity {
-    L "Validating network connectivity (waiting for other nodes to be up and firewall rules applied)"
-    
-    # Wait up to 20 minutes for checks to pass
-    $timeout = New-TimeSpan -Minutes 20
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
-
-    foreach ($node in $NodeNames) {
-        if ($node -eq $env:COMPUTERNAME) { continue }
-
-        $connected = $false
-        while ($sw.Elapsed -lt $timeout) {
-            if (Test-Connection -ComputerName $node -Count 1 -Quiet -ErrorAction SilentlyContinue) {
-                LD "Node $node is reachable (ICMP)"
-                $connected = $true
-                break
-            }
-            
-            if ($sw.Elapsed.Seconds % 30 -eq 0) {
-                 LD "Waiting for node $node to be reachable (ICMP)... ($([math]::Round($sw.Elapsed.TotalSeconds))s elapsed)"
-            }
-            Start-Sleep -Seconds 5
-        }
-
-        if (-not $connected) {
-            LE "Timeout waiting for ping response from node: $node"
-            throw "Cannot reach node: $node (ICMP timeout)"
-        }
-    }
-    L "All nodes are reachable"
-}
-
-function WaitForOtherNodes {
-    param(
-        [string[]]$Nodes,
-        [string[]]$NodeIPs,
-        [string]$Username,
-        [string]$Password
-    )
-
-    $localName = $env:COMPUTERNAME
-    $otherNodes = $Nodes | Where-Object { $_ -ne $localName }
-
-    if ($otherNodes.Count -eq 0) { return }
-
-    L "Waiting for other nodes to be ready: $($otherNodes -join ', ')"
-
-    # Map Names to IPs for connection reliability
-    $nodeIpMap = @{}
-    for ($i = 0; $i -lt $Nodes.Count; $i++) {
-        if ($i -lt $NodeIPs.Count) {
-            $nodeIpMap[$Nodes[$i]] = $NodeIPs[$i]
-        }
-    }
-
-    $securePwd = ConvertTo-SecureString $Password -AsPlainText -Force
-
-    foreach ($node in $otherNodes) {
-        $ready = $false
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $lastError = $null
-
-        # Use IP if available to avoid DNS/Kerberos issues in workgroup
-        $target = $node
-        if ($nodeIpMap.ContainsKey($node)) {
-            $target = $nodeIpMap[$node]
-        }
-        LD "Checking connectivity to node '$node' via target '$target'"
-
-        while ($sw.Elapsed.TotalMinutes -lt 10) {
-            try {
-                # We use the ClusterAdmin credentials to verify the user exists on the remote node and remote remoting is working
-                $cred = New-Object System.Management.Automation.PSCredential("$node\$Username", $securePwd)
-
-                # Check if we can run a command on the remote node
-                $res = Invoke-Command -ComputerName $target -Credential $cred -ScriptBlock { $env:COMPUTERNAME } -ErrorAction Stop
-
-                if ($res -eq $node) {
-                    LD "Node $node is ready and accessible with cluster admin credentials"
-                    $ready = $true
-                    break
-                }
-            } catch {
-                $lastError = $_
-                # Log periodically to console to aid troubleshooting in Azure
-                if ([int]$sw.Elapsed.TotalSeconds % 60 -lt 15) {
-                     Write-Host "Waiting for $node ($target)... Last error: $($_.Exception.Message)"
-                }
-            }
-            Start-Sleep -Seconds 15
-        }
-
-        if (-not $ready) {
-            $errMsg = "Timeout waiting for node $node ($target). Last error: $($lastError | Out-String)"
-            LE $errMsg
-            throw $errMsg
-        }
-    }
-}
-
-
-function EnableSqlAlwaysOn {
-    L "Enabling SQL Server Always On"
-
-    try {
-        # Install NuGet and dbatools with timeout (requires internet access)
-        LD "Installing NuGet provider and dbatools (timeout: 2 minutes)"
-        
-        $job = Start-Job -ScriptBlock {
-            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers -ErrorAction Stop | Out-Null
-            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction Stop
-            Install-Module dbatools -Force -Scope AllUsers -AllowClobber -SkipPublisherCheck -ErrorAction Stop
-        }
-        
-        $completed = Wait-Job $job -Timeout 120
-        if ($null -eq $completed) {
-            Stop-Job $job
-            Remove-Job $job -Force
-            LW "NuGet/dbatools installation timed out after 2 minutes"
-            LW "This typically means VMs don't have internet access to PowerShell Gallery"
-            LW "Always On can be enabled manually later using: Enable-SqlAlwaysOn -ServerName localhost -Force"
-            return $false
-        }
-        
-        $jobError = $job.ChildJobs[0].Error
-        Remove-Job $job -Force
-        
-        if ($jobError) {
-            LW "Failed to install dbatools: $($jobError | Out-String)"
-            LW "Always On can be enabled manually later using: Enable-SqlAlwaysOn -ServerName localhost -Force"
-            return $false
-        }
-
-        Import-Module dbatools -Force -ErrorAction Stop
-
-        LD "Enabling Always On via dbatools"
-        Enable-DbaAgHadr -SqlInstance $env:COMPUTERNAME -Force -Confirm:$false
-
-        LD "Waiting 30s for SQL Server restart"
-        Start-Sleep -Seconds 30
-        L "Always On enabled on $env:COMPUTERNAME"
-        return $true
-    } catch {
-        LW "Failed to enable Always On: $_"
-        LW "Always On can be enabled manually later using: Enable-SqlAlwaysOn -ServerName localhost -Force"
-        $_ | Out-File -FilePath $err -Append
-        return $false
-    }
-}
-
 function CreateFailoverCluster {
     L "Creating failover cluster '$ClusterName'"
 
@@ -306,9 +436,8 @@ function CreateFailoverCluster {
     }
 
     $fullUsername = "$env:COMPUTERNAME\$ClusterAdminUsername"
-    LD "Using credentials: $fullUsername)"
+    LD "Using credentials: $fullUsername"
 
-    # Create cluster script that will be executed by scheduled task
     $clusterScript = "$scriptDir\cluster-startup.ps1"
     @"
 `$log = '$scriptDir\cluster-startup.log'
@@ -431,6 +560,25 @@ function ConfigureCloudWitness {
         }
 
         LD "Storage account: $WitnessStorageAccountName"
+
+        # Validate storage account key
+        if ([string]::IsNullOrWhiteSpace($witnessKey) -or $witnessKey.Length -lt 20) {
+            LE "Storage account key is invalid or empty"
+            throw "Storage account key access validation failed"
+        }
+
+        # Wait for private endpoint DNS propagation
+        L "Waiting 60s for private endpoint DNS to stabilize"
+        Start-Sleep -Seconds 60
+
+        $fqdn = "$WitnessStorageAccountName.blob.core.windows.net"
+        $resolved = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -like "10.*" }
+        if ($resolved) {
+            LD "DNS resolved to private IP: $($resolved.IPAddress)"
+        } else {
+            LW "DNS did not resolve to private IP, Cloud Witness may fail"
+        }
+
         Set-ClusterQuorum -CloudWitness -AccountName $WitnessStorageAccountName -AccessKey $witnessKey -ErrorAction Stop
 
         L "Cloud Witness configured"
@@ -446,15 +594,20 @@ function Main {
     L "Host: $env:COMPUTERNAME | Cluster: $ClusterName"
 
     ValidateInputs
-    # VM Prerequisites and Hosts files are now configured in disk_setup.ps1
-    # We still validate connectivity explicitly
+    ConfigureVMPrerequisites
+    ConfigureHostsFile
     ValidateNodeConnectivity
 
+    # Create cluster admin on ALL nodes
+    if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
+        CreateClusterAdminLocal -Username $ClusterAdminUsername -Password $ClusterAdminPassword
+    }
+
+    # Enable Always On on ALL nodes (before cluster creation, matching colleague's flow)
     EnableSqlAlwaysOn
 
-    # We designate the first node in NodeNames as the "Primary" which performs clustering
+    # Secondary nodes: done after Always On is enabled
     $primaryNode = $NodeNames[0]
-
     if ($env:COMPUTERNAME -ne $primaryNode) {
         L "Secondary node setup completed"
         return
@@ -467,7 +620,6 @@ function Main {
 
     if (CheckClusterExists -Name $ClusterName) {
         DisplayClusterInfo -Name $ClusterName
-        # Even if exists, we might need to do DR config tasks here in the future
         return
     }
 

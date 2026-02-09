@@ -3,8 +3,8 @@
 #
 # REQUIRED: Run this script AFTER deploying the PRIMARY Key Vault (terraform-ops, preset: dev)
 #
-# Why needed: The Terraform UAMI needs "Key Vault Secrets Officer" to create and manage 
-# secrets. The UAMI cannot grant itself this role (would require "User Access Administrator" 
+# Why needed: The Terraform UAMI needs "Key Vault Secrets Officer" to create and manage
+# secrets. The UAMI cannot grant itself this role (would require "User Access Administrator"
 # privilege, which is a security risk). This script grants the access manually for PRIMARY.
 # For DR, the workflow automatically grants access via Azure CLI.
 #

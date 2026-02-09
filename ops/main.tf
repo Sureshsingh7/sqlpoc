@@ -104,7 +104,7 @@ module "kv_private_dns" {
   source  = "Azure/avm-res-network-privatednszone/azurerm"
   version = "0.4.4"
 
-  domain_name = "privatelink.vaultcore.azure.net"
+  domain_name = var.kv_private_dns_zone
   parent_id   = data.azurerm_resource_group.ops.id
   tags        = local.tags
 
@@ -141,9 +141,12 @@ module "ops_kv" {
   sku_name                      = "standard"
   purge_protection_enabled      = true
   soft_delete_retention_days    = 30
-  public_network_access_enabled = true
-  network_acls                  = null
-  tags                          = local.tags
+  public_network_access_enabled = false
+  network_acls = {
+    bypass         = "AzureServices"
+    default_action = "Deny"
+  }
+  tags = local.tags
 
   # Note: Terraform UAMI "Key Vault Secrets Officer" must be granted manually/via workflow
   # UAMI cannot grant its own role assignments without User Access Administrator privilege
@@ -187,9 +190,12 @@ module "ops_kv_dr" {
   sku_name                      = "standard"
   purge_protection_enabled      = true
   soft_delete_retention_days    = 30
-  public_network_access_enabled = true
-  network_acls                  = null
-  tags                          = merge(local.tags, { environment = "dr" })
+  public_network_access_enabled = false
+  network_acls = {
+    bypass         = "AzureServices"
+    default_action = "Deny"
+  }
+  tags = merge(local.tags, { environment = "dr" })
 
   # Note: Terraform UAMI "Key Vault Secrets Officer" must be granted manually/via workflow
   # UAMI cannot grant its own role assignments without User Access Administrator privilege
@@ -321,7 +327,7 @@ module "jumpbox_vm" {
   source_image_reference = {
     publisher = "MicrosoftWindowsServer"
     offer     = "WindowsServer"
-    sku       = "2022-datacenter-g2"
+    sku       = "2025-datacenter-g2"
     version   = "latest"
   }
 

@@ -18,6 +18,7 @@ locals {
 }
 
 module "sql_cluster" {
+  count  = var.deploy_primary ? 1 : 0
   source = "../modules/sql-iaas"
 
   resource_group_name = var.sql_resource_group_name
@@ -30,14 +31,17 @@ module "sql_cluster" {
   vm_sku = var.vm_size
 
   subnet_ids = [
-    data.terraform_remote_state.network.outputs.sql_subnet_sql1_id
+    data.terraform_remote_state.network.outputs.sql_subnet_sql1_id,
+    data.terraform_remote_state.network.outputs.sql_subnet_sql2_id
   ]
-  vnet_id = data.terraform_remote_state.network.outputs.sql_vnet_id
+  private_endpoint_subnet_id = data.terraform_remote_state.network.outputs.pep_subnet_id
+  vnet_id                    = data.terraform_remote_state.network.outputs.sql_vnet_id
 
-  sql_admin_username           = var.sql_admin_username
-  sql_vm_admin_password        = local.sql_vm_admin_password
-  cluster_local_admin_username = var.cluster_local_admin_username
-  user_assigned_identity_ids   = var.sql_vm_user_assigned_identity_ids
+  sql_admin_username                      = var.sql_admin_username
+  sql_vm_admin_password                   = local.sql_vm_admin_password
+  cluster_local_admin_username            = var.cluster_local_admin_username
+  user_assigned_identity_ids              = var.sql_vm_user_assigned_identity_ids
+  sql_vm_user_assigned_identity_client_id = var.sql_vm_user_assigned_identity_client_id
 
   # Disk configuration
   data_disk_size_gb   = var.data_disk_size_gb
@@ -53,8 +57,9 @@ module "sql_cluster" {
   image_sku       = var.image_sku
   image_version   = var.image_version
 
-  failover_cluster_name = var.failover_cluster_name
-  dns_zone_name         = "sql.internal"
+  failover_cluster_name                = var.failover_cluster_name
+  dns_zone_name                        = "sql.internal"
+  witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
   tags = var.tags
 }
@@ -70,19 +75,25 @@ module "sql_cluster_dr" {
   is_ha = true
   is_dr = true
 
-  dr_primary_nodes = module.sql_cluster.sql_vm_names
+  # Get primary nodes from either the primary module (if deploying both) or remote state (if DR-only)
+  dr_primary_nodes = var.deploy_primary ? module.sql_cluster[0].sql_vm_names : (
+    length(data.terraform_remote_state.primary_ha) > 0 ? keys(data.terraform_remote_state.primary_ha[0].outputs.sql_vm_ids) : []
+  )
 
   vm_sku = var.vm_size
 
   subnet_ids = [
-    data.terraform_remote_state.network.outputs.dr_sql_subnet_sql1_id
+    data.terraform_remote_state.network.outputs.dr_sql_subnet_sql1_id,
+    data.terraform_remote_state.network.outputs.dr_sql_subnet_sql2_id
   ]
-  vnet_id = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
+  private_endpoint_subnet_id = data.terraform_remote_state.network.outputs.dr_pep_subnet_id
+  vnet_id                    = data.terraform_remote_state.network.outputs.dr_sql_vnet_id
 
-  sql_admin_username           = var.sql_admin_username
-  sql_vm_admin_password        = local.dr_sql_vm_admin_password
-  cluster_local_admin_username = local.dr_cluster_local_admin_username
-  user_assigned_identity_ids   = var.sql_vm_user_assigned_identity_ids
+  sql_admin_username                      = var.sql_admin_username
+  sql_vm_admin_password                   = local.dr_sql_vm_admin_password
+  cluster_local_admin_username            = local.dr_cluster_local_admin_username
+  user_assigned_identity_ids              = var.sql_vm_user_assigned_identity_ids
+  sql_vm_user_assigned_identity_client_id = var.sql_vm_user_assigned_identity_client_id
 
   # Disk configuration
   data_disk_size_gb   = var.data_disk_size_gb
@@ -98,11 +109,15 @@ module "sql_cluster_dr" {
   image_sku       = var.image_sku
   image_version   = var.image_version
 
-  failover_cluster_name = "${var.failover_cluster_name}-dr"
-  dns_zone_name         = "sql.internal"
+  failover_cluster_name                = "${var.failover_cluster_name}-dr"
+  dns_zone_name                        = "sql.internal"
+  witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
   tags = merge(
-    { for k, v in var.tags : k => v if lower(k) != "environment" },
-    { environment = "dr" }
+    var.tags,
+    {
+      environment = "dr"
+      dr_enabled  = "true"
+    }
   )
 }

@@ -96,3 +96,9 @@ variable "dr_resource_group_name" {
   type        = string
   default     = ""
 }
+
+variable "kv_private_dns_zone" {
+  type        = string
+  description = "Private DNS Zone for Key Vault (e.g., privatelink.vaultcore.azure.net)"
+  default     = "privatelink.vaultcore.azure.net"
+}

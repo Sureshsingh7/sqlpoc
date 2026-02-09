@@ -76,16 +76,16 @@ module "witness_storage" {
   shared_access_key_enabled       = true
   allow_nested_items_to_be_public = false
   min_tls_version                 = "TLS1_2"
-  public_network_access_enabled   = true
+  public_network_access_enabled   = false
 
   tags = merge(var.tags, {
-    SecurityControl = "Normal"
+    SecurityControl = var.witness_storage_security_control_tag
   })
 
   private_endpoints = {
     witness_blob = {
       name                          = "${var.name_prefix}-witness-pe"
-      subnet_resource_id            = var.subnet_ids[0]
+      subnet_resource_id            = var.private_endpoint_subnet_id != "" ? var.private_endpoint_subnet_id : var.subnet_ids[0]
       subresource_name              = "blob"
       private_dns_zone_resource_ids = [module.witness_blob_dns[0].resource_id]
     }
@@ -200,6 +200,7 @@ resource "azurerm_mssql_virtual_machine" "sql_vm" {
 
 # --- Load Balancer (Internal) ---
 # Only for HA deployments
+# VNN configuration requires 1 frontend IP per subnet
 resource "azurerm_lb" "sql_lb" {
   count               = var.is_ha ? 1 : 0
   name                = "${var.name_prefix}-ilb"
@@ -207,11 +208,21 @@ resource "azurerm_lb" "sql_lb" {
   resource_group_name = var.resource_group_name
   sku                 = "Standard"
 
+  # Frontend IP for first subnet
   frontend_ip_configuration {
-    name                          = "LoadBalancerFrontEnd"
+    name                          = "LoadBalancerFrontEnd-Subnet1"
     subnet_id                     = var.subnet_ids[0]
     private_ip_address_allocation = "Dynamic"
-    # Or Static if user provides an IP? For now Dynamic is safer for module portability.
+  }
+
+  # Frontend IP for second subnet (for VNN listener)
+  dynamic "frontend_ip_configuration" {
+    for_each = length(var.subnet_ids) > 1 ? [1] : []
+    content {
+      name                          = "LoadBalancerFrontEnd-Subnet2"
+      subnet_id                     = var.subnet_ids[1]
+      private_ip_address_allocation = "Dynamic"
+    }
   }
 
   tags = var.tags
@@ -241,17 +252,58 @@ resource "azurerm_lb_probe" "sql_probe" {
   number_of_probes    = 2
 }
 
-resource "azurerm_lb_rule" "sql_rule" {
+# Load balancing rules for SQL port 1433 on both frontend IPs
+resource "azurerm_lb_rule" "sql_rule_1433_subnet1" {
   count                          = var.is_ha ? 1 : 0
   loadbalancer_id                = azurerm_lb.sql_lb[0].id
-  name                           = "SqlListenerRule"
+  name                           = "SqlListener-1433-Subnet1"
   protocol                       = "Tcp"
   frontend_port                  = 1433
   backend_port                   = 1433
-  frontend_ip_configuration_name = "LoadBalancerFrontEnd"
+  frontend_ip_configuration_name = "LoadBalancerFrontEnd-Subnet1"
   probe_id                       = azurerm_lb_probe.sql_probe[0].id
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.sql_lb_backend[0].id]
-  enable_floating_ip             = true
+  floating_ip_enabled            = true
+}
+
+resource "azurerm_lb_rule" "sql_rule_1433_subnet2" {
+  count                          = var.is_ha && length(var.subnet_ids) > 1 ? 1 : 0
+  loadbalancer_id                = azurerm_lb.sql_lb[0].id
+  name                           = "SqlListener-1433-Subnet2"
+  protocol                       = "Tcp"
+  frontend_port                  = 1433
+  backend_port                   = 1433
+  frontend_ip_configuration_name = "LoadBalancerFrontEnd-Subnet2"
+  probe_id                       = azurerm_lb_probe.sql_probe[0].id
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.sql_lb_backend[0].id]
+  floating_ip_enabled            = true
+}
+
+# Load balancing rules for AlwaysOn port 5022 on both frontend IPs
+resource "azurerm_lb_rule" "sql_rule_5022_subnet1" {
+  count                          = var.is_ha ? 1 : 0
+  loadbalancer_id                = azurerm_lb.sql_lb[0].id
+  name                           = "AlwaysOn-5022-Subnet1"
+  protocol                       = "Tcp"
+  frontend_port                  = 5022
+  backend_port                   = 5022
+  frontend_ip_configuration_name = "LoadBalancerFrontEnd-Subnet1"
+  probe_id                       = azurerm_lb_probe.sql_probe[0].id
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.sql_lb_backend[0].id]
+  floating_ip_enabled            = true
+}
+
+resource "azurerm_lb_rule" "sql_rule_5022_subnet2" {
+  count                          = var.is_ha && length(var.subnet_ids) > 1 ? 1 : 0
+  loadbalancer_id                = azurerm_lb.sql_lb[0].id
+  name                           = "AlwaysOn-5022-Subnet2"
+  protocol                       = "Tcp"
+  frontend_port                  = 5022
+  backend_port                   = 5022
+  frontend_ip_configuration_name = "LoadBalancerFrontEnd-Subnet2"
+  probe_id                       = azurerm_lb_probe.sql_probe[0].id
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.sql_lb_backend[0].id]
+  floating_ip_enabled            = true
 }
 
 # --- Private DNS Zone for Cluster VNN ---
@@ -273,13 +325,31 @@ module "sql_dns" {
   }
 }
 
+# DNS A record for cluster listener (VNN) points to both frontend IPs
 resource "azurerm_private_dns_a_record" "cluster_listener" {
   count               = var.is_ha ? 1 : 0
   name                = var.failover_cluster_name
-  zone_name           = module.sql_dns[0].name
+  zone_name           = var.dns_zone_name
   resource_group_name = var.resource_group_name
   ttl                 = 300
-  records             = [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
+  records = length(var.subnet_ids) > 1 ? [
+    azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+    azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+  ] : [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
+
+  depends_on = [module.sql_dns]
+}
+
+# DNS A records for individual VMs (for inter-node communication)
+resource "azurerm_private_dns_a_record" "sql_vm" {
+  for_each            = var.is_ha ? local.vm_map : {}
+  name                = each.key
+  zone_name           = var.dns_zone_name
+  resource_group_name = var.resource_group_name
+  ttl                 = 300
+  records             = [module.sql_vm[each.key].virtual_machine_azurerm.private_ip_address]
+
+  depends_on = [module.sql_dns]
 }
 
 
@@ -312,8 +382,11 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
   }
 
   parameter {
-    name  = "ClusterIPs"
-    value = var.is_ha ? azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address : ""
+    name = "ClusterIPs"
+    value = var.is_ha ? (length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address) : ""
   }
 
   parameter {
@@ -384,8 +457,11 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
   }
 
   parameter {
-    name  = "ClusterIPs"
-    value = azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
+    name = "ClusterIPs"
+    value = length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
   }
 
   timeouts {
@@ -394,5 +470,140 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
     delete = "30m"
   }
 
-  tags = var.tags
+  tags = merge(var.tags, {
+    script_hash = md5(file("${path.module}/scripts/create_failover_cluster.ps1"))
+  })
 }
+
+# HADR Endpoint Configuration (runs on all nodes)
+# Uses SMB (UNC paths) for certificate exchange between nodes
+resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
+  for_each = var.is_ha ? local.vm_map : {}
+
+  name               = "hadr-endpoint-setup-v14"
+  location           = var.location
+  virtual_machine_id = module.sql_vm[each.key].resource_id
+  depends_on         = [azurerm_virtual_machine_run_command.cluster_setup]
+
+  source {
+    script = file("${path.module}/scripts/configure_hadr_endpoints.ps1")
+  }
+
+  parameter {
+    name  = "AllNodeNames"
+    value = join(",", local.vm_names)
+  }
+
+  parameter {
+    name  = "CurrentNodeName"
+    value = each.key
+  }
+
+  parameter {
+    name  = "EndpointPort"
+    value = "5022"
+  }
+
+  parameter {
+    name  = "SqlAdminUsername"
+    value = var.sql_admin_username
+  }
+
+  protected_parameter {
+    name  = "SqlAdminPassword"
+    value = var.sql_vm_admin_password
+  }
+
+  parameter {
+    name  = "ClusterAdminUsername"
+    value = var.cluster_local_admin_username
+  }
+
+  protected_parameter {
+    name  = "ClusterAdminPassword"
+    value = var.sql_vm_admin_password
+  }
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "10m"
+  }
+
+  tags = merge(var.tags, {
+    script_hash = md5(file("${path.module}/scripts/configure_hadr_endpoints.ps1"))
+  })
+}
+
+# Availability Group Setup (only on primary replica)
+resource "azurerm_virtual_machine_run_command" "ag_setup" {
+  for_each = var.is_ha ? { for k, v in local.vm_map : k => v if k == local.vm_names[0] } : {}
+
+  name               = "availability-group-setup-v13"
+  location           = var.location
+  virtual_machine_id = module.sql_vm[each.key].resource_id
+  depends_on         = [azurerm_virtual_machine_run_command.hadr_endpoint_setup]
+
+  source {
+    script = file("${path.module}/scripts/create_availability_group.ps1")
+  }
+
+  parameter {
+    name  = "AGName"
+    value = "${var.name_prefix}-AG"
+  }
+
+  parameter {
+    name  = "ListenerName"
+    value = "${var.name_prefix}-listener"
+  }
+
+  parameter {
+    name = "ListenerIPs"
+    value = length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
+  }
+
+  parameter {
+    name  = "PrimaryReplica"
+    value = local.vm_names[0]
+  }
+
+  parameter {
+    name  = "SecondaryReplicas"
+    value = join(",", slice(local.vm_names, 1, length(local.vm_names)))
+  }
+
+  parameter {
+    name  = "ListenerPort"
+    value = "1433"
+  }
+
+  parameter {
+    name  = "ProbePort"
+    value = "59999"
+  }
+
+  parameter {
+    name  = "SqlAdminUsername"
+    value = var.sql_admin_username
+  }
+
+  parameter {
+    name  = "SqlAdminPassword"
+    value = var.sql_vm_admin_password
+  }
+
+  timeouts {
+    create = "60m"
+    update = "60m"
+    delete = "30m"
+  }
+
+  tags = merge(var.tags, {
+    script_hash = md5(file("${path.module}/scripts/create_availability_group.ps1"))
+  })
+}
+
