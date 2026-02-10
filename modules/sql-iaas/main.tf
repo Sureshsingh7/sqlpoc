@@ -394,7 +394,7 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
     value = var.is_ha ? var.cluster_local_admin_username : ""
   }
 
-  protected_parameter {
+  parameter {
     name  = "ClusterAdminPasswordSecure"
     value = var.is_ha ? base64encode(var.sql_vm_admin_password) : ""
   }
@@ -420,12 +420,15 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
     script = file("${path.module}/scripts/create_failover_cluster.ps1")
   }
 
-  protected_parameter {
+  # NOTE: These are base64-encoded and passed as regular parameters because
+  # protected_parameter values are not persisted in state and are not reliably
+  # re-delivered on run command updates (e.g. after import).
+  parameter {
     name  = "ClusterAdminPasswordSecure"
     value = base64encode(var.sql_vm_admin_password)
   }
 
-  protected_parameter {
+  parameter {
     name  = "WitnessStorageKeyBase64"
     value = base64encode(module.witness_storage[0].resource.primary_access_key)
   }
@@ -509,7 +512,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
     value = var.sql_admin_username
   }
 
-  protected_parameter {
+  parameter {
     name  = "SqlAdminPassword"
     value = var.sql_vm_admin_password
   }
@@ -519,7 +522,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
     value = var.cluster_local_admin_username
   }
 
-  protected_parameter {
+  parameter {
     name  = "ClusterAdminPassword"
     value = var.sql_vm_admin_password
   }
