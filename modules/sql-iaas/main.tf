@@ -332,7 +332,7 @@ resource "azurerm_private_dns_a_record" "cluster_listener" {
   zone_name           = var.dns_zone_name
   resource_group_name = var.resource_group_name
   ttl                 = 300
-  records = azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address
+  records = compact(azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address)
 
   depends_on = [module.sql_dns]
 }
@@ -380,7 +380,7 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
 
   parameter {
     name = "ClusterIPs"
-    value = var.is_ha ? join(",", azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address) : ""
+    value = var.is_ha ? join(",", compact(azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address)) : ""
   }
 
   parameter {
@@ -452,7 +452,7 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
 
   parameter {
     name = "ClusterIPs"
-    value = join(",", azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address)
+    value = join(",", compact(azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address))
   }
 
   timeouts {
@@ -551,7 +551,7 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
 
   parameter {
     name = "ListenerIPs"
-    value = join(",", azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address)
+    value = join(",", compact(azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address))
   }
 
   parameter {

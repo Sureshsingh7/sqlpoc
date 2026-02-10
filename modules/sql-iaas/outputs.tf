@@ -15,7 +15,7 @@ output "sql_vm_ips" {
 
 output "load_balancer_ip" {
   description = "Frontend IP(s) of the Internal Load Balancer (Listener IP). Returns first IP for single subnet, or comma-separated IPs for multi-subnet VNN."
-  value = var.is_ha ? join(",", azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address) : null
+  value = var.is_ha ? join(",", compact(azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address)) : null
 }
 
 output "cluster_name" {
