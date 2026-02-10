@@ -332,7 +332,10 @@ resource "azurerm_private_dns_a_record" "cluster_listener" {
   zone_name           = var.dns_zone_name
   resource_group_name = var.resource_group_name
   ttl                 = 300
-  records = compact(azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address)
+  records = length(var.subnet_ids) > 1 ? [
+    azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+    azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+  ] : [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
 
   depends_on = [module.sql_dns]
 }
@@ -380,7 +383,10 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
 
   parameter {
     name = "ClusterIPs"
-    value = var.is_ha ? join(",", compact(azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address)) : ""
+    value = var.is_ha ? (length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address) : ""
   }
 
   parameter {
@@ -452,7 +458,10 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
 
   parameter {
     name = "ClusterIPs"
-    value = join(",", compact(azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address))
+    value = length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
   }
 
   timeouts {
@@ -551,7 +560,10 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
 
   parameter {
     name = "ListenerIPs"
-    value = join(",", compact(azurerm_lb.sql_lb[0].frontend_ip_configuration[*].private_ip_address))
+    value = length(var.subnet_ids) > 1 ? join(",", [
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+      azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+    ]) : azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
   }
 
   parameter {
