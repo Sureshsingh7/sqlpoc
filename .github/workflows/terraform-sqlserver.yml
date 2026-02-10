@@ -192,27 +192,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          vms=("$SQL_VM_PRIMARY")
-          if [ "${IS_HA}" = "true" ]; then
-            vms+=("$SQL_VM_SECONDARY")
-          fi
+          # Check if deploy_primary is enabled in the tfvars
+          DEPLOY_PRIMARY=$(grep -E '^deploy_primary\s*=' "$TF_VAR_FILE" | sed 's/.*=\s*//' | tr -d '"' | xargs || echo "true")
+          echo "deploy_primary=${DEPLOY_PRIMARY}"
 
-          for vm in "${vms[@]}"; do
-            addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
-            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
-
-            echo "Checking SQL IaaS resource: $rid"
-            if az resource show --ids "$rid" -o none 2>/dev/null; then
-              if terraform state show "$addr" >/dev/null 2>&1; then
-                echo "$addr already in state"
-              else
-                echo "Importing $addr"
-                terraform import -var-file="$TF_VAR_FILE" "$addr" "$rid"
-              fi
-            else
-              echo "Not found in Azure, skipping import"
+          # Only import primary cluster resources if deploy_primary is not false
+          if [ "${DEPLOY_PRIMARY}" != "false" ]; then
+            vms=("$SQL_VM_PRIMARY")
+            if [ "${IS_HA}" = "true" ]; then
+              vms+=("$SQL_VM_SECONDARY")
             fi
-          done
+
+            for vm in "${vms[@]}"; do
+              addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+              rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+
+              echo "Checking SQL IaaS resource: $rid"
+              if az resource show --ids "$rid" -o none 2>/dev/null; then
+                if terraform state show "$addr" >/dev/null 2>&1; then
+                  echo "$addr already in state"
+                else
+                  echo "Importing $addr"
+                  terraform import -var-file="$TF_VAR_FILE" "$addr" "$rid"
+                fi
+              else
+                echo "Not found in Azure, skipping import"
+              fi
+            done
+          else
+            echo "deploy_primary=false, skipping primary SQL IaaS imports (module.sql_cluster has count=0)"
+          fi
 
           if [ "${IS_DR}" = "true" ]; then
              dr_vms=("$SQL_VM_DR_PRIMARY" "$SQL_VM_DR_SECONDARY")
@@ -238,26 +247,34 @@ jobs:
         run: |
           set -euo pipefail
 
-          vms=("$SQL_VM_PRIMARY")
-          if [ "${IS_HA}" = "true" ]; then
-            vms+=("$SQL_VM_SECONDARY")
-          fi
+          # Check if deploy_primary is enabled in the tfvars
+          DEPLOY_PRIMARY=$(grep -E '^deploy_primary\s*=' "$TF_VAR_FILE" | sed 's/.*=\s*//' | tr -d '"' | xargs || echo "true")
 
-          for vm in "${vms[@]}"; do
-            addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
-            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
-
-            if terraform state show "$addr" >/dev/null 2>&1; then
-              if az resource show --ids "$rid" -o none 2>/dev/null; then
-                echo "$addr exists in Azure; keeping in state"
-              else
-                echo "Azure resource missing; removing from state: $addr"
-                terraform state rm "$addr"
-              fi
-            else
-              echo "$addr not in state; nothing to prune"
+          # Only prune primary cluster resources if deploy_primary is not false
+          if [ "${DEPLOY_PRIMARY}" != "false" ]; then
+            vms=("$SQL_VM_PRIMARY")
+            if [ "${IS_HA}" = "true" ]; then
+              vms+=("$SQL_VM_SECONDARY")
             fi
-          done
+
+            for vm in "${vms[@]}"; do
+              addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+              rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+
+              if terraform state show "$addr" >/dev/null 2>&1; then
+                if az resource show --ids "$rid" -o none 2>/dev/null; then
+                  echo "$addr exists in Azure; keeping in state"
+                else
+                  echo "Azure resource missing; removing from state: $addr"
+                  terraform state rm "$addr"
+                fi
+              else
+                echo "$addr not in state; nothing to prune"
+              fi
+            done
+          else
+            echo "deploy_primary=false, skipping primary SQL IaaS prune (module.sql_cluster has count=0)"
+          fi
 
           if [ "${IS_DR}" = "true" ]; then
              dr_vms=("$SQL_VM_DR_PRIMARY" "$SQL_VM_DR_SECONDARY")
