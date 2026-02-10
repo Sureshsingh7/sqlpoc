@@ -39,9 +39,9 @@ manage_disk_setup_extension = true
 enable_failover_cluster = true
 failover_cluster_name   = "sqlpoc-ha-cl"
 
-# DR Configuration - deploy_primary must be true because HA+DR shares the HA state file.
-# Setting it false would make Terraform destroy all primary resources from state.
-deploy_primary             = true
+# DR Configuration - deploy_primary=false because DR has its own state file.
+# Primary HA outputs are read via data.terraform_remote_state.primary_ha.
+deploy_primary             = false
 enable_dr                  = true
 dr_location                = "swedencentral"
 dr_sql_resource_group_name = "rg-fnz-poc-sql-dr-swc"

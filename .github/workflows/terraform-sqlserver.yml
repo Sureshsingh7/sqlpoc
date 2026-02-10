@@ -144,11 +144,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # HA and HA+DR share the same state file (DR is added to HA, not a separate deployment)
+          # DR uses a separate state file from HA
           if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha-dr" ]; then
-            STATE_KEY="sqlserver-dev-ha.tfstate"
+            STATE_KEY="sqlserver-dev-ha-dr.tfstate"
             BACKEND_CONFIG="env/backend-dev-ha-dr.tfbackend"
-            echo "HA+DR deployment: Using shared HA state file"
+            echo "DR deployment: Using separate DR state file"
           else
             STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
             BACKEND_CONFIG="env/backend-${{ github.event.inputs.deployment_preset }}.tfbackend"
