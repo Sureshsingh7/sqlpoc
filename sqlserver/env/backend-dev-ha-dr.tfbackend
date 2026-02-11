@@ -1,6 +1,6 @@
-# Backend configuration for HA+DR deployment
-# Note: HA+DR uses the SAME state as HA (DR is added to existing HA)
-# The state key is set dynamically by workflow to "sqlserver-dev-ha.tfstate"
+# Backend configuration for DR deployment
+# DR uses a SEPARATE state file from HA (sqlserver-dev-ha-dr.tfstate)
+# It reads primary HA outputs via data.terraform_remote_state.primary_ha
 
 resource_group_name  = "rg-fnz-poc-tfstate-se"
 storage_account_name = "stfnzpocdj522c"

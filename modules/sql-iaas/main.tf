@@ -394,7 +394,7 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
     value = var.is_ha ? var.cluster_local_admin_username : ""
   }
 
-  protected_parameter {
+  parameter {
     name  = "ClusterAdminPasswordSecure"
     value = var.is_ha ? base64encode(var.sql_vm_admin_password) : ""
   }
@@ -420,12 +420,15 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
     script = file("${path.module}/scripts/create_failover_cluster.ps1")
   }
 
-  protected_parameter {
+  # NOTE: These are base64-encoded and passed as regular parameters because
+  # protected_parameter values are not persisted in state and are not reliably
+  # re-delivered on run command updates (e.g. after import).
+  parameter {
     name  = "ClusterAdminPasswordSecure"
     value = base64encode(var.sql_vm_admin_password)
   }
 
-  protected_parameter {
+  parameter {
     name  = "WitnessStorageKeyBase64"
     value = base64encode(module.witness_storage[0].resource.primary_access_key)
   }
@@ -509,7 +512,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
     value = var.sql_admin_username
   }
 
-  protected_parameter {
+  parameter {
     name  = "SqlAdminPassword"
     value = var.sql_vm_admin_password
   }
@@ -519,7 +522,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
     value = var.cluster_local_admin_username
   }
 
-  protected_parameter {
+  parameter {
     name  = "ClusterAdminPassword"
     value = var.sql_vm_admin_password
   }
@@ -535,11 +538,13 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
   })
 }
 
-# Availability Group Setup (only on primary replica)
+# Availability Group Setup (runs on ALL nodes)
+# Primary creates AG and waits for secondaries; secondaries poll primary and join locally.
+# This is more robust than the old approach (primary joining secondaries remotely).
 resource "azurerm_virtual_machine_run_command" "ag_setup" {
-  for_each = var.is_ha ? { for k, v in local.vm_map : k => v if k == local.vm_names[0] } : {}
+  for_each = var.is_ha ? local.vm_map : {}
 
-  name               = "availability-group-setup-v13"
+  name               = "availability-group-setup-v19"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.hadr_endpoint_setup]
@@ -593,6 +598,16 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
 
   parameter {
     name  = "SqlAdminPassword"
+    value = var.sql_vm_admin_password
+  }
+
+  parameter {
+    name  = "ClusterAdminUsername"
+    value = var.cluster_local_admin_username
+  }
+
+  parameter {
+    name  = "ClusterAdminPassword"
     value = var.sql_vm_admin_password
   }
 

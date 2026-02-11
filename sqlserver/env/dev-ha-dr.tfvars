@@ -39,7 +39,8 @@ manage_disk_setup_extension = true
 enable_failover_cluster = true
 failover_cluster_name   = "sqlpoc-ha-cl"
 
-# DR Configuration - Deploy only DR (primary HA managed by separate dev-ha state)
+# DR Configuration - deploy_primary=false because DR has its own state file.
+# Primary HA outputs are read via data.terraform_remote_state.primary_ha.
 deploy_primary             = false
 enable_dr                  = true
 dr_location                = "swedencentral"

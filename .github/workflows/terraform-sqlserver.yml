@@ -144,11 +144,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # HA and HA+DR share the same state file (DR is added to HA, not a separate deployment)
+          # DR uses a separate state file from HA
           if [ "${{ github.event.inputs.deployment_preset }}" == "dev-ha-dr" ]; then
-            STATE_KEY="sqlserver-dev-ha.tfstate"
+            STATE_KEY="sqlserver-dev-ha-dr.tfstate"
             BACKEND_CONFIG="env/backend-dev-ha-dr.tfbackend"
-            echo "HA+DR deployment: Using shared HA state file"
+            echo "DR deployment: Using separate DR state file"
           else
             STATE_KEY="sqlserver-${{ github.event.inputs.deployment_preset }}.tfstate"
             BACKEND_CONFIG="env/backend-${{ github.event.inputs.deployment_preset }}.tfbackend"
@@ -192,27 +192,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          vms=("$SQL_VM_PRIMARY")
-          if [ "${IS_HA}" = "true" ]; then
-            vms+=("$SQL_VM_SECONDARY")
-          fi
+          # Check if deploy_primary is enabled in the tfvars
+          DEPLOY_PRIMARY=$(grep -E '^deploy_primary\s*=' "$TF_VAR_FILE" | sed 's/.*=\s*//' | tr -d '"' | xargs || echo "true")
+          echo "deploy_primary=${DEPLOY_PRIMARY}"
 
-          for vm in "${vms[@]}"; do
-            addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
-            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
-
-            echo "Checking SQL IaaS resource: $rid"
-            if az resource show --ids "$rid" -o none 2>/dev/null; then
-              if terraform state show "$addr" >/dev/null 2>&1; then
-                echo "$addr already in state"
-              else
-                echo "Importing $addr"
-                terraform import -var-file="$TF_VAR_FILE" "$addr" "$rid"
-              fi
-            else
-              echo "Not found in Azure, skipping import"
+          # Only import primary cluster resources if deploy_primary is not false
+          if [ "${DEPLOY_PRIMARY}" != "false" ]; then
+            vms=("$SQL_VM_PRIMARY")
+            if [ "${IS_HA}" = "true" ]; then
+              vms+=("$SQL_VM_SECONDARY")
             fi
-          done
+
+            for vm in "${vms[@]}"; do
+              addr="module.sql_cluster[0].azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+              rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+
+              echo "Checking SQL IaaS resource: $rid"
+              if az resource show --ids "$rid" -o none 2>/dev/null; then
+                if terraform state show "$addr" >/dev/null 2>&1; then
+                  echo "$addr already in state"
+                else
+                  echo "Importing $addr"
+                  terraform import -var-file="$TF_VAR_FILE" "$addr" "$rid"
+                fi
+              else
+                echo "Not found in Azure, skipping import"
+              fi
+            done
+          else
+            echo "deploy_primary=false, skipping primary SQL IaaS imports (module.sql_cluster has count=0)"
+          fi
 
           if [ "${IS_DR}" = "true" ]; then
              dr_vms=("$SQL_VM_DR_PRIMARY" "$SQL_VM_DR_SECONDARY")
@@ -238,26 +247,34 @@ jobs:
         run: |
           set -euo pipefail
 
-          vms=("$SQL_VM_PRIMARY")
-          if [ "${IS_HA}" = "true" ]; then
-            vms+=("$SQL_VM_SECONDARY")
-          fi
+          # Check if deploy_primary is enabled in the tfvars
+          DEPLOY_PRIMARY=$(grep -E '^deploy_primary\s*=' "$TF_VAR_FILE" | sed 's/.*=\s*//' | tr -d '"' | xargs || echo "true")
 
-          for vm in "${vms[@]}"; do
-            addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
-            rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
-
-            if terraform state show "$addr" >/dev/null 2>&1; then
-              if az resource show --ids "$rid" -o none 2>/dev/null; then
-                echo "$addr exists in Azure; keeping in state"
-              else
-                echo "Azure resource missing; removing from state: $addr"
-                terraform state rm "$addr"
-              fi
-            else
-              echo "$addr not in state; nothing to prune"
+          # Only prune primary cluster resources if deploy_primary is not false
+          if [ "${DEPLOY_PRIMARY}" != "false" ]; then
+            vms=("$SQL_VM_PRIMARY")
+            if [ "${IS_HA}" = "true" ]; then
+              vms+=("$SQL_VM_SECONDARY")
             fi
-          done
+
+            for vm in "${vms[@]}"; do
+              addr="module.sql_cluster[0].azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+              rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
+
+              if terraform state show "$addr" >/dev/null 2>&1; then
+                if az resource show --ids "$rid" -o none 2>/dev/null; then
+                  echo "$addr exists in Azure; keeping in state"
+                else
+                  echo "Azure resource missing; removing from state: $addr"
+                  terraform state rm "$addr"
+                fi
+              else
+                echo "$addr not in state; nothing to prune"
+              fi
+            done
+          else
+            echo "deploy_primary=false, skipping primary SQL IaaS prune (module.sql_cluster has count=0)"
+          fi
 
           if [ "${IS_DR}" = "true" ]; then
              dr_vms=("$SQL_VM_DR_PRIMARY" "$SQL_VM_DR_SECONDARY")
@@ -438,7 +455,7 @@ jobs:
             TARGETS="-target=module.sql_cluster_dr[0].module.sql_vm -target=module.sql_cluster_dr[0].module.witness_storage -target=module.sql_cluster_dr[0].module.witness_blob_dns"
             echo "DR deployment: Only targeting DR resources"
           else
-            TARGETS="-target=module.sql_cluster.module.sql_vm"
+            TARGETS="-target=module.sql_cluster[0].module.sql_vm"
           fi
 
           echo "Applying targets: $TARGETS"
