@@ -204,7 +204,7 @@ jobs:
             fi
 
             for vm in "${vms[@]}"; do
-              addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+              addr="module.sql_cluster[0].azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
               rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
               echo "Checking SQL IaaS resource: $rid"
@@ -258,7 +258,7 @@ jobs:
             fi
 
             for vm in "${vms[@]}"; do
-              addr="module.sql_cluster.azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
+              addr="module.sql_cluster[0].azurerm_mssql_virtual_machine.sql_vm[\"${vm}\"]"
               rid="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${SQL_RG}/providers/Microsoft.SqlVirtualMachine/sqlVirtualMachines/${vm}"
 
               if terraform state show "$addr" >/dev/null 2>&1; then
@@ -455,7 +455,7 @@ jobs:
             TARGETS="-target=module.sql_cluster_dr[0].module.sql_vm -target=module.sql_cluster_dr[0].module.witness_storage -target=module.sql_cluster_dr[0].module.witness_blob_dns"
             echo "DR deployment: Only targeting DR resources"
           else
-            TARGETS="-target=module.sql_cluster.module.sql_vm"
+            TARGETS="-target=module.sql_cluster[0].module.sql_vm"
           fi
 
           echo "Applying targets: $TARGETS"
