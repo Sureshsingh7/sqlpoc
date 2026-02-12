@@ -59,6 +59,7 @@ module "sql_cluster" {
 
   failover_cluster_name                = var.failover_cluster_name
   dns_zone_name                        = "sql.internal"
+  dns_zone_resource_group_name         = data.terraform_remote_state.network.outputs.sql_dns_zone_resource_group_name
   witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
   tags = var.tags
@@ -137,6 +138,7 @@ module "sql_cluster_dr" {
 
   failover_cluster_name                = "${var.failover_cluster_name}-dr"
   dns_zone_name                        = "sql.internal"
+  dns_zone_resource_group_name         = data.terraform_remote_state.network.outputs.sql_dns_zone_resource_group_name
   witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
   tags = merge(

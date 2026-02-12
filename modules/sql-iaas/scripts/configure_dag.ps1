@@ -180,23 +180,32 @@ try {
     L "SqlServer module loaded"
 
     # ================================================================
-    # STEP 1: Add remote nodes to hosts file for name resolution
+    # STEP 1: Verify DNS resolution for remote nodes
+    # The shared Private DNS zone (sql.internal) in the network layer
+    # is linked to both primary and DR VNets, so hostnames should resolve
+    # automatically without hosts-file entries.
     # ================================================================
-    L "STEP 1: Adding remote nodes to hosts file..."
-    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
-    $domainName = "sqlpoc.local"
-
+    L "STEP 1: Verifying DNS resolution for remote nodes..."
+    $dnsOk = $true
     for ($i = 0; $i -lt $RemoteNodeNameArray.Count; $i++) {
-        $ip   = $RemoteNodeIPArray[$i]
         $name = $RemoteNodeNameArray[$i]
-        $entry = "$ip`t$name.$domainName`t$name"
+        $expectedIP = $RemoteNodeIPArray[$i]
 
-        if (-not (Select-String -Path $hostsFile -Pattern ([regex]::Escape($name)) -Quiet)) {
-            Add-Content -Path $hostsFile -Value $entry
-            L "  Added: $entry"
-        } else {
-            L "  Already exists: $name"
+        try {
+            $resolved = [System.Net.Dns]::GetHostAddresses($name) | Select-Object -First 1
+            if ($resolved.IPAddressToString -eq $expectedIP) {
+                L "  DNS OK: $name -> $expectedIP"
+            } else {
+                LW "  DNS MISMATCH: $name resolved to $($resolved.IPAddressToString), expected $expectedIP"
+                $dnsOk = $false
+            }
+        } catch {
+            LW "  DNS FAIL: $name could not be resolved - $($_.Exception.Message)"
+            $dnsOk = $false
         }
+    }
+    if (-not $dnsOk) {
+        LW "  Some DNS lookups failed. Ensure the shared sql.internal Private DNS zone has A records for all nodes and is linked to both VNets."
     }
     ipconfig /flushdns | Out-Null
     L "  DNS cache flushed"
@@ -236,50 +245,43 @@ try {
     L "  Firewall rule: $rule1433"
 
     # ================================================================
-    # STEP 2b: Configure remote nodes' hosts files and firewall (PRIMARY only)
+    # STEP 2b: Verify remote nodes can resolve local (DR) hostnames (PRIMARY only)
+    # With the shared Private DNS zone, no SMB-based hosts file manipulation is needed.
     # ================================================================
     if ($isPrimary -and $LocalNodeNameArray.Count -gt 0) {
-        L "STEP 2b: Configuring remote nodes for reverse connectivity..."
-        $domainName = "sqlpoc.local"
+        L "STEP 2b: Verifying remote nodes can resolve local hostnames via DNS..."
 
         foreach ($i in 0..($RemoteNodeNameArray.Count - 1)) {
             $rName = $RemoteNodeNameArray[$i]
             $rIP   = $RemoteNodeIPArray[$i]
 
-            L "  Configuring remote node $rName ($rIP)..."
+            L "  Checking DNS on remote node $rName ($rIP)..."
 
-            # Add local (DR) node entries to remote hosts file via SMB
+            # Verify remote node can resolve local DR hostnames via xp_cmdshell nslookup
             try {
-                $uncPath = "\\$rIP\C`$"
-                $netResult = cmd /c "net use $uncPath /user:$rName\$RemoteClusterAdminUsername `"$RemoteClusterAdminPassword`" 2>&1"
-                if ($LASTEXITCODE -ne 0 -and $netResult -notmatch "already") {
-                    LW "    SMB connect to $rName failed: $netResult"
-                    continue
-                }
-
-                $remoteHosts = "$uncPath\Windows\System32\drivers\etc\hosts"
-                $hostsContent = Get-Content $remoteHosts -Raw -ErrorAction Stop
-
                 for ($j = 0; $j -lt $LocalNodeNameArray.Count; $j++) {
                     $localName = $LocalNodeNameArray[$j]
                     $localIP   = $LocalNodeIPArray[$j]
-                    $entry = "$localIP`t$localName.$domainName`t$localName"
 
-                    if ($hostsContent -notmatch [regex]::Escape($localName)) {
-                        Add-Content -Path $remoteHosts -Value $entry
-                        L "    Added to $rName hosts: $entry"
+                    $nslookupSql = @"
+EXEC sp_configure 'show advanced options', 1; RECONFIGURE;
+EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;
+EXEC xp_cmdshell 'powershell -NoProfile -Command "[System.Net.Dns]::GetHostAddresses(''$localName'') | Select-Object -First 1 -ExpandProperty IPAddressToString"';
+EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;
+"@
+                    $result = Invoke-RemoteSql $nslookupSql -Server $rIP -Safe
+                    $resolvedIP = ($result | Where-Object { $_.Column1 -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1).Column1
+                    if ($resolvedIP -eq $localIP) {
+                        L "    $rName can resolve $localName -> $resolvedIP (OK)"
                     } else {
-                        L "    Already in $rName hosts: $localName"
+                        LW "    $rName resolved $localName to '$resolvedIP', expected $localIP"
                     }
                 }
-
-                cmd /c "net use $uncPath /delete /y 2>&1" | Out-Null
             } catch {
-                LW "    Failed to update hosts on ${rName}: $($_.Exception.Message)"
-                cmd /c "net use $uncPath /delete /y 2>&1" | Out-Null
+                LW "    DNS verification on ${rName} failed: $($_.Exception.Message)"
             }
 
-            # Add firewall rules on remote nodes via remote SQL xp_cmdshell
+            # Add firewall rules on remote nodes for DR IPs (still needed for network-level access)
             try {
                 $localIPs = $LocalNodeIPArray -join ','
                 $fwSql = @"
@@ -495,7 +497,7 @@ EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;
         # Use direct primary replica hostnames instead of ILB IPs for LISTENER_URLs.
         # ILB floating-IP rules require a health-probe responder (port 59999) which may
         # not be running, causing ILB to mark backends as unhealthy and drop 5022 traffic.
-        # Direct node hostnames work reliably as long as hosts-file entries exist (Step 2b).
+        # Direct node hostnames resolve via the shared sql.internal Private DNS zone.
         $remoteListenerUrl = "TCP://${RemotePrimaryReplica}:${EndpointPort}"
         $localListenerUrl  = "TCP://${LocalPrimaryReplica}:${EndpointPort}"
 

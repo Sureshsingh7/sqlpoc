@@ -306,38 +306,20 @@ resource "azurerm_lb_rule" "sql_rule_5022_subnet2" {
   floating_ip_enabled            = true
 }
 
-# --- Private DNS Zone for Cluster VNN ---
-module "sql_dns" {
-  count   = var.is_ha ? 1 : 0
-  source  = "Azure/avm-res-network-privatednszone/azurerm"
-  version = "0.4.4"
-
-  domain_name = var.dns_zone_name
-  parent_id   = data.azurerm_resource_group.this.id
-  tags        = var.tags
-
-  virtual_network_links = {
-    sql_vnet = {
-      name               = "link-sql-vnet-${var.name_prefix}"
-      virtual_network_id = var.vnet_id
-      autoregistration   = false
-    }
-  }
-}
+# --- Private DNS A Records (zone created in network layer) ---
 
 # DNS A record for cluster listener (VNN) points to both frontend IPs
 resource "azurerm_private_dns_a_record" "cluster_listener" {
   count               = var.is_ha ? 1 : 0
   name                = var.failover_cluster_name
   zone_name           = var.dns_zone_name
-  resource_group_name = var.resource_group_name
+  resource_group_name = var.dns_zone_resource_group_name
   ttl                 = 300
   records = length(var.subnet_ids) > 1 ? [
     azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
     azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
   ] : [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
 
-  depends_on = [module.sql_dns]
 }
 
 # DNS A records for individual VMs (for inter-node communication)
@@ -345,11 +327,10 @@ resource "azurerm_private_dns_a_record" "sql_vm" {
   for_each            = var.is_ha ? local.vm_map : {}
   name                = each.key
   zone_name           = var.dns_zone_name
-  resource_group_name = var.resource_group_name
+  resource_group_name = var.dns_zone_resource_group_name
   ttl                 = 300
   records             = [module.sql_vm[each.key].virtual_machine_azurerm.private_ip_address]
 
-  depends_on = [module.sql_dns]
 }
 
 
@@ -414,7 +395,7 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
   name               = "failover-cluster-setup"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
-  depends_on         = [azurerm_virtual_machine_run_command.disk_setup]
+  depends_on         = [azurerm_virtual_machine_run_command.disk_setup, azurerm_private_dns_a_record.sql_vm, azurerm_private_dns_a_record.cluster_listener]
 
   source {
     script = file("${path.module}/scripts/create_failover_cluster.ps1")
@@ -638,7 +619,7 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
 resource "azurerm_virtual_machine_run_command" "dag_setup" {
   for_each = var.enable_dag ? local.vm_map : {}
 
-  name               = "dag-setup-v2"
+  name               = "dag-setup-v3"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.ag_setup]

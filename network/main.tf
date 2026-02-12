@@ -603,6 +603,34 @@ resource "azurerm_virtual_network_peering" "ops_to_dr" {
   allow_forwarded_traffic      = true
 }
 
+# -----------------------------------------------------------------------------
+# Shared Private DNS Zone for SQL inter-cluster resolution
+# Single zone linked to all SQL VNets so hostnames resolve cross-cluster.
+# This eliminates the need for hosts-file entries on each VM.
+# -----------------------------------------------------------------------------
+resource "azurerm_private_dns_zone" "sql_internal" {
+  name                = "sql.internal"
+  resource_group_name = var.sql_resource_group_name
+  tags                = local.tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "sql_internal_primary" {
+  name                  = "link-sql-internal-primary"
+  resource_group_name   = var.sql_resource_group_name
+  private_dns_zone_name = azurerm_private_dns_zone.sql_internal.name
+  virtual_network_id    = azurerm_virtual_network.sql.id
+  registration_enabled  = false
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "sql_internal_dr" {
+  count                 = var.is_dr_enabled ? 1 : 0
+  name                  = "link-sql-internal-dr"
+  resource_group_name   = var.sql_resource_group_name
+  private_dns_zone_name = azurerm_private_dns_zone.sql_internal.name
+  virtual_network_id    = azurerm_virtual_network.dr_sql[0].id
+  registration_enabled  = false
+}
+
 # DR NSGs
 resource "azurerm_network_security_group" "dr_nsg_sql1" {
   count               = var.is_dr_enabled ? 1 : 0

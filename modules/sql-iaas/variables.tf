@@ -189,6 +189,11 @@ variable "dns_zone_name" {
   default     = "sql.internal"
 }
 
+variable "dns_zone_resource_group_name" {
+  description = "Resource group containing the shared Private DNS zone. Zone is created in the network layer and linked to all SQL VNets."
+  type        = string
+}
+
 variable "user_assigned_identity_ids" {
   description = "List of User Assigned Identity IDs to assign to the VMs."
   type        = list(string)

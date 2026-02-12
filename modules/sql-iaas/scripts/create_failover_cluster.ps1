@@ -115,33 +115,26 @@ function ValidateInputs {
 function ConfigureVMPrerequisites {
     L "Configuring VM prerequisites"
 
-    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
-    $domainName = "sqlpoc.local"
-
+    # Verify DNS resolution for cluster nodes via the shared sql.internal Private DNS zone.
+    # A records are created by Terraform before this RunCommand executes.
+    $domainName = "sql.internal"
+    L "Verifying DNS resolution for cluster nodes..."
     for ($i = 0; $i -lt $NodeIPs.Count; $i++) {
         $ip = $NodeIPs[$i]
         $name = $NodeNames[$i]
-        $entry = "$ip`t$name.$domainName`t$name"
-
-        # Check if entry exists with correct IP; update if IP has changed
-        $existingLine = Select-String -Path $hostsFile -Pattern "\s$([regex]::Escape($name))\b" -ErrorAction SilentlyContinue
-        if ($existingLine) {
-            if ($existingLine.Line -notmatch "^\s*$([regex]::Escape($ip))\s") {
-                LD "Updating hosts entry for $name (IP changed to $ip)"
-                $content = Get-Content $hostsFile | ForEach-Object {
-                    if ($_ -match "\s$([regex]::Escape($name))\b" -and $_ -notmatch "^\s*#") { $entry } else { $_ }
-                }
-                Set-Content -Path $hostsFile -Value $content -Force
+        try {
+            $resolved = [System.Net.Dns]::GetHostAddresses($name) | Select-Object -First 1
+            if ($resolved.IPAddressToString -eq $ip) {
+                LD "DNS OK: $name -> $ip"
             } else {
-                LD "Hosts entry for $name already correct"
+                LD "DNS MISMATCH: $name resolved to $($resolved.IPAddressToString), expected $ip - check sql.internal zone"
             }
-        } else {
-            LD "Adding hosts entry: $entry"
-            Add-Content -Path $hostsFile -Value $entry
+        } catch {
+            LD "DNS WARN: $name not resolvable yet - $($_.Exception.Message)"
         }
     }
 
-    LD "Setting NV Domain to $domainName"
+    LD "Setting NV Domain to $domainName (for short-name DNS resolution via sql.internal zone)"
     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\services\Tcpip\Parameters" -Name "NV Domain" -Value $domainName -Force
 
     LD "Setting LocalAccountTokenFilterPolicy for remote admin"
@@ -210,30 +203,20 @@ function ConfigureVMPrerequisites {
 }
 
 function ConfigureHostsFile {
-    LD "Configuring cluster hosts file entries"
+    LD "Verifying DNS resolution for cluster name and ILB IPs"
 
-    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
-    $hostsContent = Get-Content $hostsFile -Raw -ErrorAction SilentlyContinue
-    if ($null -eq $hostsContent) { $hostsContent = "" }
-
+    # Cluster VNN name and primary cluster DNS are resolved via the shared
+    # sql.internal Private DNS zone (A records created by Terraform).
     foreach ($clusterIP in $ClusterIPs) {
-        $line = "$clusterIP`t$ClusterName"
-        if ($hostsContent -notmatch [regex]::Escape($clusterIP)) {
-            LD "Adding hosts entry: $line"
-            Add-Content -Path $hostsFile -Value $line -Force
-        }
+        LD "Cluster IP: $ClusterName -> $clusterIP (via DNS A record)"
     }
 
     if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP) -and -not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
-        $line = "$PrimaryClusterIP`t$PrimaryClusterDNS"
-        if ($hostsContent -notmatch [regex]::Escape($PrimaryClusterIP)) {
-            LD "Adding DR hosts entry: $line"
-            Add-Content -Path $hostsFile -Value $line -Force
-        }
+        LD "Primary cluster DNS: $PrimaryClusterDNS -> $PrimaryClusterIP (via DNS A record)"
     }
 
     ipconfig /flushdns | Out-Null
-    LD "Hosts file configured, DNS cache flushed"
+    LD "DNS cache flushed"
 }
 
 function ValidateNodeConnectivity {
