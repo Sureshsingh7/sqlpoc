@@ -123,7 +123,19 @@ function ConfigureVMPrerequisites {
         $name = $NodeNames[$i]
         $entry = "$ip`t$name.$domainName`t$name"
 
-        if (-not (Select-String -Path $hostsFile -Pattern $name -Quiet)) {
+        # Check if entry exists with correct IP; update if IP has changed
+        $existingLine = Select-String -Path $hostsFile -Pattern "\s$([regex]::Escape($name))\b" -ErrorAction SilentlyContinue
+        if ($existingLine) {
+            if ($existingLine.Line -notmatch "^\s*$([regex]::Escape($ip))\s") {
+                LD "Updating hosts entry for $name (IP changed to $ip)"
+                $content = Get-Content $hostsFile | ForEach-Object {
+                    if ($_ -match "\s$([regex]::Escape($name))\b" -and $_ -notmatch "^\s*#") { $entry } else { $_ }
+                }
+                Set-Content -Path $hostsFile -Value $content -Force
+            } else {
+                LD "Hosts entry for $name already correct"
+            }
+        } else {
             LD "Adding hosts entry: $entry"
             Add-Content -Path $hostsFile -Value $entry
         }
@@ -226,12 +238,27 @@ function ConfigureHostsFile {
 
 function ValidateNodeConnectivity {
     L "Validating network connectivity"
+    $maxRetries = 6
+    $retryDelay = 10
+
     $NodeNames | ForEach-Object {
-        if (-not (Test-Connection -ComputerName $_ -Count 1 -Quiet -ErrorAction SilentlyContinue)) {
-            LE "Cannot reach node: $_"
-            throw "Cannot reach $_"
+        $nodeName = $_
+        $reachable = $false
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            if (Test-Connection -ComputerName $nodeName -Count 1 -Quiet -ErrorAction SilentlyContinue) {
+                LD "Node $nodeName is reachable (attempt $attempt)"
+                $reachable = $true
+                break
+            }
+            if ($attempt -lt $maxRetries) {
+                LW "Cannot reach node $nodeName (attempt $attempt/$maxRetries), retrying in ${retryDelay}s..."
+                Start-Sleep -Seconds $retryDelay
+            }
         }
-        LD "Node $_ is reachable"
+        if (-not $reachable) {
+            LE "Cannot reach node: $nodeName after $maxRetries attempts"
+            throw "Cannot reach $nodeName"
+        }
     }
     L "All nodes are reachable"
 }
@@ -594,6 +621,29 @@ function Main {
     L "Host: $env:COMPUTERNAME | Cluster: $ClusterName"
 
     ValidateInputs
+
+    # Early check: if this node is already in the target cluster with AlwaysOn enabled,
+    # skip the full setup (idempotency for re-runs due to script content changes)
+    if (CheckClusterExists -Name $ClusterName) {
+        L "Cluster '$ClusterName' already exists on this node"
+
+        # Ensure prerequisites and configs are still correct
+        ConfigureVMPrerequisites
+        ConfigureHostsFile
+
+        # Ensure cluster admin exists
+        if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
+            CreateClusterAdminLocal -Username $ClusterAdminUsername -Password $ClusterAdminPassword
+        }
+
+        # Ensure AlwaysOn is enabled
+        EnableSqlAlwaysOn
+
+        DisplayClusterInfo -Name $ClusterName
+        L "Cluster setup already complete - idempotent pass"
+        return
+    }
+
     ConfigureVMPrerequisites
     ConfigureHostsFile
     ValidateNodeConnectivity

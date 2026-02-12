@@ -53,6 +53,51 @@ variable "dr_primary_nodes" {
   default     = []
 }
 
+# --- Distributed Availability Group (DAG) ---
+
+variable "enable_dag" {
+  description = "Enable Distributed Availability Group linking this cluster's AG to a primary AG. Only used with is_dr = true."
+  type        = bool
+  default     = false
+}
+
+variable "dag_name" {
+  description = "Name of the Distributed Availability Group (e.g. 'poc-ha-DAG')"
+  type        = string
+  default     = ""
+}
+
+variable "primary_ag_name" {
+  description = "Name of the primary Availability Group to link via DAG (e.g. 'poc-ha-AG')"
+  type        = string
+  default     = ""
+}
+
+variable "primary_ag_listener_ip" {
+  description = "ILB frontend IP of the primary AG listener (used as LISTENER_URL for DAG)"
+  type        = string
+  default     = ""
+}
+
+variable "primary_ag_primary_replica" {
+  description = "Hostname of the primary AG's primary replica (for remote SQL management during DAG setup)"
+  type        = string
+  default     = ""
+}
+
+variable "primary_ag_node_ips" {
+  description = "Map of primary AG node hostnames to their private IPs (for hosts file + cert exchange during DAG setup)"
+  type        = map(string)
+  default     = {}
+}
+
+variable "primary_sql_admin_password" {
+  description = "SQL admin password for the primary cluster (for remote SQL connections during DAG setup)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "sql_admin_username" {
   description = "Local Administrator username for the SQL VMs."
   type        = string

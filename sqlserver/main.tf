@@ -80,6 +80,32 @@ module "sql_cluster_dr" {
     length(data.terraform_remote_state.primary_ha) > 0 ? keys(data.terraform_remote_state.primary_ha[0].outputs.sql_vm_ids) : []
   )
 
+  # --- Distributed Availability Group (DAG) ---
+  enable_dag = var.enable_dag
+
+  dag_name        = var.enable_dag ? "${var.sql_name_prefix}-DAG" : ""
+  primary_ag_name = var.enable_dag ? "${var.sql_name_prefix}-AG" : ""
+
+  primary_ag_listener_ip = var.enable_dag ? split(",", (
+    var.deploy_primary ? module.sql_cluster[0].load_balancer_ip : (
+      length(data.terraform_remote_state.primary_ha) > 0 ? data.terraform_remote_state.primary_ha[0].outputs.load_balancer_ip : ""
+    )
+  ))[0] : ""
+
+  primary_ag_primary_replica = var.enable_dag ? (
+    var.deploy_primary ? module.sql_cluster[0].ag_primary_replica : (
+      length(data.terraform_remote_state.primary_ha) > 0 ? sort(keys(data.terraform_remote_state.primary_ha[0].outputs.sql_vm_ids))[0] : ""
+    )
+  ) : ""
+
+  primary_ag_node_ips = var.enable_dag ? (
+    var.deploy_primary ? module.sql_cluster[0].sql_vm_ips : (
+      length(data.terraform_remote_state.primary_ha) > 0 ? data.terraform_remote_state.primary_ha[0].outputs.sql_vm_private_ips : {}
+    )
+  ) : {}
+
+  primary_sql_admin_password = var.enable_dag ? local.sql_vm_admin_password : ""
+
   vm_sku = var.vm_size
 
   subnet_ids = [

@@ -43,6 +43,7 @@ failover_cluster_name   = "sqlpoc-ha-cl"
 # Primary HA outputs are read via data.terraform_remote_state.primary_ha.
 deploy_primary             = false
 enable_dr                  = true
+enable_dag                 = true
 dr_location                = "swedencentral"
 dr_sql_resource_group_name = "rg-fnz-poc-sql-dr-swc"
 

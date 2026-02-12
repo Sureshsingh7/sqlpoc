@@ -544,7 +544,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
 resource "azurerm_virtual_machine_run_command" "ag_setup" {
   for_each = var.is_ha ? local.vm_map : {}
 
-  name               = "availability-group-setup-v19"
+  name               = "availability-group-setup-v24"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.hadr_endpoint_setup]
@@ -611,6 +611,16 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
     value = var.sql_vm_admin_password
   }
 
+  parameter {
+    name  = "IsDAGTarget"
+    value = var.enable_dag ? "true" : "false"
+  }
+
+  parameter {
+    name  = "SeedingMode"
+    value = var.enable_dag ? "AUTOMATIC" : "MANUAL"
+  }
+
   timeouts {
     create = "60m"
     update = "60m"
@@ -619,6 +629,122 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
 
   tags = merge(var.tags, {
     script_hash = md5(file("${path.module}/scripts/create_availability_group.ps1"))
+  })
+}
+
+# --- Distributed Availability Group (DAG) Setup ---
+# Runs on ALL DR nodes for cross-cluster certificate exchange.
+# Only the DR primary node creates/joins the DAG.
+resource "azurerm_virtual_machine_run_command" "dag_setup" {
+  for_each = var.enable_dag ? local.vm_map : {}
+
+  name               = "dag-setup-v2"
+  location           = var.location
+  virtual_machine_id = module.sql_vm[each.key].resource_id
+  depends_on         = [azurerm_virtual_machine_run_command.ag_setup]
+
+  source {
+    script = file("${path.module}/scripts/configure_dag.ps1")
+  }
+
+  parameter {
+    name  = "DAGName"
+    value = var.dag_name
+  }
+
+  parameter {
+    name  = "LocalAGName"
+    value = "${var.name_prefix}-AG"
+  }
+
+  parameter {
+    name  = "LocalListenerIP"
+    value = azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address
+  }
+
+  parameter {
+    name  = "LocalPrimaryReplica"
+    value = local.vm_names[0]
+  }
+
+  parameter {
+    name  = "RemoteAGName"
+    value = var.primary_ag_name
+  }
+
+  parameter {
+    name  = "RemoteListenerIP"
+    value = var.primary_ag_listener_ip
+  }
+
+  parameter {
+    name  = "RemotePrimaryReplica"
+    value = var.primary_ag_primary_replica
+  }
+
+  parameter {
+    name  = "RemoteNodeNames"
+    value = join(",", sort(keys(var.primary_ag_node_ips)))
+  }
+
+  parameter {
+    name  = "RemoteNodeIPs"
+    value = join(",", [for name in sort(keys(var.primary_ag_node_ips)) : var.primary_ag_node_ips[name]])
+  }
+
+  parameter {
+    name  = "SqlAdminUsername"
+    value = var.sql_admin_username
+  }
+
+  parameter {
+    name  = "LocalSqlPassword"
+    value = var.sql_vm_admin_password
+  }
+
+  parameter {
+    name  = "RemoteSqlPassword"
+    value = var.primary_sql_admin_password
+  }
+
+  parameter {
+    name  = "LocalClusterAdminUsername"
+    value = var.cluster_local_admin_username
+  }
+
+  parameter {
+    name  = "RemoteClusterAdminUsername"
+    value = "clusteradmin"
+  }
+
+  parameter {
+    name  = "RemoteClusterAdminPassword"
+    value = var.primary_sql_admin_password
+  }
+
+  parameter {
+    name  = "LocalNodeNames"
+    value = join(",", local.vm_names)
+  }
+
+  parameter {
+    name  = "LocalNodeIPs"
+    value = join(",", [for name in local.vm_names : module.sql_vm[name].virtual_machine_azurerm.private_ip_address])
+  }
+
+  parameter {
+    name  = "EndpointPort"
+    value = "5022"
+  }
+
+  timeouts {
+    create = "60m"
+    update = "60m"
+    delete = "30m"
+  }
+
+  tags = merge(var.tags, {
+    script_hash = md5(file("${path.module}/scripts/configure_dag.ps1"))
   })
 }
 

@@ -31,3 +31,20 @@ output "witness_storage_account_name" {
   value       = var.is_ha ? module.witness_storage[0].name : null
 }
 
+# --- Availability Group outputs (for DAG cross-cluster linking) ---
+
+output "ag_name" {
+  description = "Name of the Availability Group (e.g. 'poc-ha-AG')."
+  value       = var.is_ha ? "${var.name_prefix}-AG" : null
+}
+
+output "ag_listener_name" {
+  description = "Name of the AG VNN listener."
+  value       = var.is_ha ? "${var.name_prefix}-listener" : null
+}
+
+output "ag_primary_replica" {
+  description = "Hostname of the AG's primary replica (first VM)."
+  value       = var.is_ha ? local.vm_names[0] : null
+}
+

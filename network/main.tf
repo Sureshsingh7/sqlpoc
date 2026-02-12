@@ -236,6 +236,20 @@ resource "azurerm_network_security_rule" "wsfc_heartbeat_sql1" {
   network_security_group_name = azurerm_network_security_group.nsg_sql1.name
 }
 
+resource "azurerm_network_security_rule" "cross_subnet_sql1" {
+  name                        = "Allow-CrossSubnet"
+  priority                    = 115
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.nsg_sql1.name
+}
+
 # --- SQL2 ---
 resource "azurerm_network_security_rule" "rdp_to_sql2_from_bastion" {
   name                        = "Allow-RDP-From-Bastion"
@@ -287,6 +301,20 @@ resource "azurerm_network_security_rule" "wsfc_heartbeat_sql2" {
   protocol                    = "*"
   source_port_range           = "*"
   destination_port_range      = "3343"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.nsg_sql2.name
+}
+
+resource "azurerm_network_security_rule" "cross_subnet_sql2" {
+  name                        = "Allow-CrossSubnet"
+  priority                    = 115
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
   source_address_prefix       = var.sql_subnet_sql1_prefix
   destination_address_prefix  = var.sql_subnet_sql2_prefix
   resource_group_name         = var.sql_resource_group_name
@@ -668,6 +696,21 @@ resource "azurerm_network_security_rule" "dr_wsfc_heartbeat_sql1" {
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
 }
 
+resource "azurerm_network_security_rule" "dr_cross_subnet_sql1" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-DR-CrossSubnet"
+  priority                    = 110
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.dr_sql_subnet_sql2_prefix
+  destination_address_prefix  = var.dr_sql_subnet_sql1_prefix
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
+}
+
 resource "azurerm_network_security_rule" "dr_primary_inbound_sql1" {
   count                       = var.is_dr_enabled ? 1 : 0
   name                        = "Allow-Primary-Inbound"
@@ -739,6 +782,21 @@ resource "azurerm_network_security_rule" "dr_wsfc_heartbeat_sql2" {
   protocol                    = "*"
   source_port_range           = "*"
   destination_port_range      = "3343"
+  source_address_prefix       = var.dr_sql_subnet_sql1_prefix
+  destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
+}
+
+resource "azurerm_network_security_rule" "dr_cross_subnet_sql2" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-DR-CrossSubnet"
+  priority                    = 110
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
   source_address_prefix       = var.dr_sql_subnet_sql1_prefix
   destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
   resource_group_name         = data.azurerm_resource_group.dr_sql[0].name

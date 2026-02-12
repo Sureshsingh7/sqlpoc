@@ -105,3 +105,19 @@ output "primary_location" {
   value       = var.location
   description = "PRIMARY deployment region"
 }
+
+# PRIMARY AG outputs for DAG cross-cluster linking
+output "ag_name" {
+  value       = var.deploy_primary ? module.sql_cluster[0].ag_name : null
+  description = "Name of the primary Availability Group"
+}
+
+output "ag_primary_replica" {
+  value       = var.deploy_primary ? module.sql_cluster[0].ag_primary_replica : null
+  description = "Hostname of the primary AG's primary replica"
+}
+
+output "ag_listener_name" {
+  value       = var.deploy_primary ? module.sql_cluster[0].ag_listener_name : null
+  description = "Name of the primary AG VNN listener"
+}

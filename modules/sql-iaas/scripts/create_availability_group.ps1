@@ -33,7 +33,13 @@ param(
     [string]$ClusterAdminUsername = "clusteradmin",
 
     [Parameter(Mandatory=$false)]
-    [string]$ClusterAdminPassword = ""
+    [string]$ClusterAdminPassword = "",
+
+    [Parameter(Mandatory=$false)]
+    [string]$IsDAGTarget = "false",
+
+    [Parameter(Mandatory=$false)]
+    [string]$SeedingMode = "MANUAL"
 )
 
 <#
@@ -41,7 +47,7 @@ param(
     Creates a SQL Server Always On Availability Group following the FNZ proven pattern:
     1. PRIMARY: Create AG EMPTY (no databases) with MANUAL seeding
     2. SECONDARY: Poll primary, JOIN locally, GRANT CREATE ANY DATABASE
-    3. PRIMARY: Wait for secondary → backup DB → restore on secondary via SMB → add DB to AG
+    3. PRIMARY: Wait for secondary -> backup DB -> restore on secondary via SMB -> add DB to AG
     4. PRIMARY: Create VNN listener with Azure ILB probe port configuration
 .NOTES
     This script runs on ALL nodes (primary AND secondaries) in parallel via
@@ -114,6 +120,8 @@ $SecondaryReplicaArray = @($SecondaryReplicas -split ',' | ForEach-Object { $_.T
 $AllReplicas = @($PrimaryReplica) + $SecondaryReplicaArray
 $currentNode = $env:COMPUTERNAME
 $isPrimary = ($currentNode -eq $PrimaryReplica)
+$isDAG = ($IsDAGTarget -eq "true")
+$seedingMode = if ($isDAG) { "AUTOMATIC" } else { $SeedingMode }
 
 # Check if already completed
 if (Test-Path $sentinel) {
@@ -127,7 +135,8 @@ try {
     L "Node: $currentNode | Role: $(if ($isPrimary) {'PRIMARY'} else {'SECONDARY'})"
     L "AG: $AGName | Primary: $PrimaryReplica"
     L "Secondaries: $($SecondaryReplicaArray -join ', ')"
-    L "Pattern: Empty AG → Join → Manual Backup/Restore Seeding"
+    L "DAG Target: $isDAG | Seeding Mode: $seedingMode"
+    L "Pattern: $(if ($isDAG) {'Empty AG (DAG will seed databases)'} else {'Empty AG -> Join -> Manual Backup/Restore Seeding'})"
     L "=========================================="
 
     # The SqlServer module MUST be used instead of SQLPS.
@@ -147,7 +156,7 @@ try {
 
     # ======================================================================
     # PRIMARY NODE FLOW
-    # Step 1: Create empty AG (no databases, MANUAL seeding) — matches FNZ pattern
+    # Step 1: Create empty AG (no databases, MANUAL seeding) -- matches FNZ pattern
     # Step 2: Wait for secondaries to join (they join themselves)
     # Step 3: Backup/restore DB to secondaries via SMB, then add DB to AG
     # Step 4: Create VNN listener with Azure ILB probe port
@@ -210,15 +219,20 @@ try {
             L "Listener not found - will create after secondary join"
         } else {
             # --- Create test database (before AG, like FNZ pattern) ---
-            $dbName = "TestDB"
-            L "Creating test database '$dbName'..."
-            $dbExists = Invoke-Sql "SELECT name FROM sys.databases WHERE name = '$dbName'" -Safe
-            if (-not $dbExists) {
-                Invoke-Sql "CREATE DATABASE [$dbName]"
-                Invoke-Sql "ALTER DATABASE [$dbName] SET RECOVERY FULL"
-                L "Database '$dbName' created with FULL recovery model"
+            # DAG targets skip database creation - DAG automatic seeding handles it
+            if (-not $isDAG) {
+                $dbName = "TestDB"
+                L "Creating test database '$dbName'..."
+                $dbExists = Invoke-Sql "SELECT name FROM sys.databases WHERE name = '$dbName'" -Safe
+                if (-not $dbExists) {
+                    Invoke-Sql "CREATE DATABASE [$dbName]"
+                    Invoke-Sql "ALTER DATABASE [$dbName] SET RECOVERY FULL"
+                    L "Database '$dbName' created with FULL recovery model"
+                } else {
+                    L "Database '$dbName' already exists"
+                }
             } else {
-                L "Database '$dbName' already exists"
+                L "DAG target mode - skipping database creation (DAG will seed databases)"
             }
 
             # --- Diagnose cluster context ---
@@ -226,17 +240,45 @@ try {
             $isDomainJoined = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).PartOfDomain
             L "  Domain joined: $isDomainJoined"
 
+            # Check if a WSFC cluster actually exists on this node (independent of SQL Server)
+            $wsfcExists = $false
+            try {
+                $cluster = Get-Cluster -ErrorAction Stop
+                $wsfcExists = $true
+                L "  WSFC cluster found: $($cluster.Name)"
+            } catch {
+                L "  No WSFC cluster detected on this node"
+            }
+
             try {
                 $clusterProps = Invoke-Sql "SELECT cluster_name, quorum_type_desc, quorum_state_desc FROM sys.dm_os_cluster_properties" -Safe
                 if ($clusterProps) {
                     L "  Cluster: $($clusterProps.cluster_name), Quorum: $($clusterProps.quorum_type_desc) ($($clusterProps.quorum_state_desc))"
                 } else {
-                    # On workgroup clusters, SQL Server does NOT detect the WSFC cluster when
-                    # AlwaysOn was enabled before the cluster was created. This is expected.
-                    # DO NOT restart SQL Server here — it makes things worse by putting AlwaysOn
-                    # into a "Waiting for WSFC" state that blocks ALL AG creation.
-                    L "  dm_os_cluster_properties empty - expected for workgroup clusters"
-                    L "  AG will use CLUSTER_TYPE=NONE (supported for workgroup clusters)"
+                    L "  dm_os_cluster_properties empty (SQL Server may not see the WSFC yet)"
+                    if ($wsfcExists) {
+                        L "  WSFC cluster exists but SQL Server does not detect it"
+                        L "  Cycling AlwaysOn (disable/re-enable) to re-register with WSFC..."
+                        Disable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force
+                        Start-Sleep -Seconds 10
+                        Enable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force
+                        # Wait for SQL Server to come back online
+                        $maxWait = 120; $waited = 0
+                        while ($waited -lt $maxWait) {
+                            Start-Sleep -Seconds 5; $waited += 5
+                            try {
+                                Invoke-Sql "SELECT 1" -Safe | Out-Null
+                                L "  SQL Server back online after AlwaysOn cycle (${waited}s)"
+                                break
+                            } catch {
+                                if ($waited % 30 -eq 0) { L "  Waiting for SQL Server... (${waited}s)" }
+                            }
+                        }
+                        if ($waited -ge $maxWait) {
+                            LE "SQL Server did not come back online within ${maxWait}s after AlwaysOn cycle"
+                            exit 1
+                        }
+                    }
                 }
             } catch { LW "  Could not query cluster properties: $($_.Exception.Message)" }
 
@@ -247,8 +289,8 @@ try {
 
             # ==============================================================
             # STEP 1: Create EMPTY Availability Group (FNZ pattern)
-            # No FOR DATABASE clause — AG starts with no databases.
-            # SEEDING_MODE = MANUAL — databases added via backup/restore.
+            # No FOR DATABASE clause -- AG starts with no databases.
+            # SEEDING_MODE = MANUAL -- databases added via backup/restore.
             # FAILOVER_MODE = MANUAL (NONE only supports MANUAL).
             # For workgroup clusters: use CLUSTER_TYPE = NONE directly.
             # The VNN listener still works via WSFC even with CLUSTER_TYPE = NONE.
@@ -267,7 +309,7 @@ try {
         AVAILABILITY_MODE= SYNCHRONOUS_COMMIT,
         BACKUP_PRIORITY  = 50,
         SECONDARY_ROLE   (ALLOW_CONNECTIONS = ALL),
-        SEEDING_MODE     = MANUAL
+        SEEDING_MODE     = $seedingMode
     )
 "@
             foreach ($secondary in $SecondaryReplicaArray) {
@@ -281,16 +323,19 @@ try {
         AVAILABILITY_MODE= SYNCHRONOUS_COMMIT,
         BACKUP_PRIORITY  = 50,
         SECONDARY_ROLE   (ALLOW_CONNECTIONS = ALL),
-        SEEDING_MODE     = MANUAL
+        SEEDING_MODE     = $seedingMode
     )
 "@
             }
 
-            # For domain-joined clusters, try WSFC first then NONE.
-            # For workgroup clusters, go directly to NONE (WSFC will never work).
-            $clusterTypes = if ($isDomainJoined) { @("WSFC", "NONE") } else { @("NONE") }
-            if (-not $isDomainJoined) {
-                L "  Workgroup cluster detected - using CLUSTER_TYPE=NONE directly"
+            # If WSFC cluster exists, always try WSFC first (regardless of domain join).
+            # If no WSFC, try NONE (clusterless AG).
+            # Always include NONE as fallback.
+            $clusterTypes = if ($wsfcExists) { @("WSFC", "NONE") } else { @("NONE") }
+            if ($wsfcExists) {
+                L "  WSFC cluster present - trying CLUSTER_TYPE=WSFC first"
+            } else {
+                L "  No WSFC cluster - using CLUSTER_TYPE=NONE directly"
             }
 
             foreach ($clusterType in $clusterTypes) {
@@ -366,10 +411,11 @@ WHERE r.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = '$
 
         # ==============================================================
         # STEP 3: Add database to AG via manual backup/restore seeding
-        # This is the FNZ pattern: backup on primary → copy to secondary
-        # via SMB → restore WITH NORECOVERY → add DB to AG on both sides.
+        # This is the FNZ pattern: backup on primary -> copy to secondary
+        # via SMB -> restore WITH NORECOVERY -> add DB to AG on both sides.
+        # DAG targets skip this step - DAG automatic seeding handles it.
         # ==============================================================
-        if (-not $agExists) {
+        if (-not $agExists -and -not $isDAG) {
             $dbName = "TestDB"
             $backupDir = "C:\SQLBackups"
             $backupFile = "$backupDir\${dbName}_AG_Init.bak"
@@ -522,6 +568,16 @@ WHERE drs.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = 
             } else {
                 L "  CLUSTER_TYPE=NONE - keeping FAILOVER_MODE=MANUAL (only supported mode)"
             }
+        } elseif (-not $agExists -and $isDAG) {
+            L "STEP 3: Skipped database seeding (DAG target - automatic seeding via DAG)"
+            L "  DAG will seed databases from primary AG after DAG is configured"
+            # For DAG targets with AUTOMATIC seeding, grant CREATE ANY DATABASE
+            foreach ($secondary in $SecondaryReplicaArray) {
+                try {
+                    Invoke-Sql "ALTER AVAILABILITY GROUP [$AGName] GRANT CREATE ANY DATABASE" -Server $secondary -Safe
+                    L "  GRANT CREATE ANY DATABASE on $secondary"
+                } catch { LW "  Grant failed on ${secondary}: $_" }
+            }
         }
 
         # ==============================================================
@@ -570,7 +626,12 @@ WHERE drs.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = 
                     L "Single-IP VNN listener created"
                     $listenerCreated = $true
                 } catch {
-                    LE "All listener creation methods failed: $_"
+                    if ($isDAG) {
+                        LW "Listener creation failed (non-fatal for DAG target): $_"
+                        LW "DAG does not require a VNN listener - proceeding"
+                    } else {
+                        LE "All listener creation methods failed: $_"
+                    }
                 }
             }
 
