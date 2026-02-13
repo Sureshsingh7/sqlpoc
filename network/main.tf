@@ -391,6 +391,10 @@ resource "azurerm_public_ip" "bastion" {
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [ip_tags]
+  }
 }
 
 resource "azurerm_bastion_host" "this" {
@@ -425,6 +429,10 @@ resource "azurerm_public_ip" "nat" {
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [ip_tags]
+  }
 }
 
 resource "azurerm_nat_gateway" "ops" {
@@ -454,6 +462,10 @@ resource "azurerm_public_ip" "sql_nat" {
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [ip_tags]
+  }
 }
 
 resource "azurerm_nat_gateway" "sql" {
@@ -533,6 +545,10 @@ resource "azurerm_public_ip" "dr_sql_nat" {
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [ip_tags]
+  }
 }
 
 resource "azurerm_nat_gateway" "dr_sql" {
@@ -615,7 +631,7 @@ resource "azurerm_private_dns_zone" "sql_internal" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "sql_internal_primary" {
-  name                  = "link-sql-internal-primary"
+  name                  = "link-sql-vnet-poc-ha"
   resource_group_name   = var.sql_resource_group_name
   private_dns_zone_name = azurerm_private_dns_zone.sql_internal.name
   virtual_network_id    = azurerm_virtual_network.sql.id
