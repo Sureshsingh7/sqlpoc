@@ -322,6 +322,19 @@ resource "azurerm_private_dns_a_record" "cluster_listener" {
 
 }
 
+# DNS A record for AG listener name (e.g. poc-ha-listener.sql.internal)
+resource "azurerm_private_dns_a_record" "ag_listener" {
+  count               = var.is_ha ? 1 : 0
+  name                = "${var.name_prefix}-listener"
+  zone_name           = var.dns_zone_name
+  resource_group_name = var.dns_zone_resource_group_name
+  ttl                 = 300
+  records = length(var.subnet_ids) > 1 ? [
+    azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address,
+    azurerm_lb.sql_lb[0].frontend_ip_configuration[1].private_ip_address
+  ] : [azurerm_lb.sql_lb[0].frontend_ip_configuration[0].private_ip_address]
+}
+
 # DNS A records for individual VMs (for inter-node communication)
 resource "azurerm_private_dns_a_record" "sql_vm" {
   for_each            = var.is_ha ? local.vm_map : {}
