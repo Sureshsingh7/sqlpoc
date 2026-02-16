@@ -236,6 +236,20 @@ resource "azurerm_network_security_rule" "wsfc_heartbeat_sql1" {
   network_security_group_name = azurerm_network_security_group.nsg_sql1.name
 }
 
+resource "azurerm_network_security_rule" "cross_subnet_sql1" {
+  name                        = "Allow-CrossSubnet"
+  priority                    = 115
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.sql_subnet_sql2_prefix
+  destination_address_prefix  = var.sql_subnet_sql1_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.nsg_sql1.name
+}
+
 # --- SQL2 ---
 resource "azurerm_network_security_rule" "rdp_to_sql2_from_bastion" {
   name                        = "Allow-RDP-From-Bastion"
@@ -287,6 +301,20 @@ resource "azurerm_network_security_rule" "wsfc_heartbeat_sql2" {
   protocol                    = "*"
   source_port_range           = "*"
   destination_port_range      = "3343"
+  source_address_prefix       = var.sql_subnet_sql1_prefix
+  destination_address_prefix  = var.sql_subnet_sql2_prefix
+  resource_group_name         = var.sql_resource_group_name
+  network_security_group_name = azurerm_network_security_group.nsg_sql2.name
+}
+
+resource "azurerm_network_security_rule" "cross_subnet_sql2" {
+  name                        = "Allow-CrossSubnet"
+  priority                    = 115
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
   source_address_prefix       = var.sql_subnet_sql1_prefix
   destination_address_prefix  = var.sql_subnet_sql2_prefix
   resource_group_name         = var.sql_resource_group_name
@@ -363,6 +391,10 @@ resource "azurerm_public_ip" "bastion" {
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [ip_tags]
+  }
 }
 
 resource "azurerm_bastion_host" "this" {
@@ -397,6 +429,10 @@ resource "azurerm_public_ip" "nat" {
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [ip_tags]
+  }
 }
 
 resource "azurerm_nat_gateway" "ops" {
@@ -426,6 +462,10 @@ resource "azurerm_public_ip" "sql_nat" {
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [ip_tags]
+  }
 }
 
 resource "azurerm_nat_gateway" "sql" {
@@ -505,6 +545,10 @@ resource "azurerm_public_ip" "dr_sql_nat" {
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [ip_tags]
+  }
 }
 
 resource "azurerm_nat_gateway" "dr_sql" {
@@ -573,6 +617,34 @@ resource "azurerm_virtual_network_peering" "ops_to_dr" {
   remote_virtual_network_id    = azurerm_virtual_network.dr_sql[0].id
   allow_virtual_network_access = true
   allow_forwarded_traffic      = true
+}
+
+# -----------------------------------------------------------------------------
+# Shared Private DNS Zone for SQL inter-cluster resolution
+# Single zone linked to all SQL VNets so hostnames resolve cross-cluster.
+# This eliminates the need for hosts-file entries on each VM.
+# -----------------------------------------------------------------------------
+resource "azurerm_private_dns_zone" "sql_internal" {
+  name                = "sql.internal"
+  resource_group_name = var.sql_resource_group_name
+  tags                = local.tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "sql_internal_primary" {
+  name                  = "link-sql-vnet-poc-ha"
+  resource_group_name   = var.sql_resource_group_name
+  private_dns_zone_name = azurerm_private_dns_zone.sql_internal.name
+  virtual_network_id    = azurerm_virtual_network.sql.id
+  registration_enabled  = false
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "sql_internal_dr" {
+  count                 = var.is_dr_enabled ? 1 : 0
+  name                  = "link-sql-internal-dr"
+  resource_group_name   = var.sql_resource_group_name
+  private_dns_zone_name = azurerm_private_dns_zone.sql_internal.name
+  virtual_network_id    = azurerm_virtual_network.dr_sql[0].id
+  registration_enabled  = false
 }
 
 # DR NSGs
@@ -668,6 +740,21 @@ resource "azurerm_network_security_rule" "dr_wsfc_heartbeat_sql1" {
   network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
 }
 
+resource "azurerm_network_security_rule" "dr_cross_subnet_sql1" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-DR-CrossSubnet"
+  priority                    = 110
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = var.dr_sql_subnet_sql2_prefix
+  destination_address_prefix  = var.dr_sql_subnet_sql1_prefix
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql1[0].name
+}
+
 resource "azurerm_network_security_rule" "dr_primary_inbound_sql1" {
   count                       = var.is_dr_enabled ? 1 : 0
   name                        = "Allow-Primary-Inbound"
@@ -739,6 +826,21 @@ resource "azurerm_network_security_rule" "dr_wsfc_heartbeat_sql2" {
   protocol                    = "*"
   source_port_range           = "*"
   destination_port_range      = "3343"
+  source_address_prefix       = var.dr_sql_subnet_sql1_prefix
+  destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
+  resource_group_name         = data.azurerm_resource_group.dr_sql[0].name
+  network_security_group_name = azurerm_network_security_group.dr_nsg_sql2[0].name
+}
+
+resource "azurerm_network_security_rule" "dr_cross_subnet_sql2" {
+  count                       = var.is_dr_enabled ? 1 : 0
+  name                        = "Allow-DR-CrossSubnet"
+  priority                    = 110
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
   source_address_prefix       = var.dr_sql_subnet_sql1_prefix
   destination_address_prefix  = var.dr_sql_subnet_sql2_prefix
   resource_group_name         = data.azurerm_resource_group.dr_sql[0].name

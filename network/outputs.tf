@@ -95,3 +95,14 @@ output "dr_sql_vnet_address_space" {
 output "sql_subnet_sql2_address_prefix" {
   value = var.sql_subnet_sql2_prefix
 }
+
+# Shared Private DNS zone outputs
+output "sql_dns_zone_name" {
+  description = "Name of the shared sql.internal Private DNS zone"
+  value       = azurerm_private_dns_zone.sql_internal.name
+}
+
+output "sql_dns_zone_resource_group_name" {
+  description = "Resource group containing the shared sql.internal Private DNS zone"
+  value       = var.sql_resource_group_name
+}

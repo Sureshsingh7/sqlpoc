@@ -258,6 +258,12 @@ variable "enable_dr" {
   default     = false
 }
 
+variable "enable_dag" {
+  type        = bool
+  description = "Enable Distributed Availability Group linking primary AG to DR AG. Requires enable_dr = true."
+  default     = false
+}
+
 variable "deploy_primary" {
   type        = bool
   description = "Deploy primary SQL cluster. Set to false when deploying only DR to avoid state conflicts."

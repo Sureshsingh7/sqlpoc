@@ -115,21 +115,26 @@ function ValidateInputs {
 function ConfigureVMPrerequisites {
     L "Configuring VM prerequisites"
 
-    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
-    $domainName = "sqlpoc.local"
-
+    # Verify DNS resolution for cluster nodes via the shared sql.internal Private DNS zone.
+    # A records are created by Terraform before this RunCommand executes.
+    $domainName = "sql.internal"
+    L "Verifying DNS resolution for cluster nodes..."
     for ($i = 0; $i -lt $NodeIPs.Count; $i++) {
         $ip = $NodeIPs[$i]
         $name = $NodeNames[$i]
-        $entry = "$ip`t$name.$domainName`t$name"
-
-        if (-not (Select-String -Path $hostsFile -Pattern $name -Quiet)) {
-            LD "Adding hosts entry: $entry"
-            Add-Content -Path $hostsFile -Value $entry
+        try {
+            $resolved = [System.Net.Dns]::GetHostAddresses($name) | Select-Object -First 1
+            if ($resolved.IPAddressToString -eq $ip) {
+                LD "DNS OK: $name -> $ip"
+            } else {
+                LD "DNS MISMATCH: $name resolved to $($resolved.IPAddressToString), expected $ip - check sql.internal zone"
+            }
+        } catch {
+            LD "DNS WARN: $name not resolvable yet - $($_.Exception.Message)"
         }
     }
 
-    LD "Setting NV Domain to $domainName"
+    LD "Setting NV Domain to $domainName (for short-name DNS resolution via sql.internal zone)"
     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\services\Tcpip\Parameters" -Name "NV Domain" -Value $domainName -Force
 
     LD "Setting LocalAccountTokenFilterPolicy for remote admin"
@@ -198,40 +203,45 @@ function ConfigureVMPrerequisites {
 }
 
 function ConfigureHostsFile {
-    LD "Configuring cluster hosts file entries"
+    LD "Verifying DNS resolution for cluster name and ILB IPs"
 
-    $hostsFile = "C:\Windows\System32\drivers\etc\hosts"
-    $hostsContent = Get-Content $hostsFile -Raw -ErrorAction SilentlyContinue
-    if ($null -eq $hostsContent) { $hostsContent = "" }
-
+    # Cluster VNN name and primary cluster DNS are resolved via the shared
+    # sql.internal Private DNS zone (A records created by Terraform).
     foreach ($clusterIP in $ClusterIPs) {
-        $line = "$clusterIP`t$ClusterName"
-        if ($hostsContent -notmatch [regex]::Escape($clusterIP)) {
-            LD "Adding hosts entry: $line"
-            Add-Content -Path $hostsFile -Value $line -Force
-        }
+        LD "Cluster IP: $ClusterName -> $clusterIP (via DNS A record)"
     }
 
     if (-not [string]::IsNullOrWhiteSpace($PrimaryClusterIP) -and -not [string]::IsNullOrWhiteSpace($PrimaryClusterDNS)) {
-        $line = "$PrimaryClusterIP`t$PrimaryClusterDNS"
-        if ($hostsContent -notmatch [regex]::Escape($PrimaryClusterIP)) {
-            LD "Adding DR hosts entry: $line"
-            Add-Content -Path $hostsFile -Value $line -Force
-        }
+        LD "Primary cluster DNS: $PrimaryClusterDNS -> $PrimaryClusterIP (via DNS A record)"
     }
 
     ipconfig /flushdns | Out-Null
-    LD "Hosts file configured, DNS cache flushed"
+    LD "DNS cache flushed"
 }
 
 function ValidateNodeConnectivity {
     L "Validating network connectivity"
+    $maxRetries = 6
+    $retryDelay = 10
+
     $NodeNames | ForEach-Object {
-        if (-not (Test-Connection -ComputerName $_ -Count 1 -Quiet -ErrorAction SilentlyContinue)) {
-            LE "Cannot reach node: $_"
-            throw "Cannot reach $_"
+        $nodeName = $_
+        $reachable = $false
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            if (Test-Connection -ComputerName $nodeName -Count 1 -Quiet -ErrorAction SilentlyContinue) {
+                LD "Node $nodeName is reachable (attempt $attempt)"
+                $reachable = $true
+                break
+            }
+            if ($attempt -lt $maxRetries) {
+                LW "Cannot reach node $nodeName (attempt $attempt/$maxRetries), retrying in ${retryDelay}s..."
+                Start-Sleep -Seconds $retryDelay
+            }
         }
-        LD "Node $_ is reachable"
+        if (-not $reachable) {
+            LE "Cannot reach node: $nodeName after $maxRetries attempts"
+            throw "Cannot reach $nodeName"
+        }
     }
     L "All nodes are reachable"
 }
@@ -594,6 +604,29 @@ function Main {
     L "Host: $env:COMPUTERNAME | Cluster: $ClusterName"
 
     ValidateInputs
+
+    # Early check: if this node is already in the target cluster with AlwaysOn enabled,
+    # skip the full setup (idempotency for re-runs due to script content changes)
+    if (CheckClusterExists -Name $ClusterName) {
+        L "Cluster '$ClusterName' already exists on this node"
+
+        # Ensure prerequisites and configs are still correct
+        ConfigureVMPrerequisites
+        ConfigureHostsFile
+
+        # Ensure cluster admin exists
+        if (-not [string]::IsNullOrWhiteSpace($ClusterAdminUsername)) {
+            CreateClusterAdminLocal -Username $ClusterAdminUsername -Password $ClusterAdminPassword
+        }
+
+        # Ensure AlwaysOn is enabled
+        EnableSqlAlwaysOn
+
+        DisplayClusterInfo -Name $ClusterName
+        L "Cluster setup already complete - idempotent pass"
+        return
+    }
+
     ConfigureVMPrerequisites
     ConfigureHostsFile
     ValidateNodeConnectivity
