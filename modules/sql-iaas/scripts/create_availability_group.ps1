@@ -447,10 +447,8 @@ WHERE r.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = '$
                 try {
                     # Connect via SMB
                     L "  Connecting to $secondary via SMB..."
-                    $netResult = cmd /c "net use $uncPath /user:$secondary\$ClusterAdminUsername `"$ClusterAdminPassword`" 2>&1"
-                    if ($LASTEXITCODE -ne 0 -and $netResult -notmatch "already") {
-                        throw "net use failed: $netResult"
-                    }
+                    try { New-SmbMapping -RemotePath $uncPath -UserName "$secondary\$ClusterAdminUsername" -Password $ClusterAdminPassword -ErrorAction Stop | Out-Null }
+                    catch { if ($_.Exception.Message -notmatch "already") { throw "SMB connect failed: $_" } }
 
                     # Create remote backup directory
                     if (-not (Test-Path $remoteBackupDir)) {
@@ -464,7 +462,7 @@ WHERE r.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = '$
                     L "  Backups copied to $secondary"
 
                     # Disconnect SMB
-                    cmd /c "net use $uncPath /delete /y 2>&1" | Out-Null
+                    Remove-SmbMapping -RemotePath $uncPath -Force -ErrorAction SilentlyContinue | Out-Null
 
                     # Restore WITH NORECOVERY on secondary
                     L "  Restoring WITH NORECOVERY on $secondary..."

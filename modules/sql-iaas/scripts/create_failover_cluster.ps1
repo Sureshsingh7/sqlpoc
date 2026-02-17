@@ -158,7 +158,7 @@ function ConfigureVMPrerequisites {
 
     LD "Configuring WinRM for Workgroup Auth"
     Enable-PSRemoting -Force -SkipNetworkProfileCheck -ErrorAction SilentlyContinue | Out-Null
-    Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
+    Set-Item WSMan:\localhost\Client\TrustedHosts -Value ($NodeIPs -join ',') -Force
     Restart-Service WinRM
 
     LD "Creating WinRM Firewall rule for cluster node subnet connectivity"

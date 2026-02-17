@@ -54,7 +54,7 @@ $PartnerNodes = $AllNodeNamesArray | Where-Object { $_ -ne $CurrentNodeName }
 $LocalCertName = "${CurrentNodeName}_HADR_Cert"
 $EndpointName = "HADR_Endpoint"
 $CertPath = "C:\Certificates"
-$MasterKeyPassword = "HadrMasterKey2025!$(Get-Random -Minimum 1000 -Maximum 9999)"
+$MasterKeyPassword = "Hk!$([guid]::NewGuid().ToString('N'))$([guid]::NewGuid().ToString('N'))"
 
 #region Logging
 function Write-Log {
@@ -211,10 +211,8 @@ function Sync-PartnerCertificate {
     while ($waitTime -lt $maxWaitSeconds -and -not $copiedFromPartner) {
         try {
             L "  Connecting to $uncPath... (attempt $([math]::Floor($waitTime/10)+1))"
-            $netResult = cmd /c "net use $uncPath /user:$PartnerServer\$ClusterAdminUsername `"$ClusterAdminPassword`" 2>&1"
-            if ($LASTEXITCODE -ne 0 -and $netResult -notmatch "already") {
-                throw "net use failed: $netResult"
-            }
+            try { New-SmbMapping -RemotePath $uncPath -UserName "$PartnerServer\$ClusterAdminUsername" -Password $ClusterAdminPassword -ErrorAction Stop | Out-Null }
+            catch { if ($_.Exception.Message -notmatch "already") { throw "SMB connect failed: $_" } }
 
             $remoteCertFolder = "$uncPath\Certificates"
             if (-not (Test-Path $remoteCertFolder)) {
@@ -243,11 +241,11 @@ function Sync-PartnerCertificate {
                 L "  Partner certificate not ready at $remotePartnerCert ($waitTime/${maxWaitSeconds}s)"
             }
 
-            cmd /c "net use $uncPath /delete /y 2>&1" | Out-Null
+            Remove-SmbMapping -RemotePath $uncPath -Force -ErrorAction SilentlyContinue | Out-Null
 
         } catch {
             L "  Connection error ($waitTime/${maxWaitSeconds}s): $($_.Exception.Message)"
-            cmd /c "net use $uncPath /delete /y 2>&1" | Out-Null
+            Remove-SmbMapping -RemotePath $uncPath -Force -ErrorAction SilentlyContinue | Out-Null
         }
         if (-not $copiedFromPartner) {
             Start-Sleep -Seconds 10

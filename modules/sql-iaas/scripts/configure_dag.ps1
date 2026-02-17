@@ -258,16 +258,16 @@ try {
             L "  Checking DNS on remote node $rName ($rIP)..."
 
             # Verify remote node can resolve local DR hostnames via xp_cmdshell nslookup
+            # Enable xp_cmdshell once, use try/finally to guarantee it is disabled
             try {
+                Invoke-RemoteSql "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;" -Server $rIP
+                try {
                 for ($j = 0; $j -lt $LocalNodeNameArray.Count; $j++) {
                     $localName = $LocalNodeNameArray[$j]
                     $localIP   = $LocalNodeIPArray[$j]
 
                     $nslookupSql = @"
-EXEC sp_configure 'show advanced options', 1; RECONFIGURE;
-EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;
 EXEC xp_cmdshell 'powershell -NoProfile -Command "[System.Net.Dns]::GetHostAddresses(''$localName'') | Select-Object -First 1 -ExpandProperty IPAddressToString"';
-EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;
 "@
                     $result = Invoke-RemoteSql $nslookupSql -Server $rIP -Safe
                     $resolvedIP = ($result | Where-Object { $_.Column1 -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1).Column1
@@ -277,24 +277,20 @@ EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;
                         LW "    $rName resolved $localName to '$resolvedIP', expected $localIP"
                     }
                 }
-            } catch {
-                LW "    DNS verification on ${rName} failed: $($_.Exception.Message)"
-            }
 
-            # Add firewall rules on remote nodes for DR IPs (still needed for network-level access)
-            try {
+                # Add firewall rules on remote nodes for DR IPs (still needed for network-level access)
                 $localIPs = $LocalNodeIPArray -join ','
                 $fwSql = @"
-EXEC sp_configure 'show advanced options', 1; RECONFIGURE;
-EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;
 EXEC xp_cmdshell 'netsh advfirewall firewall delete rule name="DAG Cross-Cluster 5022" >nul 2>&1';
 EXEC xp_cmdshell 'netsh advfirewall firewall add rule name="DAG Cross-Cluster 5022" dir=in action=allow protocol=tcp localport=5022 remoteip=$localIPs';
-EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;
 "@
                 Invoke-RemoteSql $fwSql -Server $rIP -Safe
                 L "    Firewall rule added on $rName for DR IPs"
+                } finally {
+                    Invoke-RemoteSql "EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;" -Server $rIP -Safe
+                }
             } catch {
-                LW "    Failed to add firewall on ${rName}: $($_.Exception.Message)"
+                LW "    Remote xp_cmdshell operations on ${rName} failed: $($_.Exception.Message)"
             }
         }
     }
@@ -373,10 +369,8 @@ EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;
         while ($waited -lt $maxWait -and -not $exchangeComplete) {
             try {
                 # Connect via SMB using remote cluster admin
-                $netResult = cmd /c "net use $uncPath /user:$rName\$RemoteClusterAdminUsername `"$RemoteClusterAdminPassword`" 2>&1"
-                if ($LASTEXITCODE -ne 0 -and $netResult -notmatch "already") {
-                    throw "SMB connect failed: $netResult"
-                }
+                try { New-SmbMapping -RemotePath $uncPath -UserName "$rName\$RemoteClusterAdminUsername" -Password $RemoteClusterAdminPassword -ErrorAction Stop | Out-Null }
+                catch { if ($_.Exception.Message -notmatch "already") { throw "SMB connect failed: $_" } }
 
                 # Ensure remote cert folder exists
                 if (-not (Test-Path $remoteCertFolder)) {
@@ -406,11 +400,11 @@ EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;
                     L "    Remote cert not ready on $rName (${waited}/${maxWait}s)"
                 }
 
-                cmd /c "net use $uncPath /delete /y 2>&1" | Out-Null
+                Remove-SmbMapping -RemotePath $uncPath -Force -ErrorAction SilentlyContinue | Out-Null
 
             } catch {
                 LW "    SMB error (${waited}/${maxWait}s): $($_.Exception.Message)"
-                cmd /c "net use $uncPath /delete /y 2>&1" | Out-Null
+                Remove-SmbMapping -RemotePath $uncPath -Force -ErrorAction SilentlyContinue | Out-Null
             }
 
             if (-not $exchangeComplete) {
@@ -510,6 +504,7 @@ EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;
         # The cycle is safe and idempotent - it briefly restarts SQL then re-enables HADR.
         L "  Step 8a: AlwaysOn cycle on remote primary to ensure WSFC integration..."
         try {
+            Invoke-RemoteSql "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;" -Server $RemotePrimaryReplica
             $alwaysOnCycleCmd = @"
 Import-Module SqlServer -ErrorAction SilentlyContinue
 `$svcName = 'MSSQLSERVER'
@@ -522,7 +517,11 @@ Enable-SqlAlwaysOn -ServerInstance `$instanceName -Force -ErrorAction Stop
 Start-Sleep -Seconds 10
 Write-Output "AlwaysOn cycle complete on `$instanceName"
 "@
+            try {
             Invoke-RemoteSql "EXEC xp_cmdshell 'powershell -NoProfile -Command `"$($alwaysOnCycleCmd -replace '"','\"' -replace "`n",'; ')`"'" -Server $RemotePrimaryReplica -Timeout 120
+            } finally {
+                Invoke-RemoteSql "EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;" -Server $RemotePrimaryReplica -Safe
+            }
             L "  AlwaysOn cycle completed on remote primary"
             # Wait for SQL to stabilise after restart
             Start-Sleep -Seconds 15
