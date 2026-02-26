@@ -12,7 +12,7 @@
     Prerequisite: Install-Module -Name SqlServer -Force -AllowClobber -Scope CurrentUser
 
 .EXAMPLE
-    .\Validate-DAG-Replication.ps1 -PrimaryNode "poc-ha-sql-01" -DRNodes "poc-ha-dr-sql-01","poc-ha-dr-sql-02"
+    .\Validate-DAG-Replication.ps1 -PrimaryNode "poc-ha-sql-01.sql.internal" -DRNodes "poc-ha-dr-sql01.sql.internal","poc-ha-dr-sql02.sql.internal"
 #>
 
 [CmdletBinding()]
