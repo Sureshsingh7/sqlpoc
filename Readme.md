@@ -182,7 +182,9 @@ Configures dedicated storage volumes and SQL Server paths:
 Also:
 - Creates the `clusteradmin` local user on every node
 - Grants `clusteradmin` full admin privileges
-- Creates the `C:\Certificates` directory for cert exchange
+- Creates the `C:\Certificates` directory (local staging for Key Vault–mediated cert exchange; see [Certificate Management](#certificate-management))
+
+> **Post-setup cleanup:** Once all HADR endpoints and DAG are established, `C:\Certificates` can be deleted from every node. SQL Server imports certs into its internal store — the on-disk `.cer` files are never referenced again. If you ever need to re-run a step (by removing its sentinel), the scripts will regenerate and re-exchange the certificates automatically.
 
 ---
 
@@ -639,7 +641,7 @@ terraform apply tfplan
 # Validate DAG replication (inserts marker row, polls DR)
 .\Validate-DAG-Replication.ps1 `
   -PrimaryNode "poc-ha-sql-01.sql.internal" `
-  -DRNodes @("poc-ha-dr-sql-01.sql.internal","poc-ha-dr-sql-02.sql.internal") `
+  -DRNodes @("poc-ha-dr-sql01.sql.internal","poc-ha-dr-sql02.sql.internal") `
   -PrimarySqlPassword "<password>" `
   -DrSqlPassword "<password>"
 
