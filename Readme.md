@@ -184,7 +184,7 @@ Also:
 - Grants `clusteradmin` full admin privileges
 - Creates the `C:\Certificates` directory (local staging for Key Vault–mediated cert exchange; see [Certificate Management](#certificate-management))
 
-> **Post-setup cleanup:** Once all HADR endpoints and DAG are established, `C:\Certificates` can be deleted from every node. SQL Server imports certs into its internal store — the on-disk `.cer` files are never referenced again. If you ever need to re-run a step (by removing its sentinel), the scripts will regenerate and re-exchange the certificates automatically.
+> **Automatic cleanup:** The `C:\Certificates` directory is automatically deleted at the end of both `configure_hadr_endpoints.ps1` and `configure_dag.ps1`. SQL Server imports certs into its internal store — the on-disk `.cer` files are never referenced again. If you ever need to re-run a step (by removing its sentinel), the scripts will regenerate and re-exchange the certificates automatically.
 
 ---
 

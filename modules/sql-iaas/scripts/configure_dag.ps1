@@ -509,6 +509,10 @@ EXEC xp_cmdshell 'netsh advfirewall firewall add rule name="DAG Cross-Cluster 50
             $localDAG = Invoke-LocalSql "SELECT name FROM sys.availability_groups WHERE name = '$DAGName'" -Safe
             if ($localDAG) {
                 L "  DAG already exists on both sides - setup complete"
+                if (Test-Path $CertPath) {
+                    Remove-Item -Path $CertPath -Recurse -Force
+                    L "Cleaned up $CertPath"
+                }
                 New-Item -Path $sentinel -ItemType File -Force | Out-Null
                 exit 0
             }
@@ -719,6 +723,12 @@ WHERE drs.is_local = 1
     # ================================================================
     # COMPLETE
     # ================================================================
+    # Cleanup: remove staging certs from disk (already imported into SQL Server)
+    if (Test-Path $CertPath) {
+        Remove-Item -Path $CertPath -Recurse -Force
+        L "Cleaned up $CertPath (certs are stored in SQL Server and Key Vault)"
+    }
+
     L "=========================================="
     L "DAG setup completed on $currentNode"
     L "=========================================="

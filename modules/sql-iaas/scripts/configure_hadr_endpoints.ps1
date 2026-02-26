@@ -393,6 +393,12 @@ try {
     Write-Step 7 "Verify Setup"
     Test-HadrSetup
 
+    # Cleanup: remove staging certs from disk (already imported into SQL Server)
+    if (Test-Path $CertPath) {
+        Remove-Item -Path $CertPath -Recurse -Force
+        L "Cleaned up $CertPath (certs are stored in SQL Server and Key Vault)"
+    }
+
     # Mark as complete
     New-Item -Path $sentinel -ItemType File -Force | Out-Null
 
