@@ -212,3 +212,15 @@ variable "witness_storage_security_control_tag" {
   default     = "ignore"
 }
 
+variable "key_vault_name" {
+  description = "Name of the Azure Key Vault used to store/retrieve HADR certificates."
+  type        = string
+  default     = ""
+}
+
+variable "remote_key_vault_name" {
+  description = "Name of the remote (primary) Key Vault for cross-cluster DAG cert exchange. Only needed when enable_dag = true."
+  type        = string
+  default     = ""
+}
+

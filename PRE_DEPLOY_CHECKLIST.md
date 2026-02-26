@@ -72,7 +72,7 @@ $rg = "rg-fnz-poc-sql-se"
 
 foreach ($node in $nodes) {
     Write-Host "`n=== Validating $node ===" -ForegroundColor Cyan
-    
+
     $result = az vm run-command invoke `
         --resource-group $rg `
         --name $node `
@@ -94,7 +94,7 @@ Write-Host '4. Certificates:'
 `$certs = & sqlcmd -E -C -h -1 -W -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.certificates WHERE name LIKE '%HADR%'" 2>&1
 if (`$certs -match '^\s*2\s*$') { Write-Host "   ✓ 2 certificates" } else { Write-Host "   ✗ Wrong cert count: `$certs" }
 "@ --query "value[0].message" -o tsv
-    
+
     Write-Host $result
 }
 

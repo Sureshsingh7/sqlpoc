@@ -1,6 +1,10 @@
 <#
 .SYNOPSIS
     Injects random data into the primary and verifies it replicates to all DR nodes.
+
+.NOTES
+    Prerequisite: Install-Module -Name SqlServer -Force -AllowClobber -Scope CurrentUser
+
 .EXAMPLE
     .\Test-DAG-BulkReplication.ps1 -PrimaryNode "poc-ha-sql-01.sql.internal" `
         -DRNodes "poc-ha-dr-sql01.sql.internal","poc-ha-dr-sql02.sql.internal" `
@@ -10,7 +14,7 @@
 param(
     [string]$PrimaryNode = "poc-ha-sql-01.sql.internal",
     [string[]]$DRNodes = @("poc-ha-dr-sql01.sql.internal","poc-ha-dr-sql02.sql.internal"),
-    [string]$DatabaseName = "TestDB2",
+    [string]$DatabaseName = "TestDB",
     [string]$SqlUser = "sqladmin",
     [Parameter(Mandatory)][string]$PrimarySqlPassword,
     [Parameter(Mandatory)][string]$DrSqlPassword,

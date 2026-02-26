@@ -58,19 +58,19 @@ $ErrorActionPreference = 'Stop'
 $log = 'C:\Windows\Temp\create-availability-group.log'
 $sentinel = 'C:\Windows\Temp\.ag-setup-completed'
 
-function L([string]$m) { 
+function L([string]$m) {
     $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [INFO] $m"
     Add-Content -Path $log -Value $msg
     Write-Host $msg
 }
 
-function LE([string]$m) { 
+function LE([string]$m) {
     $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [ERROR] $m"
     Add-Content -Path $log -Value $msg
     Write-Error $msg
 }
 
-function LW([string]$m) { 
+function LW([string]$m) {
     $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [WARN] $m"
     Add-Content -Path $log -Value $msg
     Write-Host $msg
@@ -258,7 +258,12 @@ try {
                     L "  dm_os_cluster_properties empty (SQL Server may not see the WSFC yet)"
                     if ($wsfcExists) {
                         L "  WSFC cluster exists but SQL Server does not detect it"
-                        L "  Cycling AlwaysOn (disable/re-enable) to re-register with WSFC..."
+                        L "  Granting SQL service account cluster access and cycling AlwaysOn..."
+                        try {
+                            Import-Module FailoverClusters -ErrorAction Stop
+                            Grant-ClusterAccess -User "NT SERVICE\MSSQLSERVER" -Full -ErrorAction Stop
+                            L "  Cluster access granted to NT SERVICE\MSSQLSERVER"
+                        } catch { LW "  Grant-ClusterAccess: $($_.Exception.Message)" }
                         Disable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force
                         Start-Sleep -Seconds 10
                         Enable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force
@@ -595,163 +600,222 @@ WHERE drs.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = 
                 }
             } catch { LW "Could not configure cluster networks: $_" }
 
-            # Azure ILB VNN pattern: /32 subnet mask + OverrideAddressMatch + ProbePort
-            # This is CRITICAL - /26 or other masks will NOT work with Azure ILB floating IP
-            $subnetMask = "255.255.255.255"
+            # Determine AG cluster type - this affects how the listener is created
+            $agClusterType = Invoke-Sql "SELECT cluster_type_desc FROM sys.availability_groups WHERE name = '$AGName'" -Safe
+            $isWSFCType = ($agClusterType -and $agClusterType.cluster_type_desc -eq 'WSFC')
+            L "  AG CLUSTER_TYPE: $($agClusterType.cluster_type_desc)"
+
+            Import-Module FailoverClusters -ErrorAction Stop
+            $clusterNetworks = Get-ClusterNetwork -ErrorAction Stop
+            L "  Cluster networks:"
+            foreach ($cn in $clusterNetworks) {
+                L "    $($cn.Name): $($cn.Address)/$($cn.AddressMask)"
+            }
+
+            # Helper: find which cluster network an IP belongs to (returns name + mask)
+            function Find-ClusterNetworkInfo($ip) {
+                foreach ($cn in $clusterNetworks) {
+                    $netAddr  = [System.Net.IPAddress]::Parse($cn.Address)
+                    $netMask  = [System.Net.IPAddress]::Parse($cn.AddressMask)
+                    $testAddr = [System.Net.IPAddress]::Parse($ip)
+                    $netBytes  = $netAddr.GetAddressBytes()
+                    $maskBytes = $netMask.GetAddressBytes()
+                    $testBytes = $testAddr.GetAddressBytes()
+                    $match = $true
+                    for ($i = 0; $i -lt 4; $i++) {
+                        if (($netBytes[$i] -band $maskBytes[$i]) -ne ($testBytes[$i] -band $maskBytes[$i])) {
+                            $match = $false; break
+                        }
+                    }
+                    if ($match) { return @{ Name = $cn.Name; Mask = $cn.AddressMask } }
+                }
+                return $null
+            }
 
             $listenerCreated = $false
 
-            # Try multi-subnet listener first (2 ILB frontend IPs)
-            if ($ListenerIPArray.Count -gt 1) {
-                L "Creating multi-subnet VNN listener (IPs: $($ListenerIPArray -join ', '))..."
-                try {
-                    $ipParts = ($ListenerIPArray | ForEach-Object { "(N'$_', N'$subnetMask')" }) -join ", "
-                    $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ($ipParts), PORT=$ListenerPort)"
-                    Invoke-Sql $listenerSQL -Timeout 120
-                    L "Multi-subnet VNN listener created"
-                    $listenerCreated = $true
-                } catch {
-                    LW "Multi-subnet listener failed: $_"
-                }
-            }
+            if ($isWSFCType) {
+                # ============================================================
+                # CLUSTER_TYPE = WSFC: ADD LISTENER creates WSFC resources
+                # automatically (IP Address + Network Name).
+                # Subnet masks MUST match the cluster network masks (e.g. /26).
+                # Using /32 causes WSFC error 5894/5057.
+                # After creation, configure ProbePort on the auto-created IPs.
+                # ============================================================
+                L "WSFC mode: using cluster network subnet masks for listener"
 
-            # Fallback: single IP
-            if (-not $listenerCreated) {
-                L "Creating single-IP VNN listener..."
+                # Remove stale WSFC listener resources that could conflict
+                $stalePatterns = @("${ListenerName}_name", "${AGName}_${ListenerName}") +
+                    ($ListenerIPArray | ForEach-Object { "${ListenerName}_$_" }) +
+                    ($ListenerIPArray | ForEach-Object { "${AGName}_$_" })
+                foreach ($sn in $stalePatterns) {
+                    $stale = Get-ClusterResource -Name $sn -ErrorAction SilentlyContinue
+                    if ($stale) {
+                        L "  Removing stale WSFC resource '$sn'"
+                        Stop-ClusterResource -InputObject $stale -ErrorAction SilentlyContinue | Out-Null
+                        Remove-ClusterResource -InputObject $stale -Force -ErrorAction SilentlyContinue | Out-Null
+                    }
+                }
+
+                # Build IP parts with cluster network subnet masks
+                $ipParts = @()
+                foreach ($ip in $ListenerIPArray) {
+                    $info = Find-ClusterNetworkInfo $ip
+                    $mask = if ($info) { $info.Mask } else { "255.255.255.192" }
+                    L "  IP $ip -> mask $mask (network: $($info.Name))"
+                    $ipParts += "(N'$ip', N'$mask')"
+                }
+
                 try {
-                    $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ((N'$($ListenerIPArray[0])', N'$subnetMask')), PORT=$ListenerPort)"
+                    $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ($($ipParts -join ', ')), PORT=$ListenerPort)"
+                    L "  SQL: $listenerSQL"
                     Invoke-Sql $listenerSQL -Timeout 120
-                    L "Single-IP VNN listener created"
+                    L "VNN listener created (WSFC mode)"
                     $listenerCreated = $true
                 } catch {
+                    LW "Listener creation failed (WSFC mode): $($_.Exception.Message)"
                     if ($isDAG) {
-                        LW "Listener creation failed (non-fatal for DAG target): $_"
                         LW "DAG does not require a VNN listener - proceeding"
-                    } else {
-                        LE "All listener creation methods failed: $_"
+                    }
+                }
+
+                # Configure ILB ProbePort on auto-created WSFC IP resources
+                # ADD LISTENER names them: ${AGName}_${ip}
+                if ($listenerCreated) {
+                    Start-Sleep -Seconds 5
+                    foreach ($ip in $ListenerIPArray) {
+                        $resName = "${AGName}_$ip"
+                        $res = Get-ClusterResource -Name $resName -ErrorAction SilentlyContinue
+                        if ($res) {
+                            $res | Set-ClusterParameter -Multiple @{
+                                ProbePort            = $ProbePort
+                                OverrideAddressMatch = 1
+                                EnableDhcp           = 0
+                            }
+                            L "  ${resName}: ProbePort=$ProbePort configured"
+                        } else {
+                            LW "  WSFC resource '$resName' not found - ILB probe may not work for $ip"
+                        }
+                    }
+                    # Cycle AG group offline/online to apply ProbePort changes
+                    L "  Cycling AG cluster group to apply probe settings..."
+                    Stop-ClusterGroup -Name $AGName -ErrorAction SilentlyContinue | Out-Null
+                    Start-Sleep -Seconds 5
+                    Start-ClusterGroup -Name $AGName -ErrorAction SilentlyContinue | Out-Null
+                    L "  AG cluster group restarted"
+                }
+
+            } else {
+                # ============================================================
+                # CLUSTER_TYPE = NONE: ADD LISTENER creates SQL-only metadata.
+                # WSFC resources must be created manually for ILB probe.
+                # /32 subnet mask works fine here (no WSFC resource creation).
+                # ============================================================
+                L "NONE mode: using /32 masks (SQL-only listener) + manual WSFC resources"
+                $subnetMask = "255.255.255.255"
+
+                if ($ListenerIPArray.Count -gt 1) {
+                    L "Creating multi-subnet VNN listener (IPs: $($ListenerIPArray -join ', '))..."
+                    try {
+                        $ipParts = ($ListenerIPArray | ForEach-Object { "(N'$_', N'$subnetMask')" }) -join ", "
+                        $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ($ipParts), PORT=$ListenerPort)"
+                        Invoke-Sql $listenerSQL -Timeout 120
+                        L "Multi-subnet VNN listener created"
+                        $listenerCreated = $true
+                    } catch {
+                        LW "Multi-subnet listener failed: $_"
+                    }
+                }
+
+                if (-not $listenerCreated) {
+                    L "Creating single-IP VNN listener..."
+                    try {
+                        $listenerSQL = "ALTER AVAILABILITY GROUP [$AGName] ADD LISTENER N'$ListenerName' (WITH IP ((N'$($ListenerIPArray[0])', N'$subnetMask')), PORT=$ListenerPort)"
+                        Invoke-Sql $listenerSQL -Timeout 120
+                        L "Single-IP VNN listener created"
+                        $listenerCreated = $true
+                    } catch {
+                        if ($isDAG) {
+                            LW "Listener creation failed (non-fatal for DAG target): $_"
+                            LW "DAG does not require a VNN listener - proceeding"
+                        } else {
+                            LE "All listener creation methods failed: $_"
+                        }
+                    }
+                }
+
+                # Create manual WSFC resources for ILB probe
+                if ($listenerCreated) {
+                    L "Creating WSFC cluster resources for ILB probe port..."
+                    Start-Sleep -Seconds 10
+
+                    try {
+                        $groupName = $AGName
+                        $existingGroup = Get-ClusterGroup -Name $groupName -ErrorAction SilentlyContinue
+                        if (-not $existingGroup) {
+                            L "  Creating cluster group '$groupName'..."
+                            Add-ClusterGroup -Name $groupName -ErrorAction Stop | Out-Null
+                        } else {
+                            L "  Cluster group '$groupName' already exists"
+                        }
+
+                        $ipResourceNames = @()
+                        foreach ($ip in $ListenerIPArray) {
+                            $resName = "${ListenerName}_$ip"
+                            $info = Find-ClusterNetworkInfo $ip
+                            if (-not $info) {
+                                LW "  Could not find cluster network for IP $ip - skipping"
+                                continue
+                            }
+
+                            $existing = Get-ClusterResource -Name $resName -ErrorAction SilentlyContinue
+                            if (-not $existing) {
+                                L "  Creating IP resource '$resName' ($ip on '$($info.Name)')..."
+                                Add-ClusterResource -Name $resName -ResourceType "IP Address" -Group $groupName -ErrorAction Stop | Out-Null
+                            }
+
+                            Get-ClusterResource -Name $resName | Set-ClusterParameter -Multiple @{
+                                "Address"              = $ip
+                                "ProbePort"            = $ProbePort
+                                "SubnetMask"           = "255.255.255.255"
+                                "Network"              = $info.Name
+                                "OverrideAddressMatch" = 1
+                                "EnableDhcp"           = 0
+                            }
+                            L "  $resName configured: ProbePort=$ProbePort, Network=$($info.Name)"
+                            $ipResourceNames += $resName
+                        }
+
+                        $nnResName = "${ListenerName}_name"
+                        $existingNN = Get-ClusterResource -Name $nnResName -ErrorAction SilentlyContinue
+                        if (-not $existingNN) {
+                            L "  Creating Network Name resource '$nnResName'..."
+                            Add-ClusterResource -Name $nnResName -ResourceType "Network Name" -Group $groupName -ErrorAction Stop | Out-Null
+                        }
+                        Get-ClusterResource -Name $nnResName | Set-ClusterParameter -Multiple @{
+                            "Name"    = $ListenerName
+                            "DnsName" = $ListenerName
+                        }
+
+                        if ($ipResourceNames.Count -gt 0) {
+                            $depExpr = ($ipResourceNames | ForEach-Object { "[$_]" }) -join " or "
+                            Set-ClusterResourceDependency -Resource $nnResName -Dependency $depExpr -ErrorAction Stop
+                        }
+
+                        Start-ClusterGroup -Name $groupName -ErrorAction Stop | Out-Null
+                        L "  WSFC resources online"
+
+                    } catch {
+                        LW "Failed to create WSFC resources for ILB probe: $_"
+                        LW "The AG listener works but ILB health probe may not route correctly."
                     }
                 }
             }
 
-            # ================================================================
-            # Configure Azure ILB probe port via WSFC cluster resources
-            # With CLUSTER_TYPE=NONE, ADD LISTENER creates a SQL-only listener
-            # but does NOT create WSFC resources (IP Address, Network Name).
-            # We must create them manually so the Azure ILB health probe
-            # on $ProbePort can detect which node is primary.
-            # ================================================================
-            if ($listenerCreated) {
-                L "Creating WSFC cluster resources for ILB probe port..."
-                Start-Sleep -Seconds 10
-
-                try {
-                    Import-Module FailoverClusters -ErrorAction Stop
-
-                    # Get cluster networks to match each listener IP to its network
-                    $clusterNetworks = Get-ClusterNetwork -ErrorAction Stop
-                    L "  Cluster networks:"
-                    foreach ($cn in $clusterNetworks) {
-                        L "    $($cn.Name): $($cn.Address)/$($cn.AddressMask)"
-                    }
-
-                    # Helper: find which cluster network an IP belongs to
-                    function Find-ClusterNetworkForIP($ip) {
-                        foreach ($cn in $clusterNetworks) {
-                            $netAddr  = [System.Net.IPAddress]::Parse($cn.Address)
-                            $netMask  = [System.Net.IPAddress]::Parse($cn.AddressMask)
-                            $testAddr = [System.Net.IPAddress]::Parse($ip)
-                            $netBytes  = $netAddr.GetAddressBytes()
-                            $maskBytes = $netMask.GetAddressBytes()
-                            $testBytes = $testAddr.GetAddressBytes()
-                            $match = $true
-                            for ($i = 0; $i -lt 4; $i++) {
-                                if (($netBytes[$i] -band $maskBytes[$i]) -ne ($testBytes[$i] -band $maskBytes[$i])) {
-                                    $match = $false; break
-                                }
-                            }
-                            if ($match) { return $cn.Name }
-                        }
-                        return $null
-                    }
-
-                    # Create a cluster role (group) for the AG listener
-                    $groupName = $AGName
-                    $existingGroup = Get-ClusterGroup -Name $groupName -ErrorAction SilentlyContinue
-                    if (-not $existingGroup) {
-                        L "  Creating cluster group '$groupName'..."
-                        Add-ClusterGroup -Name $groupName -ErrorAction Stop | Out-Null
-                        L "  Cluster group created"
-                    } else {
-                        L "  Cluster group '$groupName' already exists"
-                    }
-
-                    # Create IP Address resources for each listener IP
-                    $ipResourceNames = @()
-                    foreach ($ip in $ListenerIPArray) {
-                        $resName = "${ListenerName}_$ip"
-                        $network = Find-ClusterNetworkForIP $ip
-                        if (-not $network) {
-                            LW "  Could not find cluster network for IP $ip - skipping"
-                            continue
-                        }
-
-                        $existing = Get-ClusterResource -Name $resName -ErrorAction SilentlyContinue
-                        if (-not $existing) {
-                            L "  Creating IP resource '$resName' ($ip on '$network')..."
-                            Add-ClusterResource -Name $resName -ResourceType "IP Address" -Group $groupName -ErrorAction Stop | Out-Null
-                        } else {
-                            L "  IP resource '$resName' already exists"
-                        }
-
-                        Get-ClusterResource -Name $resName | Set-ClusterParameter -Multiple @{
-                            "Address"              = $ip
-                            "ProbePort"            = $ProbePort
-                            "SubnetMask"           = "255.255.255.255"
-                            "Network"              = $network
-                            "OverrideAddressMatch" = 1
-                            "EnableDhcp"           = 0
-                        }
-                        L "  $resName configured: ProbePort=$ProbePort, Network=$network"
-                        $ipResourceNames += $resName
-                    }
-
-                    # Create Network Name resource for the listener
-                    $nnResName = "${ListenerName}_name"
-                    $existingNN = Get-ClusterResource -Name $nnResName -ErrorAction SilentlyContinue
-                    if (-not $existingNN) {
-                        L "  Creating Network Name resource '$nnResName'..."
-                        Add-ClusterResource -Name $nnResName -ResourceType "Network Name" -Group $groupName -ErrorAction Stop | Out-Null
-                    } else {
-                        L "  Network Name resource '$nnResName' already exists"
-                    }
-                    Get-ClusterResource -Name $nnResName | Set-ClusterParameter -Multiple @{
-                        "Name"    = $ListenerName
-                        "DnsName" = $ListenerName
-                    }
-                    L "  Network Name configured: $ListenerName"
-
-                    # Set dependency: Network Name depends on IP resources (OR logic)
-                    if ($ipResourceNames.Count -gt 0) {
-                        $depExpr = ($ipResourceNames | ForEach-Object { "[$_]" }) -join " or "
-                        L "  Setting dependency: $nnResName -> $depExpr"
-                        Set-ClusterResourceDependency -Resource $nnResName -Dependency $depExpr -ErrorAction Stop
-                    }
-
-                    # Bring resources online
-                    L "  Starting cluster group '$groupName'..."
-                    Start-ClusterGroup -Name $groupName -ErrorAction Stop | Out-Null
-                    L "  Cluster group online!"
-
-                    # Verify final state
-                    L "  Final cluster resources:"
-                    Get-ClusterResource -ErrorAction SilentlyContinue | ForEach-Object {
-                        L "    Name='$($_.Name)' Type='$($_.ResourceType)' Group='$($_.OwnerGroup)' State='$($_.State)'"
-                    }
-
-                } catch {
-                    LW "Failed to create WSFC resources for ILB probe: $_"
-                    LW "The AG listener works but ILB health probe may not route correctly."
-                }
+            # Verify final state
+            L "  Final cluster resources:"
+            Get-ClusterResource -ErrorAction SilentlyContinue | ForEach-Object {
+                L "    Name='$($_.Name)' Type='$($_.ResourceType)' Group='$($_.OwnerGroup)' State='$($_.State)'"
             }
         }
 
@@ -770,6 +834,79 @@ WHERE drs.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = 
             exit 1
         }
         L "Always On enabled locally"
+
+        # Check if SQL Server can see the WSFC cluster.
+        # If AlwaysOn was enabled before the node joined the cluster (race condition in
+        # create_failover_cluster.ps1), SQL Server won't detect the WSFC and dm_hadr_cluster
+        # will be empty OR return rows with NULL cluster_name. Both cause "remote WSFC
+        # cluster context" errors on AG JOIN.
+        # Fix approach:
+        #   1. Grant the SQL service account cluster access + restart SQL
+        #   2. If still broken, disable/re-enable AlwaysOn to force cluster re-detection
+        $clusterCheck = Invoke-Sql "SELECT cluster_name FROM sys.dm_hadr_cluster" -Safe
+        $clusterOk = $clusterCheck -and -not [string]::IsNullOrWhiteSpace($clusterCheck.cluster_name)
+
+        if (-not $clusterOk) {
+            if (-not $clusterCheck) {
+                LW "SQL Server does not see the WSFC cluster (dm_hadr_cluster is empty)"
+            } else {
+                LW "SQL Server dm_hadr_cluster has rows but cluster_name is empty/null"
+            }
+
+            # Step 1: Grant cluster access + restart
+            L "Granting NT SERVICE\MSSQLSERVER access to WSFC cluster and restarting SQL..."
+            try {
+                Import-Module FailoverClusters -ErrorAction Stop
+                Grant-ClusterAccess -User "NT SERVICE\MSSQLSERVER" -Full -ErrorAction Stop
+                L "Cluster access granted"
+            } catch {
+                LW "Grant-ClusterAccess failed (may already have access): $($_.Exception.Message)"
+            }
+            Restart-Service -Name MSSQLSERVER -Force
+            $maxWait = 90; $waited = 0
+            while ($waited -lt $maxWait) {
+                Start-Sleep -Seconds 5; $waited += 5
+                $test = Invoke-Sql "SELECT 1 AS ok" -Safe
+                if ($test) { L "SQL Server back online after restart (${waited}s)"; break }
+            }
+
+            # Check if step 1 fixed it
+            $clusterRecheck = Invoke-Sql "SELECT cluster_name FROM sys.dm_hadr_cluster" -Safe
+            $clusterOk = $clusterRecheck -and -not [string]::IsNullOrWhiteSpace($clusterRecheck.cluster_name)
+
+            if (-not $clusterOk) {
+                # Step 2: Disable/re-enable AlwaysOn to force SQL Server to re-detect the cluster
+                LW "Still no cluster detection - cycling AlwaysOn (disable/enable)..."
+                $instanceName = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL' -ErrorAction SilentlyContinue).MSSQLSERVER
+                if ($instanceName) {
+                    L "SQL instance path: $instanceName"
+                    Disable-SqlAlwaysOn -Path "SQLSERVER:\SQL\$env:COMPUTERNAME\DEFAULT" -Force -ErrorAction SilentlyContinue
+                    Restart-Service -Name MSSQLSERVER -Force
+                    Start-Sleep -Seconds 10
+                    Enable-SqlAlwaysOn -Path "SQLSERVER:\SQL\$env:COMPUTERNAME\DEFAULT" -Force -ErrorAction SilentlyContinue
+                    Restart-Service -Name MSSQLSERVER -Force
+                    $waited = 0
+                    while ($waited -lt $maxWait) {
+                        Start-Sleep -Seconds 5; $waited += 5
+                        $test = Invoke-Sql "SELECT 1 AS ok" -Safe
+                        if ($test) { L "SQL Server back online after AlwaysOn cycle (${waited}s)"; break }
+                    }
+                } else {
+                    LW "Could not find SQL instance name in registry"
+                }
+
+                $clusterRecheck2 = Invoke-Sql "SELECT cluster_name FROM sys.dm_hadr_cluster" -Safe
+                if ($clusterRecheck2 -and -not [string]::IsNullOrWhiteSpace($clusterRecheck2.cluster_name)) {
+                    L "SQL Server now sees WSFC cluster: $($clusterRecheck2.cluster_name)"
+                } else {
+                    LE "SQL Server still cannot see WSFC cluster after both fix attempts"
+                }
+            } else {
+                L "SQL Server now sees WSFC cluster: $($clusterRecheck.cluster_name)"
+            }
+        } else {
+            L "SQL Server sees WSFC cluster: $($clusterCheck.cluster_name)"
+        }
 
         # Verify local HADR endpoint is STARTED
         $ep = Invoke-Sql "SELECT name, state_desc, port FROM sys.tcp_endpoints WHERE type_desc = 'DATABASE_MIRRORING'" -Safe

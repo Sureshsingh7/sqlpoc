@@ -473,11 +473,11 @@ resource "azurerm_virtual_machine_run_command" "cluster_setup" {
 }
 
 # HADR Endpoint Configuration (runs on all nodes)
-# Uses SMB (UNC paths) for certificate exchange between nodes
+# Uses Azure Key Vault for certificate exchange between nodes
 resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
   for_each = var.is_ha ? local.vm_map : {}
 
-  name               = "hadr-endpoint-setup-v14"
+  name               = "hadr-endpoint-setup-v15"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.cluster_setup]
@@ -512,13 +512,13 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
   }
 
   parameter {
-    name  = "ClusterAdminUsername"
-    value = var.cluster_local_admin_username
+    name  = "KeyVaultName"
+    value = var.key_vault_name
   }
 
   parameter {
-    name  = "ClusterAdminPassword"
-    value = var.sql_vm_admin_password
+    name  = "ManagedIdentityClientId"
+    value = var.sql_vm_user_assigned_identity_client_id
   }
 
   timeouts {
@@ -538,7 +538,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
 resource "azurerm_virtual_machine_run_command" "ag_setup" {
   for_each = var.is_ha ? local.vm_map : {}
 
-  name               = "availability-group-setup-v24"
+  name               = "availability-group-setup-v27"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.hadr_endpoint_setup]
@@ -632,7 +632,7 @@ resource "azurerm_virtual_machine_run_command" "ag_setup" {
 resource "azurerm_virtual_machine_run_command" "dag_setup" {
   for_each = var.enable_dag ? local.vm_map : {}
 
-  name               = "dag-setup-v3"
+  name               = "dag-setup-v4"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.ag_setup]
@@ -702,18 +702,18 @@ resource "azurerm_virtual_machine_run_command" "dag_setup" {
   }
 
   parameter {
-    name  = "LocalClusterAdminUsername"
-    value = var.cluster_local_admin_username
+    name  = "LocalKeyVaultName"
+    value = var.key_vault_name
   }
 
   parameter {
-    name  = "RemoteClusterAdminUsername"
-    value = "clusteradmin"
+    name  = "RemoteKeyVaultName"
+    value = var.remote_key_vault_name
   }
 
   parameter {
-    name  = "RemoteClusterAdminPassword"
-    value = var.primary_sql_admin_password
+    name  = "ManagedIdentityClientId"
+    value = var.sql_vm_user_assigned_identity_client_id
   }
 
   parameter {

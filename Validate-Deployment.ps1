@@ -18,7 +18,7 @@ $allPassed = $true
 foreach ($node in $Nodes) {
     Write-Host "`n┌─ Validating $node " -NoNewline -ForegroundColor Yellow
     Write-Host ("─" * (50 - $node.Length)) -ForegroundColor Yellow
-    
+
     try {
         $result = az vm run-command invoke `
             --resource-group $ResourceGroup `
@@ -52,7 +52,7 @@ foreach (`$key in `$results.Keys | Sort-Object) {
     Write-Host "`$key=`$(`$results[`$key])"
 }
 "@ --query "value[0].message" -o tsv 2>$null
-        
+
         # Parse results
         $checks = @{
             'ClusterAccess' = $false
@@ -61,19 +61,19 @@ foreach (`$key in `$results.Keys | Sort-Object) {
             'Endpoint' = $false
             'Certificates' = $false
         }
-        
+
         foreach ($line in $result -split "`n") {
             if ($line -match '^(\w+)=(PASS|FAIL)') {
                 $checkName = $matches[1]
                 $passed = $matches[2] -eq 'PASS'
                 $checks[$checkName] = $passed
-                
+
                 $icon = if ($passed) { '✓' } else { '✗'; $allPassed = $false }
                 $color = if ($passed) { 'Green' } else { 'Red' }
                 Write-Host "  $icon $checkName" -ForegroundColor $color
             }
         }
-        
+
     } catch {
         Write-Host "  ✗ Failed to validate $node : $_" -ForegroundColor Red
         $allPassed = $false
@@ -91,16 +91,16 @@ try {
         --command-id RunPowerShellScript `
         --scripts @"
 `$ag = & sqlcmd -E -C -h -1 -W -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.availability_groups" 2>&1
-if (`$ag -match '^\s*1\s*$') { 
+if (`$ag -match '^\s*1\s*$') {
     Write-Host 'AGExists=PASS'
-    
+
     `$replicas = & sqlcmd -E -C -h -1 -W -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.availability_replicas" 2>&1
     if (`$replicas -match '^\s*2\s*$') {
         Write-Host 'Replicas=PASS'
     } else {
         Write-Host 'Replicas=FAIL'
     }
-    
+
     `$listener = & sqlcmd -E -C -h -1 -W -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.availability_group_listeners" 2>&1
     if (`$listener -match '^\s*1\s*$') {
         Write-Host 'Listener=PASS'
@@ -111,18 +111,18 @@ if (`$ag -match '^\s*1\s*$') {
     Write-Host 'AGExists=FAIL'
 }
 "@ --query "value[0].message" -o tsv 2>$null
-    
+
     foreach ($line in $agResult -split "`n") {
         if ($line -match '^(\w+)=(PASS|FAIL)') {
             $checkName = $matches[1]
             $passed = $matches[2] -eq 'PASS'
-            
+
             $icon = if ($passed) { '✓' } else { '✗'; $allPassed = $false }
             $color = if ($passed) { 'Green' } else { 'Red' }
             Write-Host "  $icon $checkName" -ForegroundColor $color
         }
     }
-    
+
 } catch {
     Write-Host "  ✗ Failed to validate AG: $_" -ForegroundColor Red
     $allPassed = $false

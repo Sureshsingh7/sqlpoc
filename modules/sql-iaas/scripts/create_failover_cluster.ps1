@@ -660,6 +660,18 @@ function Main {
         L "Cluster created successfully"
         DisplayClusterInfo -Name $ClusterName
 
+        # Grant SQL Server service account access to the WSFC cluster.
+        # This is required because AlwaysOn was enabled before the cluster existed,
+        # so the normal permission grant during Enable-SqlAlwaysOn was skipped.
+        # Without this, SQL Server's dm_hadr_cluster DMV will be empty and AG operations
+        # will fail with "remote WSFC cluster context" errors.
+        try {
+            Grant-ClusterAccess -User "NT SERVICE\MSSQLSERVER" -Full -ErrorAction Stop
+            L "Granted WSFC cluster access to NT SERVICE\MSSQLSERVER"
+        } catch {
+            LW "Could not grant cluster access to SQL service: $_"
+        }
+
         if (-not [string]::IsNullOrWhiteSpace($WitnessStorageAccountName)) {
             if (-not (ConfigureCloudWitness)) {
                 LW "Cloud Witness failed, using default quorum"

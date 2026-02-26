@@ -35,14 +35,14 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$RemoteSqlPassword,
 
-    [Parameter(Mandatory=$false)]
-    [string]$LocalClusterAdminUsername = "clusteradmin",
+    [Parameter(Mandatory=$true)]
+    [string]$LocalKeyVaultName,
+
+    [Parameter(Mandatory=$true)]
+    [string]$RemoteKeyVaultName,
 
     [Parameter(Mandatory=$false)]
-    [string]$RemoteClusterAdminUsername = "clusteradmin",
-
-    [Parameter(Mandatory=$false)]
-    [string]$RemoteClusterAdminPassword = "",
+    [string]$ManagedIdentityClientId = "",
 
     [Parameter(Mandatory=$false)]
     [string]$LocalNodeNames = "",
@@ -131,6 +131,44 @@ function Invoke-RemoteSql {
     }
 }
 
+#endregion
+
+#region Key Vault Helpers
+function Get-AzAccessToken {
+    $resource = "https://vault.azure.net"
+    $imdsUrl = "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=$resource"
+    if ($ManagedIdentityClientId -ne "") {
+        $imdsUrl += "&client_id=$ManagedIdentityClientId"
+    }
+    $response = Invoke-RestMethod -Uri $imdsUrl -Headers @{ Metadata = "true" } -ErrorAction Stop
+    return $response.access_token
+}
+
+function Upload-CertToKeyVault {
+    param([string]$CertFile, [string]$SecretName, [string]$VaultName)
+    $certBytes = [System.IO.File]::ReadAllBytes($CertFile)
+    $certBase64 = [Convert]::ToBase64String($certBytes)
+    $token = Get-AzAccessToken
+    $uri = "https://$VaultName.vault.azure.net/secrets/${SecretName}?api-version=7.4"
+    $body = @{ value = $certBase64; contentType = "application/x-certificate" } | ConvertTo-Json
+    Invoke-RestMethod -Uri $uri -Method PUT -Headers @{
+        Authorization  = "Bearer $token"
+        "Content-Type" = "application/json"
+    } -Body $body -ErrorAction Stop | Out-Null
+    L "  Uploaded certificate to Key Vault ($VaultName): $SecretName"
+}
+
+function Download-CertFromKeyVault {
+    param([string]$SecretName, [string]$DestFile, [string]$VaultName)
+    $token = Get-AzAccessToken
+    $uri = "https://$VaultName.vault.azure.net/secrets/${SecretName}?api-version=7.4"
+    $response = Invoke-RestMethod -Uri $uri -Method GET -Headers @{
+        Authorization = "Bearer $token"
+    } -ErrorAction Stop
+    $certBytes = [Convert]::FromBase64String($response.value)
+    [System.IO.File]::WriteAllBytes($DestFile, $certBytes)
+    L "  Downloaded certificate from Key Vault ($VaultName): $SecretName -> $DestFile"
+}
 #endregion
 
 # Resolve defaults
@@ -336,9 +374,9 @@ EXEC xp_cmdshell 'netsh advfirewall firewall add rule name="DAG Cross-Cluster 50
     L "  Remote AG '$RemoteAGName' verified on $RemotePrimaryReplica"
 
     # ================================================================
-    # STEP 5: Cross-cluster certificate exchange via SMB
+    # STEP 5: Cross-cluster certificate exchange via Key Vault
     # ================================================================
-    L "STEP 5: Exchanging HADR certificates with remote cluster..."
+    L "STEP 5: Exchanging HADR certificates with remote cluster via Key Vault..."
 
     $localCertName = "${currentNode}_HADR_Cert"
     $localCertFile = "$CertPath\$localCertName.cer"
@@ -350,73 +388,44 @@ EXEC xp_cmdshell 'netsh advfirewall firewall add rule name="DAG Cross-Cluster 50
     }
     L "  Local cert ready: $localCertFile"
 
+    # Upload local cert to LOCAL Key Vault (DR KV)
+    $localSecretName = "hadr-cert-$($currentNode.ToLower())"
+    Upload-CertToKeyVault -CertFile $localCertFile -SecretName $localSecretName -VaultName $LocalKeyVaultName
+
+    # Download remote node certs from REMOTE Key Vault (primary KV)
     foreach ($i in 0..($RemoteNodeNameArray.Count - 1)) {
         $rName = $RemoteNodeNameArray[$i]
-        $rIP   = $RemoteNodeIPArray[$i]
         $remoteCertName = "${rName}_HADR_Cert"
         $remoteCertFile = "$CertPath\$remoteCertName.cer"
 
-        L "  --- Certificate exchange with $rName ($rIP) ---"
+        L "  --- Downloading certificate for $rName from remote Key Vault ---"
 
-        # Use IP for SMB to avoid DNS dependency
-        $uncPath = "\\$rIP\C`$"
-        $remoteCertFolder = "$uncPath\Certificates"
+        if (Test-Path $remoteCertFile) {
+            L "    Remote cert already local: $remoteCertFile"
+            continue
+        }
 
+        $remoteSecretName = "hadr-cert-$($rName.ToLower())"
         $maxWait = 300
         $waited = 0
-        $exchangeComplete = $false
+        $downloaded = $false
 
-        while ($waited -lt $maxWait -and -not $exchangeComplete) {
+        while ($waited -lt $maxWait -and -not $downloaded) {
             try {
-                # Connect via SMB using remote cluster admin
-                try { New-SmbMapping -RemotePath $uncPath -UserName "$rName\$RemoteClusterAdminUsername" -Password $RemoteClusterAdminPassword -ErrorAction Stop | Out-Null }
-                catch { if ($_.Exception.Message -notmatch "already") { throw "SMB connect failed: $_" } }
-
-                # Ensure remote cert folder exists
-                if (-not (Test-Path $remoteCertFolder)) {
-                    New-Item -ItemType Directory -Path $remoteCertFolder -Force | Out-Null
-                }
-
-                # Push LOCAL cert TO remote node
-                $remoteDestCert = "$remoteCertFolder\$localCertName.cer"
-                if (-not (Test-Path $remoteDestCert)) {
-                    Copy-Item $localCertFile $remoteDestCert -Force
-                    L "    Pushed local cert to $rName"
-                } else {
-                    L "    Local cert already on $rName"
-                }
-
-                # Pull REMOTE cert FROM remote node
-                $remoteSrcCert = "$remoteCertFolder\$remoteCertName.cer"
-                if (Test-Path $remoteSrcCert) {
-                    if (-not (Test-Path $remoteCertFile)) {
-                        Copy-Item $remoteSrcCert $remoteCertFile -Force
-                        L "    Pulled remote cert from $rName"
-                    } else {
-                        L "    Remote cert already local"
-                    }
-                    $exchangeComplete = $true
-                } else {
-                    L "    Remote cert not ready on $rName (${waited}/${maxWait}s)"
-                }
-
-                Remove-SmbMapping -RemotePath $uncPath -Force -ErrorAction SilentlyContinue | Out-Null
-
+                Download-CertFromKeyVault -SecretName $remoteSecretName -DestFile $remoteCertFile -VaultName $RemoteKeyVaultName
+                $downloaded = $true
+                L "    Downloaded $rName cert from remote Key Vault"
             } catch {
-                LW "    SMB error (${waited}/${maxWait}s): $($_.Exception.Message)"
-                Remove-SmbMapping -RemotePath $uncPath -Force -ErrorAction SilentlyContinue | Out-Null
+                L "    Cert for $rName not in remote KV yet (${waited}/${maxWait}s): $($_.Exception.Message)"
             }
-
-            if (-not $exchangeComplete) {
+            if (-not $downloaded) {
                 Start-Sleep -Seconds 15
                 $waited += 15
             }
         }
 
-        if (-not $exchangeComplete) {
-            LW "  Failed to exchange cert with $rName after ${maxWait}s - continuing"
-        } else {
-            L "  Certificate exchange with $rName complete"
+        if (-not $downloaded) {
+            LW "  Failed to download cert for $rName after ${maxWait}s - continuing"
         }
     }
 
@@ -444,7 +453,10 @@ EXEC xp_cmdshell 'netsh advfirewall firewall add rule name="DAG Cross-Cluster 50
     }
 
     # ================================================================
-    # STEP 7: Import local certs on remote primary nodes via remote SQL
+    # STEP 7: Push local certificates to remote SQL nodes directly
+    # Instead of having remote nodes download from KV via xp_cmdshell+PowerShell
+    # (which fails due to complex escaping), we read the local cert file and
+    # push the bytes to the remote node using -EncodedCommand to avoid quoting.
     # ================================================================
     L "STEP 7: Importing local certificates on remote SQL nodes..."
 
@@ -453,12 +465,28 @@ EXEC xp_cmdshell 'netsh advfirewall firewall add rule name="DAG Cross-Cluster 50
         $rIP   = $RemoteNodeIPArray[$i]
         $importedCertName = "${currentNode}_DAG_Imported_Cert"
         $loginName = "${currentNode}_DAG_Login"
-
-        # The local cert was pushed to the remote node's C:\Certificates in Step 5
         $remoteCertFilePath = "C:\Certificates\$localCertName.cer"
 
-        L "  Importing $localCertName on $rName ($rIP)..."
+        L "  Pushing cert to remote node $rName ($rIP)..."
         try {
+            # Read local cert file and base64-encode
+            $certBytes = [System.IO.File]::ReadAllBytes($localCertFile)
+            $certBase64 = [Convert]::ToBase64String($certBytes)
+
+            # Build script to write cert on remote node, then encode for -EncodedCommand
+            $writeScript = "if(-not(Test-Path 'C:\Certificates')){New-Item -ItemType Directory -Path 'C:\Certificates' -Force|Out-Null};[IO.File]::WriteAllBytes('$remoteCertFilePath',[Convert]::FromBase64String('$certBase64'));Write-Output 'OK'"
+            $encodedCmd = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($writeScript))
+
+            Invoke-RemoteSql "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;" -Server $rIP
+            try {
+                $result = Invoke-RemoteSql "EXEC xp_cmdshell 'powershell -NoProfile -EncodedCommand $encodedCmd'" -Server $rIP -Safe
+                $output = ($result | Where-Object { $_.Column1 -ne $null }).Column1 -join ' '
+                L "    Remote cert write result: $output"
+            } finally {
+                Invoke-RemoteSql "EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;" -Server $rIP -Safe
+            }
+
+            L "  Importing $localCertName on $rName ($rIP)..."
             Invoke-RemoteSql "IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name='$importedCertName') CREATE CERTIFICATE [$importedCertName] FROM FILE='$remoteCertFilePath';" -Server $rIP -Safe
             Invoke-RemoteSql "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name='$loginName') CREATE LOGIN [$loginName] FROM CERTIFICATE [$importedCertName];" -Server $rIP -Safe
             Invoke-RemoteSql "GRANT CONNECT ON ENDPOINT::[$EndpointName] TO [$loginName];" -Server $rIP -Safe
@@ -481,6 +509,10 @@ EXEC xp_cmdshell 'netsh advfirewall firewall add rule name="DAG Cross-Cluster 50
             $localDAG = Invoke-LocalSql "SELECT name FROM sys.availability_groups WHERE name = '$DAGName'" -Safe
             if ($localDAG) {
                 L "  DAG already exists on both sides - setup complete"
+                if (Test-Path $CertPath) {
+                    Remove-Item -Path $CertPath -Recurse -Force
+                    L "Cleaned up $CertPath"
+                }
                 New-Item -Path $sentinel -ItemType File -Force | Out-Null
                 exit 0
             }
@@ -505,20 +537,21 @@ EXEC xp_cmdshell 'netsh advfirewall firewall add rule name="DAG Cross-Cluster 50
         L "  Step 8a: AlwaysOn cycle on remote primary to ensure WSFC integration..."
         try {
             Invoke-RemoteSql "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;" -Server $RemotePrimaryReplica
-            $alwaysOnCycleCmd = @"
+            # Use -EncodedCommand to avoid quoting issues with xp_cmdshell
+            $alwaysOnScript = @'
 Import-Module SqlServer -ErrorAction SilentlyContinue
-`$svcName = 'MSSQLSERVER'
-`$instanceName = `$env:COMPUTERNAME
-Write-Output "Disabling AlwaysOn on `$instanceName..."
-Disable-SqlAlwaysOn -ServerInstance `$instanceName -Force -ErrorAction Stop
+$instanceName = $env:COMPUTERNAME
+Write-Output "Disabling AlwaysOn on $instanceName..."
+Disable-SqlAlwaysOn -ServerInstance $instanceName -Force -ErrorAction Stop
 Start-Sleep -Seconds 5
-Write-Output "Re-enabling AlwaysOn on `$instanceName..."
-Enable-SqlAlwaysOn -ServerInstance `$instanceName -Force -ErrorAction Stop
+Write-Output "Re-enabling AlwaysOn on $instanceName..."
+Enable-SqlAlwaysOn -ServerInstance $instanceName -Force -ErrorAction Stop
 Start-Sleep -Seconds 10
-Write-Output "AlwaysOn cycle complete on `$instanceName"
-"@
+Write-Output "AlwaysOn cycle complete on $instanceName"
+'@
+            $encodedCmd = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($alwaysOnScript))
             try {
-            Invoke-RemoteSql "EXEC xp_cmdshell 'powershell -NoProfile -Command `"$($alwaysOnCycleCmd -replace '"','\"' -replace "`n",'; ')`"'" -Server $RemotePrimaryReplica -Timeout 120
+            Invoke-RemoteSql "EXEC xp_cmdshell 'powershell -NoProfile -EncodedCommand $encodedCmd'" -Server $RemotePrimaryReplica -Timeout 120
             } finally {
                 Invoke-RemoteSql "EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;" -Server $RemotePrimaryReplica -Safe
             }
@@ -690,6 +723,12 @@ WHERE drs.is_local = 1
     # ================================================================
     # COMPLETE
     # ================================================================
+    # Cleanup: remove staging certs from disk (already imported into SQL Server)
+    if (Test-Path $CertPath) {
+        Remove-Item -Path $CertPath -Recurse -Force
+        L "Cleaned up $CertPath (certs are stored in SQL Server and Key Vault)"
+    }
+
     L "=========================================="
     L "DAG setup completed on $currentNode"
     L "=========================================="

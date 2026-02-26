@@ -42,7 +42,7 @@ try {
     $vol_f = Get-Volume -DriveLetter F -ErrorAction SilentlyContinue
     $vol_g = Get-Volume -DriveLetter G -ErrorAction SilentlyContinue
     $vol_t = Get-Volume -DriveLetter T -ErrorAction SilentlyContinue
-    
+
     if ($vol_f -and $vol_g -and $vol_t) {
         Write-Host "Volumes F:, G:, T: already exist - creating sentinel and exiting"
         Add-Content -Path $log -Value "$(Get-Date -Format o) [OK] Volumes already configured (F:/G:/T:) - creating sentinel file and exiting"
@@ -194,7 +194,7 @@ function ConfigureHostsFile {
 
 function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
   L "Processing Disk $n for drive $dl (label: $lbl)"
-  
+
   # Verify disk exists and is accessible
   $d = $null
   for($retry=0; $retry -lt 5; $retry++){
@@ -212,11 +212,11 @@ function Ensure([int]$n,[string]$dl,[string]$lbl,[string]$dir){
       Start-Sleep -Seconds 2
     }
   }
-  
+
   if(-not $d){
     throw "Disk $n not accessible after 5 retries"
   }
-  
+
   if($d.PartitionStyle -eq 'RAW'){Initialize-Disk -Number $n -PartitionStyle GPT|Out-Null}
   $p=Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue | Where-Object { $_.Type -ne 'Reserved' } | Sort-Object Size -Desc | Select-Object -First 1
 
@@ -427,7 +427,7 @@ $spec=@{0=@{l='F';b='DATA';d='F:\Data'};1=@{l='G';b='LOG';d='G:\Log'};2=@{l='T';
 
 function GetLunMap(){
   $m=@{}
-  
+
   # Method 1: MSFT_Disk CIM (most reliable with LUN info)
   foreach($d in (Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -ErrorAction SilentlyContinue)){
     if($d.IsBoot -or $d.IsSystem){continue}
@@ -443,7 +443,7 @@ function GetLunMap(){
       $m[$lun]=[int]$d.Number
     }
   }
-  
+
   # Method 2: Win32_DiskDrive (fallback for disks with no Number in MSFT_Disk)
   if($m.Count -lt 3){
     foreach($dd in (Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue)){
@@ -455,18 +455,18 @@ function GetLunMap(){
       }
     }
   }
-  
+
   $m
 }
 
 try{
   try{Remove-Item $log,$err -ErrorAction SilentlyContinue}catch{}
   L 'start'
-  
+
   # Force storage rescan and bring all disks online before mapping LUNs
   L 'Forcing storage rescan and disk online...'
   try { Update-HostStorageCache -ErrorAction SilentlyContinue | Out-Null } catch {}
-  try { 
+  try {
     Get-Disk -ErrorAction SilentlyContinue | Where-Object {$_.OperationalStatus -eq 'Offline'} | ForEach-Object {
       L "Bringing disk $($_.Number) online"
       Set-Disk -Number $_.Number -IsOffline $false -ErrorAction SilentlyContinue | Out-Null
@@ -476,12 +476,12 @@ try{
     L "Disk online check failed: $_"
   }
   Start-Sleep -Seconds 5
-  
+
   $map=@{}
   for($i=0;$i -lt 60;$i++){
     # Rescan storage on each retry to ensure stable disk enumeration
     try { Update-HostStorageCache -ErrorAction SilentlyContinue | Out-Null } catch {}
-    
+
     $map=GetLunMap
     if($map.ContainsKey(0) -and $map.ContainsKey(1) -and $map.ContainsKey(2)){
       L "Found all 3 LUNs: LUN0->Disk$($map[0]), LUN1->Disk$($map[1]), LUN2->Disk$($map[2])"
@@ -512,7 +512,7 @@ try{
       throw "CRITICAL: Drive ${drive}: not accessible after setup"
     }
     L "Drive ${drive}: accessible"
-    
+
     # Verify write access with test file
     try {
       $testFile = "${drive}:\test-disksetup-$(Get-Date -Format 'yyyyMMddHHmmss').tmp"
@@ -528,7 +528,7 @@ try{
   # Create sentinel file to mark completion
   New-Item -Path $sentinel -ItemType File -Force | Out-Null
   L '[OK] Disk setup completed successfully - sentinel file created'
-  
+
   L 'ok'
   exit 0
 }catch{

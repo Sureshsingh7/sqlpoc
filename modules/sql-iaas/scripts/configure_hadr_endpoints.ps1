@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
     Sets up SQL Server HADR certificates and endpoints on EACH VM separately.
-    Certificates are exchanged between nodes via SMB (UNC file shares).
+    Certificates are exchanged between nodes via Azure Key Vault.
 .PARAMETER AllNodeNames
     Comma-separated list of all SQL node hostnames
 .PARAMETER CurrentNodeName
@@ -13,10 +13,10 @@
     SQL admin username for SQL authentication
 .PARAMETER SqlAdminPassword
     SQL admin password for SQL authentication
-.PARAMETER ClusterAdminUsername
-    Local admin username for SMB access to partner nodes
-.PARAMETER ClusterAdminPassword
-    Local admin password for SMB access to partner nodes
+.PARAMETER KeyVaultName
+    Name of the Azure Key Vault used to store/retrieve HADR certificates
+.PARAMETER ManagedIdentityClientId
+    Client ID of the User-Assigned Managed Identity for Key Vault access
 #>
 param(
     [Parameter(Mandatory=$true)]
@@ -35,10 +35,10 @@ param(
     [string]$SqlAdminPassword,
 
     [Parameter(Mandatory=$true)]
-    [string]$ClusterAdminUsername,
+    [string]$KeyVaultName,
 
-    [Parameter(Mandatory=$true)]
-    [string]$ClusterAdminPassword
+    [Parameter(Mandatory=$false)]
+    [string]$ManagedIdentityClientId = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -174,13 +174,55 @@ ELSE IF EXISTS (SELECT 1 FROM sys.endpoints WHERE name='$EndpointName' AND state
     }
 }
 
+function Get-AzAccessToken {
+    # Get an access token for Key Vault using the VM's Managed Identity
+    $resource = "https://vault.azure.net"
+    $imdsUrl = "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=$resource"
+    if ($ManagedIdentityClientId -ne "") {
+        $imdsUrl += "&client_id=$ManagedIdentityClientId"
+    }
+    $response = Invoke-RestMethod -Uri $imdsUrl -Headers @{ Metadata = "true" } -ErrorAction Stop
+    return $response.access_token
+}
+
+function Upload-CertToKeyVault {
+    param([string]$CertFile, [string]$SecretName)
+
+    $certBytes = [System.IO.File]::ReadAllBytes($CertFile)
+    $certBase64 = [Convert]::ToBase64String($certBytes)
+    $token = Get-AzAccessToken
+
+    $uri = "https://$KeyVaultName.vault.azure.net/secrets/${SecretName}?api-version=7.4"
+    $body = @{ value = $certBase64; contentType = "application/x-certificate" } | ConvertTo-Json
+
+    Invoke-RestMethod -Uri $uri -Method PUT -Headers @{
+        Authorization  = "Bearer $token"
+        "Content-Type" = "application/json"
+    } -Body $body -ErrorAction Stop | Out-Null
+    L "  Uploaded certificate to Key Vault: $SecretName"
+}
+
+function Download-CertFromKeyVault {
+    param([string]$SecretName, [string]$DestFile)
+
+    $token = Get-AzAccessToken
+    $uri = "https://$KeyVaultName.vault.azure.net/secrets/${SecretName}?api-version=7.4"
+
+    $response = Invoke-RestMethod -Uri $uri -Method GET -Headers @{
+        Authorization = "Bearer $token"
+    } -ErrorAction Stop
+
+    $certBytes = [Convert]::FromBase64String($response.value)
+    [System.IO.File]::WriteAllBytes($DestFile, $certBytes)
+    L "  Downloaded certificate from Key Vault: $SecretName -> $DestFile"
+}
+
 function Sync-PartnerCertificate {
     param([string]$PartnerServer)
 
     $localCertFile = "$CertPath\$LocalCertName.cer"
     $partnerCertName = "${PartnerServer}_HADR_Cert"
     $partnerCertFile = "$CertPath\$partnerCertName.cer"
-    $uncPath = "\\$PartnerServer\C`$"
     $maxWaitSeconds = 300  # 5 minutes max
 
     # Wait for local certificate to be ready
@@ -196,67 +238,41 @@ function Sync-PartnerCertificate {
     }
     L "  Local certificate ready: $localCertFile"
 
+    # Upload local cert to Key Vault
+    $localSecretName = "hadr-cert-$($CurrentNodeName.ToLower())"
+    L "  Uploading local certificate to Key Vault as '$localSecretName'..."
+    Upload-CertToKeyVault -CertFile $localCertFile -SecretName $localSecretName
+
     if (Test-Path $partnerCertFile) {
         L "  Partner certificate already exists locally: $partnerCertFile"
         return
     }
 
-    L "  Starting mutual certificate exchange with $PartnerServer..."
+    L "  Waiting for partner certificate in Key Vault..."
     L "  Will wait up to $($maxWaitSeconds/60) minutes for partner certificate..."
 
+    $partnerSecretName = "hadr-cert-$($PartnerServer.ToLower())"
     $waitTime = 0
-    $copiedFromPartner = $false
-    $pushedToPartner = $false
+    $downloaded = $false
 
-    while ($waitTime -lt $maxWaitSeconds -and -not $copiedFromPartner) {
+    while ($waitTime -lt $maxWaitSeconds -and -not $downloaded) {
         try {
-            L "  Connecting to $uncPath... (attempt $([math]::Floor($waitTime/10)+1))"
-            try { New-SmbMapping -RemotePath $uncPath -UserName "$PartnerServer\$ClusterAdminUsername" -Password $ClusterAdminPassword -ErrorAction Stop | Out-Null }
-            catch { if ($_.Exception.Message -notmatch "already") { throw "SMB connect failed: $_" } }
-
-            $remoteCertFolder = "$uncPath\Certificates"
-            if (-not (Test-Path $remoteCertFolder)) {
-                L "  Creating Certificates folder on $PartnerServer..."
-                New-Item -ItemType Directory -Path $remoteCertFolder -Force | Out-Null
-            }
-
-            # Push local cert to partner
-            if (-not $pushedToPartner) {
-                $remoteLocalCert = "$remoteCertFolder\$LocalCertName.cer"
-                if (-not (Test-Path $remoteLocalCert)) {
-                    L "  Pushing local certificate to $PartnerServer..."
-                    Copy-Item $localCertFile $remoteLocalCert -Force
-                    L "  Local certificate pushed to partner successfully"
-                }
-                $pushedToPartner = $true
-            }
-
-            # Pull partner cert from partner
-            $remotePartnerCert = "$remoteCertFolder\$partnerCertName.cer"
-            if (Test-Path $remotePartnerCert) {
-                Copy-Item $remotePartnerCert $partnerCertFile -Force
-                $copiedFromPartner = $true
-                L "  Partner certificate copied to local successfully"
-            } else {
-                L "  Partner certificate not ready at $remotePartnerCert ($waitTime/${maxWaitSeconds}s)"
-            }
-
-            Remove-SmbMapping -RemotePath $uncPath -Force -ErrorAction SilentlyContinue | Out-Null
-
+            Download-CertFromKeyVault -SecretName $partnerSecretName -DestFile $partnerCertFile
+            $downloaded = $true
+            L "  Partner certificate downloaded from Key Vault"
         } catch {
-            L "  Connection error ($waitTime/${maxWaitSeconds}s): $($_.Exception.Message)"
-            Remove-SmbMapping -RemotePath $uncPath -Force -ErrorAction SilentlyContinue | Out-Null
+            L "  Partner cert not in Key Vault yet ($waitTime/${maxWaitSeconds}s): $($_.Exception.Message)"
         }
-        if (-not $copiedFromPartner) {
+        if (-not $downloaded) {
             Start-Sleep -Seconds 10
             $waitTime += 10
         }
     }
 
-    if (-not $copiedFromPartner) {
-        throw "Failed to copy partner certificate after $($maxWaitSeconds/60) minutes - ensure script is running on both VMs"
+    if (-not $downloaded) {
+        throw "Failed to download partner certificate from Key Vault after $($maxWaitSeconds/60) minutes - ensure script is running on both VMs"
     }
-    L "  Certificate exchange complete"
+    L "  Certificate exchange via Key Vault complete"
     L "    Local cert: $localCertFile ($((Get-Item $localCertFile).Length) bytes)"
     L "    Partner cert: $partnerCertFile ($((Get-Item $partnerCertFile).Length) bytes)"
 }
@@ -363,7 +379,7 @@ try {
     Write-Step 4 "Create HADR Endpoint"
     New-HadrEndpoint
 
-    Write-Step 5 "Exchange Certificates with Partners via SMB"
+    Write-Step 5 "Exchange Certificates with Partners via Key Vault"
     foreach ($partner in $PartnerNodes) {
         L "  --- Exchanging with $partner ---"
         Sync-PartnerCertificate -PartnerServer $partner
@@ -376,6 +392,12 @@ try {
 
     Write-Step 7 "Verify Setup"
     Test-HadrSetup
+
+    # Cleanup: remove staging certs from disk (already imported into SQL Server)
+    if (Test-Path $CertPath) {
+        Remove-Item -Path $CertPath -Recurse -Force
+        L "Cleaned up $CertPath (certs are stored in SQL Server and Key Vault)"
+    }
 
     # Mark as complete
     New-Item -Path $sentinel -ItemType File -Force | Out-Null

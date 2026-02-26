@@ -66,12 +66,12 @@ terraform plan -var-file="env/dev-ha-dr.tfvars" -var="use_msi=false"
 - Each state file tracks its own resource lifecycle
 - Clear separation of concerns for production safety
 
-**Key Architecture Decision:**  
+**Key Architecture Decision:**
 The `deploy_primary` variable controls which module is deployed. When set to `false` in
 dev-ha-dr.tfvars, only the DR module (`module.sql_cluster_dr[0]`) is instantiated, keeping
 primary HA resources safe from accidental changes.
 
-**Important:** 
+**Important:**
 - **GitHub Actions**: Automatically handles state isolation per deployment preset
 - **Local CLI**: Always run `terraform init -reconfigure` when switching environments!
 
