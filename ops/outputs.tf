@@ -2,6 +2,11 @@ output "ops_key_vault_id" {
   value = module.ops_kv.resource_id
 }
 
+output "ops_key_vault_name" {
+  value       = "kv-fnz-poc-se"
+  description = "Name of the primary Key Vault"
+}
+
 output "kv_private_endpoint_id" {
   value = module.ops_kv.private_endpoints["kv_pep"].id
 }

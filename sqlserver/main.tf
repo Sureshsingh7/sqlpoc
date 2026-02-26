@@ -62,6 +62,8 @@ module "sql_cluster" {
   dns_zone_resource_group_name         = data.terraform_remote_state.network.outputs.sql_dns_zone_resource_group_name
   witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
 
+  key_vault_name = data.terraform_remote_state.ops.outputs.ops_key_vault_name
+
   tags = var.tags
 }
 
@@ -140,6 +142,9 @@ module "sql_cluster_dr" {
   dns_zone_name                        = "sql.internal"
   dns_zone_resource_group_name         = data.terraform_remote_state.network.outputs.sql_dns_zone_resource_group_name
   witness_storage_security_control_tag = var.witness_storage_security_control_tag_value
+
+  key_vault_name        = var.enable_dr ? data.terraform_remote_state.ops.outputs.dr_key_vault_name : ""
+  remote_key_vault_name = var.enable_dag ? data.terraform_remote_state.ops.outputs.ops_key_vault_name : ""
 
   tags = merge(
     var.tags,
