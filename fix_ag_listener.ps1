@@ -42,7 +42,7 @@ Log "Checking if AG '$AGName' exists..."
 try {
     $query = "SELECT name FROM sys.availability_groups WHERE name = '$AGName'"
     $result = Invoke-Sqlcmd -ServerInstance "localhost" -TrustServerCertificate -Query $query -ErrorAction Stop
-    
+
     if (-not $result) {
         Log "ERROR: AG '$AGName' does not exist"
         exit 1
@@ -58,7 +58,7 @@ Log "Checking for existing listener..."
 try {
     $query = "SELECT dns_name FROM sys.availability_group_listeners WHERE dns_name = '$ListenerName'"
     $listener = Invoke-Sqlcmd -ServerInstance "localhost" -TrustServerCertificate -Query $query -ErrorAction SilentlyContinue
-    
+
     if ($listener) {
         Log "Listener '$ListenerName' already exists - dropping it first..."
         $dropListenerSQL = @"
@@ -89,12 +89,12 @@ ADD LISTENER  '$ListenerName' (
     PORT = $ListenerPort
 );
 "@
-    
+
     Log "Executing listener creation SQL..."
     Log "SQL: $createListenerSQL"
     Invoke-Sqlcmd -ServerInstance "localhost" -TrustServerCertificate -Query $createListenerSQL -QueryTimeout 120 -ErrorAction Stop
     Log "SUCCESS: Listener '$ListenerName' created successfully!"
-    
+
     # Verify listener
     Start-Sleep -Seconds 5
     $verifySQL = "SELECT dns_name, port FROM sys.availability_group_listeners WHERE dns_name = '$ListenerName'"
@@ -103,10 +103,10 @@ ADD LISTENER  '$ListenerName' (
         Log "Listener verified:"
         Log "  DNS Name: $($listenerInfo.dns_name)"
         Log "  Port: $($listenerInfo.port)"
-        
+
         # Get IP addresses
         $ipSQL = @"
-SELECT l.dns_name, ip.ip_address, ip.ip_subnet_mask  
+SELECT l.dns_name, ip.ip_address, ip.ip_subnet_mask
 FROM sys.availability_group_listener_ip_addresses ip
 JOIN sys.availability_group_listeners l ON ip.listener_id = l.listener_id
 WHERE l.dns_name = '$ListenerName'
@@ -116,7 +116,7 @@ WHERE l.dns_name = '$ListenerName'
             Log "  IP: $($ip.ip_address) / $($ip.ip_subnet_mask)"
         }
     }
-    
+
     exit 0
 } catch {
     Log "ERROR creating listener (Method 1): $_"
@@ -133,7 +133,7 @@ ADD LISTENER '$ListenerName' (
     PORT = $ListenerPort
 );
 "@
-    
+
     Invoke-Sqlcmd -ServerInstance "localhost" -TrustServerCertificate -Query $createListenerDHCP -QueryTimeout 120 -ErrorAction Stop
     Log "SUCCESS: Listener created with DHCP!"
     exit 0
@@ -152,7 +152,7 @@ ADD LISTENER '$ListenerName' (
     PORT = $ListenerPort
 );
 "@
-    
+
     Invoke-Sqlcmd -ServerInstance "localhost" -TrustServerCertificate -Query $createListenerSingleIP -QueryTimeout 120 -ErrorAction Stop
     Log "SUCCESS: Listener created with single IP (primary subnet)!"
     Log "Note: Multi-subnet failover will require MultiSubnetFailover=True in connection strings"

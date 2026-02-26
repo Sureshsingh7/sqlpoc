@@ -58,19 +58,19 @@ $ErrorActionPreference = 'Stop'
 $log = 'C:\Windows\Temp\create-availability-group.log'
 $sentinel = 'C:\Windows\Temp\.ag-setup-completed'
 
-function L([string]$m) { 
+function L([string]$m) {
     $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [INFO] $m"
     Add-Content -Path $log -Value $msg
     Write-Host $msg
 }
 
-function LE([string]$m) { 
+function LE([string]$m) {
     $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [ERROR] $m"
     Add-Content -Path $log -Value $msg
     Write-Error $msg
 }
 
-function LW([string]$m) { 
+function LW([string]$m) {
     $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [WARN] $m"
     Add-Content -Path $log -Value $msg
     Write-Host $msg

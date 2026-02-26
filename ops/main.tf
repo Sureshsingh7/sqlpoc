@@ -141,7 +141,7 @@ module "ops_kv" {
   sku_name                      = "standard"
   purge_protection_enabled      = true
   soft_delete_retention_days    = 30
-  public_network_access_enabled = true  # TEMP: enabled for local destroy/redeploy
+  public_network_access_enabled = true # TEMP: enabled for local destroy/redeploy
   network_acls = {
     bypass         = "AzureServices"
     default_action = "Allow" # TEMP: Allow for local access
@@ -190,7 +190,7 @@ module "ops_kv_dr" {
   sku_name                      = "standard"
   purge_protection_enabled      = true
   soft_delete_retention_days    = 30
-  public_network_access_enabled = true  # TEMP: enabled for local destroy/redeploy
+  public_network_access_enabled = true # TEMP: enabled for local destroy/redeploy
   network_acls = {
     bypass         = "AzureServices"
     default_action = "Allow" # TEMP: Allow for local access
