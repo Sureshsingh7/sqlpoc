@@ -536,6 +536,74 @@ try {
     return $false
 }
 
+function SuppressClusterDnsNoise {
+    L "Suppressing WSFC DNS registration noise (workgroup cluster)"
+
+    # In a domain-independent cluster, the "Cluster Name" network name resource
+    # repeatedly attempts AD-style dynamic DNS registration, which always fails
+    # (we use Azure Private DNS instead).
+    # This generates Event IDs 1196, 1069, 1127 (FailoverClustering).
+    #
+    # StatusDns and StatusNetBIOS are read-only status fields, not configurable.
+    # We suppress noise by:
+    #   RegisterAllProvidersIP=0 — only register the owning node's IP (fewer attempts)
+    #   HostRecordTTL=300        — reduce refresh cycle from 20min to 5min
+    # And on the AG listener Network Name (if present):
+    #   PublishPTRRecords=0      — skip reverse DNS PTR registration
+
+    try {
+        $clusterNameRes = Get-ClusterResource "Cluster Name" -ErrorAction Stop
+        $changed = $false
+
+        # RegisterAllProvidersIP=0: Only register the IP of the node that owns the resource
+        $current = (Get-ClusterParameter -InputObject $clusterNameRes -Name "RegisterAllProvidersIP" -ErrorAction SilentlyContinue).Value
+        if ($current -ne 0) {
+            $clusterNameRes | Set-ClusterParameter -Name "RegisterAllProvidersIP" -Value 0 -ErrorAction Stop
+            LD "Set RegisterAllProvidersIP=0 on Cluster Name resource (was $current)"
+            $changed = $true
+        }
+
+        # HostRecordTTL=300: Reduce DNS record TTL to 5 minutes
+        $current = (Get-ClusterParameter -InputObject $clusterNameRes -Name "HostRecordTTL" -ErrorAction SilentlyContinue).Value
+        if ($current -ne 300) {
+            $clusterNameRes | Set-ClusterParameter -Name "HostRecordTTL" -Value 300 -ErrorAction Stop
+            LD "Set HostRecordTTL=300 on Cluster Name resource (was $current)"
+            $changed = $true
+        }
+
+        # Apply same settings to any AG listener Network Name resources
+        $nnResources = Get-ClusterResource | Where-Object { $_.ResourceType -eq "Network Name" -and $_.Name -ne "Cluster Name" }
+        foreach ($nn in $nnResources) {
+            $ptr = (Get-ClusterParameter -InputObject $nn -Name "PublishPTRRecords" -ErrorAction SilentlyContinue).Value
+            if ($null -ne $ptr -and $ptr -ne 0) {
+                $nn | Set-ClusterParameter -Name "PublishPTRRecords" -Value 0 -ErrorAction Stop
+                LD "Set PublishPTRRecords=0 on $($nn.Name)"
+                $changed = $true
+            }
+            $regAll = (Get-ClusterParameter -InputObject $nn -Name "RegisterAllProvidersIP" -ErrorAction SilentlyContinue).Value
+            if ($null -ne $regAll -and $regAll -ne 0) {
+                $nn | Set-ClusterParameter -Name "RegisterAllProvidersIP" -Value 0 -ErrorAction Stop
+                LD "Set RegisterAllProvidersIP=0 on $($nn.Name)"
+                $changed = $true
+            }
+            $ttl = (Get-ClusterParameter -InputObject $nn -Name "HostRecordTTL" -ErrorAction SilentlyContinue).Value
+            if ($null -ne $ttl -and $ttl -ne 300) {
+                $nn | Set-ClusterParameter -Name "HostRecordTTL" -Value 300 -ErrorAction Stop
+                LD "Set HostRecordTTL=300 on $($nn.Name)"
+                $changed = $true
+            }
+        }
+
+        if ($changed) {
+            L "WSFC DNS noise suppression configured"
+        } else {
+            L "WSFC DNS noise suppression already in place"
+        }
+    } catch {
+        LW "Could not suppress DNS noise: $_ (non-fatal)"
+    }
+}
+
 function DisplayClusterInfo {
     param([string]$Name)
 
@@ -622,6 +690,9 @@ function Main {
         # Ensure AlwaysOn is enabled
         EnableSqlAlwaysOn
 
+        # Ensure DNS noise suppression is applied (idempotent)
+        SuppressClusterDnsNoise
+
         DisplayClusterInfo -Name $ClusterName
         L "Cluster setup already complete - idempotent pass"
         return
@@ -659,6 +730,9 @@ function Main {
     if (CreateFailoverCluster) {
         L "Cluster created successfully"
         DisplayClusterInfo -Name $ClusterName
+
+        # Suppress DNS registration noise (workgroup cluster uses Azure Private DNS)
+        SuppressClusterDnsNoise
 
         # Grant SQL Server service account access to the WSFC cluster.
         # This is required because AlwaysOn was enabled before the cluster existed,

@@ -87,6 +87,11 @@ $RECYCLE.BIN/
 *.log
 *.tmp
 
+# Scratch / temp scripts (local debugging, not for commit)
+sqlserver/create-listener-temp.ps1
+sqlserver/fix_ha_endpoint.ps1
+sqlserver/plan-debug.txt
+
 # Sensitive key files
 key.txt
 **/key.txt
