@@ -920,17 +920,18 @@ WHERE drs.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = 
             LW "No HADR endpoint found locally - AG join may fail"
         }
 
-        # Check if already joined as SECONDARY
+        # Check if already joined (SECONDARY or RESOLVING both indicate replica is configured)
         $localAG = Invoke-Sql "SELECT name FROM sys.availability_groups WHERE name = '$AGName'" -Safe
         if ($localAG) {
             $localRole = Invoke-Sql "SELECT role_desc FROM sys.dm_hadr_availability_replica_states WHERE is_local = 1" -Safe
-            if ($localRole -and $localRole.role_desc -eq 'SECONDARY') {
-                L "Already joined AG as SECONDARY - granting seeding and exiting"
+            $roleDesc = if ($localRole) { $localRole.role_desc } else { 'UNKNOWN' }
+            if ($roleDesc -in @('SECONDARY', 'RESOLVING')) {
+                L "Already joined AG (role: $roleDesc) - granting seeding and exiting"
                 Invoke-Sql "ALTER AVAILABILITY GROUP [$AGName] GRANT CREATE ANY DATABASE" -Safe
                 New-Item -Path $sentinel -ItemType File -Force | Out-Null
                 exit 0
             }
-            L "AG exists locally but role is: $(if ($localRole) { $localRole.role_desc } else { 'UNKNOWN' }) - will attempt join"
+            L "AG exists locally but role is: $roleDesc - will attempt join"
         }
 
         # Wait for AG to exist on primary (primary creates it in its own script instance)
@@ -991,6 +992,11 @@ WHERE drs.group_id = (SELECT group_id FROM sys.availability_groups WHERE name = 
                 $joined = $true
                 break
             } catch {
+                if ($_.Exception.Message -match '41106|already exists on this instance') {
+                    L "Replica already exists in AG (Msg 41106) - treating as already joined"
+                    $joined = $true
+                    break
+                }
                 LW "Join attempt $i failed: $($_.Exception.Message)"
                 if ($i -lt $maxRetries) { Start-Sleep -Seconds 15 }
             }

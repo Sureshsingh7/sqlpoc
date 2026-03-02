@@ -405,7 +405,7 @@ resource "azurerm_virtual_machine_run_command" "disk_setup" {
 resource "azurerm_virtual_machine_run_command" "cluster_setup" {
   for_each = var.is_ha ? local.vm_map : {}
 
-  name               = "failover-cluster-setup"
+  name               = "failover-cluster-setup-v3"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.disk_setup, azurerm_private_dns_a_record.sql_vm, azurerm_private_dns_a_record.cluster_listener]
@@ -538,7 +538,7 @@ resource "azurerm_virtual_machine_run_command" "hadr_endpoint_setup" {
 resource "azurerm_virtual_machine_run_command" "ag_setup" {
   for_each = var.is_ha ? local.vm_map : {}
 
-  name               = "availability-group-setup-v27"
+  name               = "availability-group-setup-v28"
   location           = var.location
   virtual_machine_id = module.sql_vm[each.key].resource_id
   depends_on         = [azurerm_virtual_machine_run_command.hadr_endpoint_setup]
