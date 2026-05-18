@@ -1,5 +1,4 @@
-# Fix AG Listener - Configure listener for DNN cluster with proper network settings
-# This script addresses the "no public cluster network" error when creating AG listeners
+
 
 param(
     [string]$AGName = "poc-ha-AG",
