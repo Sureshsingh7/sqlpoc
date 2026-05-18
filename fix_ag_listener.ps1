@@ -2,7 +2,7 @@
 
 param(
     [string]$AGName = "poc-ha-AG",
-    [string]$ListenerName = "poc-ha-listener",
+    [string]$ListenerName = "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
     [string]$ListenerIP1 = "10.10.0.6",
     [string]$ListenerSubnet1 = "255.255.255.192",
     [string]$ListenerIP2 = "10.10.0.68",
