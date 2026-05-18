@@ -2,7 +2,7 @@
 # Validates that SQL Server Always On HA deployment is healthy
 
 param(
-    [string]$ResourceGroup = "rg-fnz-poc-sql-se",
+    [string]$ResourceGroup = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     [string[]]$Nodes = @("poc-ha-sql-01", "poc-ha-sql-02")
 )
 
