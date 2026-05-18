@@ -26,7 +26,6 @@ try {
     exit 0
 } catch {
     Write-Host "Dual IP failed: $_"
-    Write-Host "Attempting single IP..."
     try {
         Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query $sqlSingle -QueryTimeout 120 -ErrorAction Stop
         Write-Host "SUCCESS: Listener created with single IP"
