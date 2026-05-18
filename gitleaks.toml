@@ -1,0 +1,105 @@
+title = "fabric-security-check gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "powershell-secret-assignment"
+description = "Potential secret assigned in a PowerShell script"
+regex = '''(?i)\$(?:[A-Z0-9_\-]*?(?:secret|token|password|passwd|api(?:_|-)?key|client(?:_|-)?secret)[A-Z0-9_\-]*)\s*=\s*["']([A-Za-z0-9_\-\/=+\.@]{12,})["']'''
+secretGroup = 1
+entropy = 3.5
+path = '''(?i)\.(ps1|psm1|psd1)$'''
+keywords = [
+  "secret",
+  "token",
+  "password",
+  "passwd",
+  "api_key",
+  "api-key",
+  "client_secret",
+  "client-secret",
+]
+tags = ["powershell", "custom"]
+
+[[rules]]
+id = "generic-secret-assignment"
+description = "Potential secret in a variable or property assignment"
+regex = '''(?i)(?:password|passwd|pwd|secret|token|api(?:_|-)?key|access(?:_|-)?key|client(?:_|-)?secret|private(?:_|-)?key|connection(?:_|-)?string)\s*[:=]\s*["']?([A-Za-z0-9_\-\/=+\.@:]{12,})["']?'''
+secretGroup = 1
+entropy = 3.3
+keywords = [
+  "password",
+  "passwd",
+  "pwd",
+  "secret",
+  "token",
+  "api_key",
+  "api-key",
+  "access_key",
+  "access-key",
+  "client_secret",
+  "client-secret",
+  "private_key",
+  "private-key",
+  "connectionstring",
+  "connection_string",
+  "connection-string",
+]
+tags = ["generic", "custom"]
+
+[[rules]]
+id = "connection-string-secrets"
+description = "Potential secret embedded in a connection string"
+regex = '''(?i)(?:AccountKey|SharedAccessKey|SharedSecret|Password|Pwd|ClientSecret)\s*=\s*([^;\s"']{8,})'''
+secretGroup = 1
+entropy = 3.0
+keywords = [
+  "AccountKey",
+  "SharedAccessKey",
+  "SharedSecret",
+  "Password",
+  "Pwd",
+  "ClientSecret",
+]
+tags = ["connection-string", "custom"]
+
+[[rules]]
+id = "powershell-securestring-plaintext"
+description = "Potential plaintext secret passed to ConvertTo-SecureString"
+regex = '''(?i)ConvertTo-SecureString\s+["']([^"']{8,})["']\s+-AsPlainText'''
+secretGroup = 1
+entropy = 3.0
+path = '''(?i)\.(ps1|psm1|psd1)$'''
+keywords = [
+  "ConvertTo-SecureString",
+  "AsPlainText",
+]
+tags = ["powershell", "securestring", "custom"]
+
+[[rules]]
+id = "jwt-assignment"
+description = "Potential JWT stored in source"
+regex = '''(?i)(?:jwt|id_token|access_token|bearer|authorization)\s*[:=]\s*["']?(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+)["']?'''
+secretGroup = 1
+keywords = [
+  "jwt",
+  "id_token",
+  "access_token",
+  "bearer",
+  "authorization",
+]
+tags = ["jwt", "custom"]
+
+[[rules]]
+id = "authorization-header-secret"
+description = "Potential credential in an authorization header or bearer assignment"
+regex = '''(?i)(?:authorization|bearer|token)\s*[:=]\s*["']?(?:Bearer\s+)?([A-Za-z0-9_\-\/=+\.]{16,})["']?'''
+secretGroup = 1
+entropy = 3.5
+keywords = [
+  "authorization",
+  "bearer",
+  "token",
+]
+tags = ["auth-header", "custom"]
